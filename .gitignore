@@ -38,4 +38,20 @@
 *.app
 
 # debug information files
-*.dwo
+# ASOS Specific
+build/
+*.log
+asos_db
+asos_db-*
+__pycache__/
+node_modules/
+.next/
+graph_dump*.json
+test_payload.json
+knowledge_injection.json
+
+# IDEs
+.vscode/
+.idea/
+.gemini/
+.claude/
