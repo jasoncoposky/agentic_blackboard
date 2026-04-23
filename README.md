@@ -1,5 +1,10 @@
 # ASOS: Agentic Sovereign Orchestration Substrate
 
+<p align="center">
+  <img src="asos_logo.png" width="250" alt="ASOS Logo">
+</p>
+
+
 ASOS is a high-performance, distributed **Agentic Blackboard** designed for the decentralized governance and coordination of AI swarm intelligence. It serves as the primary "shared brain" for agentic swarms, enabling real-time semantic consensus, conflict resolution, and spatial materialization within the **Project Nucleus** ecosystem.
 
 ![ASOS Dashboard](https://img.shields.io/badge/Substrate-v0.4--Alpha-cyan)
@@ -36,6 +41,8 @@ A Next.js-based visualization and governance dashboard.
 *   **Map View**: Real-time force-directed graph of the substrate topology.
 *   **Studio View**: List view of Knowledge Atoms with "Promote" and "Materialize" actions.
 *   **Atmospheric Aesthetic**: A drifting nebular UI that reflects the real-time health of the swarm.
+
+![ASOS Librarian Knowledge Studio](asos_screenshot.png)
 
 ### 3. Agent Skills Suite
 Standardized Markdown-based procedural guides that instruct agents on how to leverage the substrate:
