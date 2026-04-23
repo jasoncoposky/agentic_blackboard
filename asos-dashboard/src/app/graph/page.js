@@ -29,38 +29,38 @@ export default function KnowledgeStudio() {
   }, []);
 
   const categories = ["ALL", "DESIGN", "CONFIG_MGMT", "SRE", "TESTING", "ORPHAN"];
-+
-+  const handlePromote = async (uuid) => {
-+    try {
-+      const res = await fetch("http://localhost:8085/api/v1/cpb/promote", {
-+        method: "POST",
-+        body: JSON.stringify({ uuid })
-+      });
-+      if (res.ok) {
-+        // Refresh graph to show updated status
-+        const res2 = await fetch("http://localhost:8085/api/v1/graph/snapshot");
-+        setGraphData(await res2.json());
-+      }
-+    } catch (e) {
-+      console.error("Promotion failed:", e);
-+    }
-+  };
-+
-+  const handleMaterialize = async (atomId) => {
-+    try {
-+      await fetch("http://localhost:8085/api/v1/nucleus/materialize", {
-+        method: "POST",
-+        body: JSON.stringify({ 
-+          atom_id: atomId, 
-+          behavior: "status_ring",
-+          label: "ASOS Materialization"
-+        })
-+      });
-+      alert("Command dispatched to Nucleus Governor.");
-+    } catch (e) {
-+      console.error("Materialization failed:", e);
-+    }
-+  };
+
+  const handlePromote = async (uuid) => {
+    try {
+      const res = await fetch("http://localhost:8085/api/v1/cpb/promote", {
+        method: "POST",
+        body: JSON.stringify({ uuid })
+      });
+      if (res.ok) {
+        // Refresh graph to show updated status
+        const res2 = await fetch("http://localhost:8085/api/v1/graph/snapshot");
+        setGraphData(await res2.json());
+      }
+    } catch (e) {
+      console.error("Promotion failed:", e);
+    }
+  };
+
+  const handleMaterialize = async (atomId) => {
+    try {
+      await fetch("http://localhost:8085/api/v1/nucleus/materialize", {
+        method: "POST",
+        body: JSON.stringify({ 
+          atom_id: atomId, 
+          behavior: "status_ring",
+          label: "ASOS Materialization"
+        })
+      });
+      alert("Command dispatched to Nucleus Governor.");
+    } catch (e) {
+      console.error("Materialization failed:", e);
+    }
+  };
 
   return (
     <div className="studio-container">

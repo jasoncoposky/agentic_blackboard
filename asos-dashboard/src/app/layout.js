@@ -12,12 +12,20 @@ export default function RootLayout({ children }) {
     <html lang="en">
       <body>
         <div className="layout-container">
+          <div className="noise-overlay"></div>
           <Sidebar />
           
           <div className="main-wrapper">
 
             <header className="top-bar glass">
-              <div className="breadcrumb">Dashboard / Overview</div>
+              <div className="substrate-status">
+                <span className="status-dot online"></span>
+                <span className="status-text">SUBSTRATE ONLINE</span>
+                <span className="status-divider">|</span>
+                <span className="status-metric">HEALTH: 100%</span>
+                <span className="status-divider">|</span>
+                <span className="status-metric">LATENCY: 12ms</span>
+              </div>
               <div className="user-profile">
                 <span className="agent-id">Agent v0.4-α</span>
                 <div className="avatar"></div>
