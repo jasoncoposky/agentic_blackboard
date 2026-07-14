@@ -82,6 +82,13 @@ void ApiServer::listen_loop() {
                 return;
             }
 
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
+
             int count = 0;
             for (auto& item : j["atoms"]) {
                 CpbEntry e;
@@ -117,9 +124,29 @@ void ApiServer::listen_loop() {
                     }
                 }
 
-                
+                if (item.contains("wellness")) {
+                    Wellness w;
+                    w.mood_sentiment = item["wellness"].value("mood_sentiment", 0.0);
+                    w.energy_level = item["wellness"].value("energy_level", 0.0);
+                    w.sleep_hours = item["wellness"].value("sleep_hours", 0.0);
+                    w.active_minutes = item["wellness"].value("active_minutes", 0.0);
+                    w.step_count = item["wellness"].value("step_count", static_cast<int64_t>(0));
+                    w.activity_type = item["wellness"].value("activity_type", "");
+                    e.wellness = w;
+                }
+
+                if (item.contains("education")) {
+                    Education edu;
+                    edu.institution_platform = item["education"].value("institution_platform", "");
+                    edu.resource_type = item["education"].value("resource_type", "");
+                    edu.progress_percent = item["education"].value("progress_percent", 0.0);
+                    edu.focus_duration_minutes = item["education"].value("focus_duration_minutes", 0.0);
+                    edu.credential_uuid = item["education"].value("credential_uuid", "");
+                    e.education = edu;
+                }
+
                 std::cout << "[API] Processing Atom Statement: " << e.payload.statement << std::endl;
-                if (blackboard_->commit_cpb_entry(e)) {
+                if (blackboard_->commit_cpb_entry(e, principal_id)) {
                     count++;
                 }
             }
@@ -137,7 +164,16 @@ void ApiServer::listen_loop() {
         try {
             auto j = json::parse(req.body);
             auto engine = blackboard_->get_engine();
+            
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
+
             auto q = engine->query();
+            q.set_principal_id(principal_id);
 
             std::string alias = "n";
             if (j.contains("match")) {
@@ -192,8 +228,17 @@ void ApiServer::listen_loop() {
             
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
+
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
             
-            auto buf = store->get("n:" + uuid);
+            auto key_uuid = engine->get_resolver().parse_uuid(uuid);
+            std::string key = std::string(l3kvg::KeyBuilder::node_key(key_uuid));
+            auto buf = store->get(key, principal_id);
             if (buf.size() == 0) {
                 res.status = 404;
                 res.set_content("Atom not found", "text/plain");
@@ -204,7 +249,7 @@ void ApiServer::listen_loop() {
             e.taxonomy.is_principle = true; // Promoted state
             e.taxonomy.uncertainty = false; // Promotion implies validation
             
-            if (blackboard_->commit_cpb_entry(e)) {
+            if (blackboard_->commit_cpb_entry(e, principal_id)) {
                 res.set_content("{\"status\":\"PROMOTED\"}", "application/json");
             } else {
                 res.status = 500;
@@ -266,11 +311,18 @@ void ApiServer::listen_loop() {
 
 
     // 4. Graph Topology Snapshot
-    svr.Get("/api/v1/graph/snapshot", [this](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/api/v1/graph/snapshot", [this](const httplib::Request& req, httplib::Response& res) {
         std::cout << "[API] GET /api/v1/graph/snapshot" << std::endl;
         try {
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
+
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
             
             json response;
             response["nodes"] = json::array();
@@ -288,7 +340,7 @@ void ApiServer::listen_loop() {
             std::unordered_set<std::string> materialized_ids;
 
             for(const auto& key : unique_keys) {
-                auto buf = store->get(key);
+                auto buf = store->get(key, principal_id);
                 if (buf.size() > 0) {
                     try {
                         size_t h_idx = buf.get_obj(0, "header");
@@ -325,18 +377,37 @@ void ApiServer::listen_loop() {
                         } else {
                             // Default: Knowledge Atom
                             auto entry = CpbEntry::deserialize(buf);
-                            response["nodes"].push_back({
+                            json node_json = {
                                 {"id", entry.header.uuid},
                                 {"type", "ATOM"},
-                                {"ka", static_cast<int>(entry.taxonomy.knowledge_area)},
+                                {"label", entry.payload.statement},
                                 {"statement", entry.payload.statement},
                                 {"content", entry.payload.content},
-                                {"tags", entry.taxonomy.tags},
                                 {"project", entry.header.origin.project_id},
                                 {"author", entry.header.origin.agent_id},
-                                {"status", entry.taxonomy.is_principle ? "PRINCIPLE" : (entry.taxonomy.uncertainty ? "UNCERTAIN" : "VALIDATED")},
-                                {"label", entry.payload.statement.substr(0, 30) + (entry.payload.statement.size() > 30 ? "..." : "")}
-                            });
+                                {"ka", static_cast<int>(entry.taxonomy.knowledge_area)},
+                                {"tags", entry.taxonomy.tags}
+                            };
+                            if (entry.wellness.has_value()) {
+                                node_json["wellness"] = {
+                                    {"mood_sentiment", entry.wellness->mood_sentiment},
+                                    {"energy_level", entry.wellness->energy_level},
+                                    {"sleep_hours", entry.wellness->sleep_hours},
+                                    {"active_minutes", entry.wellness->active_minutes},
+                                    {"step_count", entry.wellness->step_count},
+                                    {"activity_type", entry.wellness->activity_type}
+                                };
+                            }
+                            if (entry.education.has_value()) {
+                                node_json["education"] = {
+                                    {"institution_platform", entry.education->institution_platform},
+                                    {"resource_type", entry.education->resource_type},
+                                    {"progress_percent", entry.education->progress_percent},
+                                    {"focus_duration_minutes", entry.education->focus_duration_minutes},
+                                    {"credential_uuid", entry.education->credential_uuid}
+                                };
+                            }
+                            response["nodes"].push_back(node_json);
                             materialized_ids.insert(entry.header.uuid);
                         }
                     } catch (...) {}
@@ -366,10 +437,10 @@ void ApiServer::listen_loop() {
                     // Destination is everything after the weight_end + 1 (the colon)
                     std::string dst = key.substr(weight_end + 1);
 
-                    // Fallback: If destination node is not in materialized_ids, try to fetch it directly
+                    // Fallback: If destination node is not in materialized_ids, try to fetch it directly (only if we have read permission on it)
                     if (materialized_ids.find(dst) == materialized_ids.end()) {
-                        std::string dst_node_key = std::string(l3kvg::KeyBuilder::node_key(dst));
-                        auto dst_buf = store->get(dst_node_key);
+                        std::string dst_node_key = std::string(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(dst)));
+                        auto dst_buf = store->get(dst_node_key, principal_id);
                         if (dst_buf.size() > 0) {
                             std::cout << "[API] Fallback Retrieval for Target: " << dst << std::endl;
                             try {
@@ -387,12 +458,15 @@ void ApiServer::listen_loop() {
                         }
                     }
 
-                    response["edges"].push_back({
-                        {"source", src},
-                        {"target", dst},
-                        {"label", label},
-                        {"weight", weight}
-                    });
+                    if (materialized_ids.find(src) != materialized_ids.end() &&
+                        materialized_ids.find(dst) != materialized_ids.end()) {
+                        response["edges"].push_back({
+                            {"source", src},
+                            {"target", dst},
+                            {"label", label},
+                            {"weight", weight}
+                        });
+                    }
                 } catch (...) {}
             }
 
@@ -416,8 +490,16 @@ void ApiServer::listen_loop() {
 
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
-            std::string key = std::string(l3kvg::KeyBuilder::node_key(id));
-            auto buf = store->get(key);
+
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
+
+            std::string key = std::string(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(id)));
+            auto buf = store->get(key, principal_id);
 
             if (buf.size() > 0) {
                 res.status = 200;
@@ -435,6 +517,13 @@ void ApiServer::listen_loop() {
             }
 
             if (success) {
+                // Seed write/read ACL permission for the creator
+                if (principal_id != 0) {
+                    store->credentials().set_acl(principal_id, key, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                    std::string hex_part = key.substr(2); // "{hex_id}"
+                    store->credentials().set_acl(principal_id, "e:out:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                    store->credentials().set_acl(principal_id, "e:in:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                }
                 res.status = 201;
                 res.set_content("{\"status\":\"CREATED\", \"id\":\"" + id + "\"}", "application/json");
             } else {
@@ -453,8 +542,16 @@ void ApiServer::listen_loop() {
             std::string uuid = req.matches[1];
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
-            std::string key = std::string(l3kvg::KeyBuilder::node_key(uuid));
-            auto buf = store->get(key);
+
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
+
+            std::string key = std::string(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(uuid)));
+            auto buf = store->get(key, principal_id);
 
             if (buf.size() == 0) {
                 res.status = 404;

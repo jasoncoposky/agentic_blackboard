@@ -8,7 +8,7 @@ namespace asos {
 
 bool Validator::verify_atom(const std::string& uuid, const std::string& auditor_id) {
     auto* store = blackboard_->get_engine()->get_store();
-    std::string key(l3kvg::KeyBuilder::node_key(uuid));
+    std::string key(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(uuid)));
     
     auto buf = store->get(key);
     if (buf.size() == 0) return false;
@@ -31,7 +31,7 @@ bool Validator::verify_atom(const std::string& uuid, const std::string& auditor_
 
 bool Validator::validate_atom(const std::string& uuid, const std::string& auditor_id) {
     auto* store = blackboard_->get_engine()->get_store();
-    std::string key(l3kvg::KeyBuilder::node_key(uuid));
+    std::string key(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(uuid)));
     
     auto buf = store->get(key);
     if (buf.size() == 0) return false;
@@ -52,7 +52,7 @@ bool Validator::validate_atom(const std::string& uuid, const std::string& audito
 
 bool Validator::try_promote(const std::string& uuid) {
     auto* store = blackboard_->get_engine()->get_store();
-    std::string key(l3kvg::KeyBuilder::node_key(uuid));
+    std::string key(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(uuid)));
     
     auto buf = store->get(key);
     if (buf.size() == 0) return false;

@@ -223,6 +223,78 @@ export default function KnowledgeStudio() {
               </div>
             )}
 
+            {selectedNode.wellness && (
+              <div className="sidebar-section wellness-section">
+                <label>Wellness & Activity</label>
+                <div className="wellness-grid">
+                  <div className="wellness-metric">
+                    <span className="metric-val">{selectedNode.wellness.mood_sentiment > 0 ? "+" : ""}{selectedNode.wellness.mood_sentiment}</span>
+                    <span className="metric-lbl">Mood / Sentiment</span>
+                  </div>
+                  <div className="wellness-metric">
+                    <span className="metric-val">{selectedNode.wellness.energy_level}/10</span>
+                    <span className="metric-lbl">Energy Level</span>
+                  </div>
+                  <div className="wellness-metric">
+                    <span className="metric-val">{selectedNode.wellness.sleep_hours}h</span>
+                    <span className="metric-lbl">Sleep Duration</span>
+                  </div>
+                  {selectedNode.wellness.step_count > 0 && (
+                    <div className="wellness-metric">
+                      <span className="metric-val">{selectedNode.wellness.step_count.toLocaleString()}</span>
+                      <span className="metric-lbl">Steps</span>
+                    </div>
+                  )}
+                  {selectedNode.wellness.active_minutes > 0 && (
+                    <div className="wellness-metric">
+                      <span className="metric-val">{selectedNode.wellness.active_minutes}m</span>
+                      <span className="metric-lbl">Active Minutes</span>
+                    </div>
+                  )}
+                  {selectedNode.wellness.activity_type && (
+                    <div className="wellness-metric full-width">
+                      <span className="metric-val activity">{selectedNode.wellness.activity_type}</span>
+                      <span className="metric-lbl">Current Activity</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {selectedNode.education && (
+              <div className="sidebar-section education-section">
+                <label>Education & Learning</label>
+                <div className="education-grid">
+                  <div className="education-metric">
+                    <span className="metric-val">{selectedNode.education.progress_percent}%</span>
+                    <span className="metric-lbl">Progress</span>
+                  </div>
+                  <div className="education-metric">
+                    <span className="metric-val">{selectedNode.education.focus_duration_minutes}m</span>
+                    <span className="metric-lbl">Study Time</span>
+                  </div>
+                  {selectedNode.education.institution_platform && (
+                    <div className="education-metric full-width">
+                      <span className="metric-val platform">{selectedNode.education.institution_platform}</span>
+                      <span className="metric-lbl">Institution / Platform</span>
+                    </div>
+                  )}
+                  {selectedNode.education.resource_type && (
+                    <div className="education-metric">
+                      <span className="metric-val type">{selectedNode.education.resource_type}</span>
+                      <span className="metric-lbl">Medium / Resource</span>
+                    </div>
+                  )}
+                  {selectedNode.education.credential_uuid && (
+                    <div className="education-metric">
+                      <span className="metric-val credential">{selectedNode.education.credential_uuid}</span>
+                      <span className="metric-lbl">Credential Ref</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="sidebar-section">
               <label>Raw Data</label>
               <pre className="json-dump">{JSON.stringify(selectedNode, null, 2)}</pre>
@@ -620,6 +692,47 @@ export default function KnowledgeStudio() {
           color: #00ff88;
           overflow-x: auto;
           border: 1px solid var(--surface-border);
+        }
+
+        .wellness-grid, .education-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+          margin-top: 4px;
+        }
+
+        .wellness-metric, .education-metric {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          padding: 10px;
+          background: hsla(230, 20%, 8%, 0.4);
+          border-radius: 8px;
+          border: 1px solid var(--surface-border);
+          box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+        }
+
+        .wellness-metric.full-width, .education-metric.full-width {
+          grid-column: span 2;
+        }
+
+        .metric-val {
+          font-size: 1.15rem;
+          font-weight: 700;
+          color: var(--primary);
+        }
+
+        .metric-val.activity { color: hsla(330, 90%, 65%, 1); }
+        .metric-val.platform { color: hsla(45, 95%, 60%, 1); font-size: 1rem; }
+        .metric-val.type { color: hsla(180, 80%, 60%, 1); font-size: 0.9rem; text-transform: capitalize; }
+        .metric-val.credential { font-family: monospace; font-size: 0.8rem; color: var(--text-muted); }
+
+        .metric-lbl {
+          font-size: 0.65rem;
+          text-transform: uppercase;
+          color: var(--text-muted);
+          letter-spacing: 0.05em;
+          font-weight: 600;
         }
       `}</style>
     </div>

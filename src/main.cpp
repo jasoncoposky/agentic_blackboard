@@ -111,7 +111,7 @@ int main(int argc, char* argv[]) {
             std::this_thread::sleep_for(std::chrono::seconds(5));
             
             // Periodically check Swarm Health
-            auto raw = store->get(std::string(l3kvg::KeyBuilder::node_key("governance:swarm_health")));
+            auto raw = store->get(std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("governance:swarm_health"))));
             if (raw.size() > 0) {
                 auto summary = asos::SwarmHealthSummary::deserialize(raw);
                 

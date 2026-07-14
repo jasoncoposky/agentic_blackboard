@@ -20,11 +20,15 @@ public:
     Blackboard(const std::string& db_path, uint32_t node_id);
     ~Blackboard();
 
+    // Security & Multi-Tenancy Credentials
+    bool register_user_credentials(const std::string& username, const std::string& public_key);
+    uint32_t get_user_uid(const std::string& username) const;
+
     // Knowledge Management (CPB)
     /**
      * @brief Commit a Knowledge Atom to the Commonplace Book.
      */
-    bool commit_cpb_entry(const CpbEntry& entry);
+    bool commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id = 0);
 
     /**
      * @brief Reconcile an incoming atom with the local graph.

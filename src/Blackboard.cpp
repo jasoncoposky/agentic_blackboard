@@ -6,6 +6,7 @@
 #include "L3KVG/KeyBuilder.hpp"
 #include "L3KVG/Node.hpp"
 #include "engine/store.hpp"
+#include "engine/credential_manager.hpp"
 
 
 
@@ -18,7 +19,27 @@ Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) {
 
 Blackboard::~Blackboard() = default;
 
-bool Blackboard::commit_cpb_entry(const CpbEntry& entry) {
+bool Blackboard::register_user_credentials(const std::string& username, const std::string& public_key) {
+    uint32_t uid = get_user_uid(username);
+    auto* store = engine_->get_store();
+    
+    // Register the user identity
+    store->credentials().register_user(uid, username, public_key);
+    
+    // Grant baseline read/write access to system keys if needed (optional)
+    return true;
+}
+
+uint32_t Blackboard::get_user_uid(const std::string& username) const {
+    // Deterministic simple hash mapping string to uint32_t
+    uint32_t hash = 5381;
+    for (char c : username) {
+        hash = ((hash << 5) + hash) + c;
+    }
+    return hash;
+}
+
+bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) {
     CpbEntry adjusted = entry;
     std::cout << "[Blackboard] commit_cpb_entry called for statement: " << adjusted.payload.statement << std::endl;
 
@@ -37,7 +58,56 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry) {
         sprintf(hex, "%08x", h);
         adjusted.header.uuid = "atom-" + std::string(hex);
     }
-    
+
+    // Extract agent name from author ID
+    std::string author_agent = adjusted.header.origin.agent_id;
+    std::string author_name = author_agent;
+    if (author_agent.starts_with("identity:")) {
+        author_name = author_agent.substr(9);
+    }
+
+    // Security check 1: Ensure user is not impersonating someone else
+    if (principal_id != 0 && get_user_uid(author_name) != principal_id) {
+        std::cerr << "[Blackboard] Rejecting Atom " << adjusted.header.uuid 
+                  << ": Access Denied (Principal ID " << principal_id 
+                  << " cannot write on behalf of agent " << author_name << ")" << std::endl;
+        return false;
+    }
+
+    auto key_uuid = engine_->get_resolver().parse_uuid(adjusted.header.uuid);
+    std::string db_key = std::string(l3kvg::KeyBuilder::node_key(key_uuid));
+    auto& creds = engine_->get_store()->credentials();
+
+    // Check if node exists
+    bool exists = false;
+    try {
+        auto node = engine_->get_node(adjusted.header.uuid);
+        if (node && node->has_attribute("header")) {
+            exists = true;
+        }
+    } catch (...) {
+        // Doesn't exist
+    }
+
+    if (exists) {
+        // Security check 2: Check if user has WRITE access on this existing key
+        auto perm = creds.check_permission(principal_id, db_key);
+        if (!(perm & l3kv::Permission::WRITE) && !(perm & l3kv::Permission::ADMIN)) {
+            std::cerr << "[Blackboard] Rejecting Atom " << adjusted.header.uuid 
+                      << ": Access Denied (No WRITE permission for principal " << principal_id << ")" << std::endl;
+            return false;
+        }
+    } else {
+        // New node: Authorize the owner automatically
+        if (principal_id != 0) {
+            creds.set_acl(principal_id, db_key, l3kv::Permission::READ | l3kv::Permission::WRITE);
+            // Authorize edges related to this node too
+            std::string hex_part = db_key.substr(2); // "{hex_id}"
+            creds.set_acl(principal_id, "e:out:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+            creds.set_acl(principal_id, "e:in:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+        }
+    }
+
     // SAFE-MODE LOGIC: If isolated, mark as uncertain
     if (Orchestrator::instance().current_state() == Orchestrator::State::ISOLATED) {
         adjusted.taxonomy.uncertainty = true;
@@ -92,7 +162,7 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry) {
 
 bool Blackboard::semantic_merge(const CpbEntry& incoming) {
     auto* store = engine_->get_store();
-    std::string key(l3kvg::KeyBuilder::node_key(incoming.header.uuid));
+    std::string key(l3kvg::KeyBuilder::node_key(engine_->get_resolver().parse_uuid(incoming.header.uuid)));
     
     // Check if we have a local version
     lite3cpp::Buffer local_buf = store->get(key);
@@ -152,7 +222,7 @@ bool Blackboard::add_wbs_node(const WbsNode& node) {
 
 bool Blackboard::apply_delta_patch(const L3DeltaPatch& patch) {
     auto* store = engine_->get_store();
-    std::string key(l3kvg::KeyBuilder::node_key(patch.header.base_uuid));
+    std::string key(l3kvg::KeyBuilder::node_key(engine_->get_resolver().parse_uuid(patch.header.base_uuid)));
     
     // Retrieve Base
     lite3cpp::Buffer base_buf = store->get(key);

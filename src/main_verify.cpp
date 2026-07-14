@@ -53,12 +53,12 @@ void test_identity_integrity() {
 
     auto author_edges = atom_node->get_edges(rel::CREATED_BY);
     for (auto& edge : author_edges) {
-        if (edge->get_dst() == "agent-x") has_author = true;
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("agent-x")) has_author = true;
     }
 
     auto project_edges = atom_node->get_edges(rel::BELONGS_TO);
     for (auto& edge : project_edges) {
-        if (edge->get_dst() == "project-y") has_project = true;
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("project-y")) has_project = true;
     }
 
     if (!has_author || !has_project) {
@@ -124,7 +124,7 @@ void test_semantic_merge() {
         exit(1);
     }
 
-    auto key = std::string(l3kvg::KeyBuilder::node_key("atom-001"));
+    auto key = std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("atom-001")));
     auto raw = store->get(key);
     CpbEntry current = CpbEntry::deserialize(raw);
     if (current.taxonomy.applicability != 80) {
@@ -164,7 +164,7 @@ void test_sre_metrics() {
     Monitor::instance().perform_cycle();
     store->wait_all_shards();
 
-    lite3cpp::Buffer raw = store->get(std::string(l3kvg::KeyBuilder::node_key("governance:swarm_health")));
+    lite3cpp::Buffer raw = store->get(std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("governance:swarm_health"))));
     if (raw.size() == 0) {
         std::cerr << "[Test] FAILED: Could not find swarm health node" << std::endl;
         exit(1);
@@ -193,7 +193,7 @@ void test_delta_sync() {
     bb.commit_cpb_entry(v1);
     store->wait_all_shards();
 
-    lite3cpp::Buffer b1_raw = store->get(std::string(l3kvg::KeyBuilder::node_key("delta-atom")));
+    lite3cpp::Buffer b1_raw = store->get(std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("delta-atom"))));
 
     CpbEntry v2 = v1;
     v2.header.timestamp = 200;
@@ -214,7 +214,7 @@ void test_delta_sync() {
         exit(1);
     }
 
-    lite3cpp::Buffer reconstructed_raw = store->get(std::string(l3kvg::KeyBuilder::node_key("delta-atom")));
+    lite3cpp::Buffer reconstructed_raw = store->get(std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("delta-atom"))));
     if (reconstructed_raw.size() != b2_raw.size()) {
         std::cerr << "[Test] FAILED: Size mismatch" << std::endl;
         exit(1);
@@ -296,7 +296,8 @@ void test_librarian_synapses() {
 
 void test_safe_mode() {
     std::cout << "[Test] Starting Safe-Mode Verification..." << std::endl;
-    Orchestrator::instance().start("test_loc", 8092, 8093);
+    Blackboard bb("test_safe_db", 6);
+    Orchestrator::instance().start(&bb, "test_loc", 8092, 8093);
     std::this_thread::sleep_for(std::chrono::seconds(4));
     
     auto state = Orchestrator::instance().current_state();
@@ -309,6 +310,151 @@ void test_safe_mode() {
     std::cout << "[Test] Safe-Mode Verification PASSED" << std::endl;
 }
 
+void test_life_journaling() {
+    std::cout << "[Test] Starting Life Journaling Verification..." << std::endl;
+    Blackboard bb("test_journal_db", 7);
+    auto* store = bb.get_engine()->get_store();
+
+    // 1. Setup multi-tenant user credentials
+    bb.register_user_credentials("jasoncoposky", "jason-key");
+    uint32_t jason_uid = bb.get_user_uid("jasoncoposky");
+
+    bb.register_user_credentials("intruder_bob", "bob-key");
+    uint32_t bob_uid = bb.get_user_uid("intruder_bob");
+
+    // 2. Create a wellness journal entry under jasoncoposky's namespace
+    CpbEntry w_entry;
+    w_entry.header.uuid = "jasoncoposky:journal-well-1";
+    w_entry.header.timestamp = 1000;
+    w_entry.header.origin.agent_id = "identity:jasoncoposky";
+    w_entry.header.origin.project_id = "proj-journal";
+    w_entry.taxonomy.knowledge_area = KnowledgeArea::HEALTH_WELLNESS;
+    w_entry.taxonomy.applicability = 95;
+    w_entry.payload.statement = "Morning Run and Mood check";
+    
+    Wellness w;
+    w.mood_sentiment = 0.8;
+    w.energy_level = 9.0;
+    w.sleep_hours = 8.0;
+    w.active_minutes = 45.0;
+    w.step_count = 12000;
+    w.activity_type = "running";
+    w_entry.wellness = w;
+
+    // Jason writes his own entry -> Expect SUCCESS
+    bool jason_write_ok = bb.commit_cpb_entry(w_entry, jason_uid);
+    if (!jason_write_ok) {
+        std::cerr << "[Test] FAILED: Jason could not commit his own wellness entry" << std::endl;
+        exit(1);
+    }
+    store->wait_all_shards();
+
+    // Intruder Bob attempts to overwrite/impersonate Jason -> Expect FAILURE
+    bool bob_write_ok = bb.commit_cpb_entry(w_entry, bob_uid);
+    if (bob_write_ok) {
+        std::cerr << "[Test] FAILED: Intruder Bob was allowed to commit on behalf of Jason" << std::endl;
+        exit(1);
+    }
+
+    // 3. Create an education journal entry under jasoncoposky's namespace
+    CpbEntry e_entry;
+    e_entry.header.uuid = "jasoncoposky:journal-edu-1";
+    e_entry.header.timestamp = 2000;
+    e_entry.header.origin.agent_id = "identity:jasoncoposky";
+    e_entry.header.origin.project_id = "proj-journal";
+    e_entry.taxonomy.knowledge_area = KnowledgeArea::EDUCATION_LEARNING;
+    e_entry.taxonomy.applicability = 90;
+    e_entry.payload.statement = "Abstract Algebra Lecture 1";
+
+    Education edu;
+    edu.institution_platform = "MIT OpenCourseWare";
+    edu.resource_type = "lecture";
+    edu.progress_percent = 25.0;
+    edu.focus_duration_minutes = 60.0;
+    edu.credential_uuid = "cred-algebra-101";
+    e_entry.education = edu;
+
+    bool jason_edu_write_ok = bb.commit_cpb_entry(e_entry, jason_uid);
+    if (!jason_edu_write_ok) {
+        std::cerr << "[Test] FAILED: Jason could not commit his own education entry" << std::endl;
+        exit(1);
+    }
+    store->wait_all_shards();
+
+    // 4. Query back wellness entry using Jason's UID -> Expect SUCCESS
+    auto key_well = std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("jasoncoposky:journal-well-1")));
+    auto buf_well = store->get(key_well, jason_uid);
+    if (buf_well.size() == 0) {
+        std::cerr << "[Test] FAILED: Jason could not retrieve his own wellness journal node" << std::endl;
+        exit(1);
+    }
+    
+    CpbEntry fetched_well = CpbEntry::deserialize(buf_well);
+    if (!fetched_well.wellness) {
+        std::cerr << "[Test] FAILED: Deserialized wellness block is missing" << std::endl;
+        exit(1);
+    }
+    if (fetched_well.wellness->mood_sentiment != 0.8 || fetched_well.wellness->energy_level != 9.0 ||
+        fetched_well.wellness->sleep_hours != 8.0 || fetched_well.wellness->active_minutes != 45.0 ||
+        fetched_well.wellness->step_count != 12000 || fetched_well.wellness->activity_type != "running") {
+        std::cerr << "[Test] FAILED: Wellness fields mismatch" << std::endl;
+        exit(1);
+    }
+
+    // Attempt to query wellness entry using Bob's UID -> Expect FAILURE / ACCESS DENIED
+    auto buf_well_bob = store->get(key_well, bob_uid);
+    if (buf_well_bob.size() > 0) {
+        std::cerr << "[Test] FAILED: Intruder Bob was allowed to read Jason's wellness journal node" << std::endl;
+        exit(1);
+    }
+
+    // 5. Query back education entry using Jason's UID -> Expect SUCCESS
+    auto key_edu = std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("jasoncoposky:journal-edu-1")));
+    auto buf_edu = store->get(key_edu, jason_uid);
+    if (buf_edu.size() == 0) {
+        std::cerr << "[Test] FAILED: Jason could not retrieve his own education journal node" << std::endl;
+        exit(1);
+    }
+    CpbEntry fetched_edu = CpbEntry::deserialize(buf_edu);
+    if (!fetched_edu.education) {
+        std::cerr << "[Test] FAILED: Deserialized education block is missing" << std::endl;
+        exit(1);
+    }
+    if (fetched_edu.education->institution_platform != "MIT OpenCourseWare" || fetched_edu.education->resource_type != "lecture" ||
+        fetched_edu.education->progress_percent != 25.0 || fetched_edu.education->focus_duration_minutes != 60.0 ||
+        fetched_edu.education->credential_uuid != "cred-algebra-101") {
+        std::cerr << "[Test] FAILED: Education fields mismatch" << std::endl;
+        exit(1);
+    }
+
+    // Attempt to query education entry using Bob's UID -> Expect FAILURE / ACCESS DENIED
+    auto buf_edu_bob = store->get(key_edu, bob_uid);
+    if (buf_edu_bob.size() > 0) {
+        std::cerr << "[Test] FAILED: Intruder Bob was allowed to read Jason's education journal node" << std::endl;
+        exit(1);
+    }
+
+    // 6. Test semantic link (MENTIONS & OCCURRED_AT)
+    bb.get_engine()->add_edge("jasoncoposky:journal-well-1", rel::MENTIONS, 1.0, "identity:jasoncoposky");
+    bb.get_engine()->add_edge("jasoncoposky:journal-well-1", rel::OCCURRED_AT, 1.0, "spatial-marker-nc");
+    store->wait_all_shards();
+
+    auto node_well = bb.get_engine()->get_node(bb.get_engine()->get_resolver().parse_uuid("jasoncoposky:journal-well-1"));
+    auto mentions_edges = node_well->get_edges(rel::MENTIONS);
+    if (mentions_edges.empty() || mentions_edges[0]->get_dst() != bb.get_engine()->get_resolver().parse_uuid("identity:jasoncoposky")) {
+        std::cerr << "[Test] FAILED: Mentions relationship verification failed" << std::endl;
+        exit(1);
+    }
+
+    auto location_edges = node_well->get_edges(rel::OCCURRED_AT);
+    if (location_edges.empty() || location_edges[0]->get_dst() != bb.get_engine()->get_resolver().parse_uuid("spatial-marker-nc")) {
+        std::cerr << "[Test] FAILED: Occurred At relationship verification failed" << std::endl;
+        exit(1);
+    }
+
+    std::cout << "[Test] Life Journaling Verification PASSED" << std::endl;
+}
+
 int main() {
     try {
         test_identity_integrity();
@@ -318,6 +464,7 @@ int main() {
         test_librarian_synapses();
         test_delta_sync();
         test_safe_mode();
+        test_life_journaling();
         std::cout << "\n[SUCCESS] All ASOS Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {

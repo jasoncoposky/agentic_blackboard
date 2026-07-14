@@ -20,11 +20,13 @@ namespace rel {
     const std::string RELATED_TO = "RELATED_TO";
     const std::string REPRESENTED_BY = "REPRESENTED_BY"; // Atom -> Widget
     const std::string ANCHORED_TO = "ANCHORED_TO";      // Widget -> SpatialAnchor
+    const std::string MENTIONS = "MENTIONS";            // Journal -> Identity (Person mentioned)
+    const std::string OCCURRED_AT = "OCCURRED_AT";      // Journal -> SpatialAnchor
 }
 
 
 /**
- * @brief SWEBOK Knowledge Areas (1-15)
+ * @brief SWEBOK Knowledge Areas (1-15) and Life Journaling Domains
  */
 enum class KnowledgeArea : uint8_t {
     REQUIREMENTS = 1,
@@ -42,6 +44,15 @@ enum class KnowledgeArea : uint8_t {
     COMPUTING_FOUNDATIONS = 13,
     MATHEMATICAL_FOUNDATIONS = 14,
     ENGINEERING_FOUNDATIONS = 15,
+    
+    // Life Journaling Domains
+    HEALTH_WELLNESS = 20,
+    SOCIAL_RELATIONSHIPS = 21,
+    PERSONAL_REFLECTIONS = 22,
+    LEISURE_CREATIVITY = 23,
+    DAILY_ROUTINE = 24,
+    EDUCATION_LEARNING = 25,
+    
     UNKNOWN = 0
 };
 
@@ -224,6 +235,81 @@ struct ValidationSignature {
 };
 
 /**
+ * @brief Wellness and Activity Tracking Payload
+ */
+struct Wellness {
+    double mood_sentiment = 0.0;   // -1.0 (negative) to 1.0 (positive)
+    double energy_level = 0.0;     // 1.0 (low) to 10.0 (high)
+    double sleep_hours = 0.0;      // Sleep duration
+    
+    // Activity Tracking
+    double active_minutes = 0.0;   // Workout duration
+    int64_t step_count = 0;        // Physical steps
+    std::string activity_type;     // e.g. "running", "walking", "meditating"
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t w_idx = buf.set_obj(parent, "wellness");
+        buf.set_f64(w_idx, "mood_sentiment", mood_sentiment);
+        buf.set_f64(w_idx, "energy_level", energy_level);
+        buf.set_f64(w_idx, "sleep_hours", sleep_hours);
+        buf.set_f64(w_idx, "active_minutes", active_minutes);
+        buf.set_i64(w_idx, "step_count", step_count);
+        buf.set_str(w_idx, "activity_type", activity_type);
+    }
+
+    static Wellness deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        Wellness w;
+        try {
+            size_t w_idx = buf.get_obj(parent, "wellness");
+            w.mood_sentiment = buf.get_f64(w_idx, "mood_sentiment");
+            w.energy_level = buf.get_f64(w_idx, "energy_level");
+            w.sleep_hours = buf.get_f64(w_idx, "sleep_hours");
+            w.active_minutes = buf.get_f64(w_idx, "active_minutes");
+            w.step_count = buf.get_i64(w_idx, "step_count");
+            w.activity_type = std::string(buf.get_str(w_idx, "activity_type"));
+        } catch (...) {
+            return {0.0, 0.0, 0.0, 0.0, 0, ""};
+        }
+        return w;
+    }
+};
+
+/**
+ * @brief Education & Learning Tracking Payload
+ */
+struct Education {
+    std::string institution_platform;  // e.g. "Coursera", "MIT", "Self-Directed"
+    std::string resource_type;         // e.g. "book", "lecture", "paper", "lab"
+    double progress_percent = 0.0;     // Progress (0.0 to 100.0)
+    double focus_duration_minutes = 0.0; // Study session duration
+    std::string credential_uuid;       // Optional link to certification node
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t e_idx = buf.set_obj(parent, "education");
+        buf.set_str(e_idx, "institution_platform", institution_platform);
+        buf.set_str(e_idx, "resource_type", resource_type);
+        buf.set_f64(e_idx, "progress_percent", progress_percent);
+        buf.set_f64(e_idx, "focus_duration_minutes", focus_duration_minutes);
+        buf.set_str(e_idx, "credential_uuid", credential_uuid);
+    }
+
+    static Education deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        Education edu;
+        try {
+            size_t e_idx = buf.get_obj(parent, "education");
+            edu.institution_platform = std::string(buf.get_str(e_idx, "institution_platform"));
+            edu.resource_type = std::string(buf.get_str(e_idx, "resource_type"));
+            edu.progress_percent = buf.get_f64(e_idx, "progress_percent");
+            edu.focus_duration_minutes = buf.get_f64(e_idx, "focus_duration_minutes");
+            edu.credential_uuid = std::string(buf.get_str(e_idx, "credential_uuid"));
+        } catch (...) {
+            return {"", "", 0.0, 0.0, ""};
+        }
+        return edu;
+    }
+};
+
+/**
  * @brief Universal Atom Schema (CPB_ENTRY)
  */
 struct CpbEntry {
@@ -251,6 +337,8 @@ struct CpbEntry {
         std::vector<std::string> artifact_refs;
     } payload;
 
+    std::optional<Wellness> wellness;
+    std::optional<Education> education;
     std::optional<ValidationSignature> signature;
 
     void serialize(lite3cpp::Buffer& buf) const {
@@ -278,6 +366,12 @@ struct CpbEntry {
         size_t refs_idx = buf.set_arr(p_idx, "artifact_refs");
         for (const auto& ref : payload.artifact_refs) buf.arr_append_str(refs_idx, ref);
 
+        if (wellness) {
+            wellness->serialize(buf, 0);
+        }
+        if (education) {
+            education->serialize(buf, 0);
+        }
         if (signature) {
             signature->serialize(buf, 0);
         }
@@ -314,6 +408,18 @@ struct CpbEntry {
         for (uint32_t i = 0; i < refs_nv.size(); ++i) {
             entry.payload.artifact_refs.push_back(std::string(buf.arr_get_str(refs_idx, i)));
         }
+
+        try {
+            if (buf.get_type(0, "wellness") == lite3cpp::Type::Object) {
+                entry.wellness = Wellness::deserialize(buf, 0);
+            }
+        } catch (...) {}
+
+        try {
+            if (buf.get_type(0, "education") == lite3cpp::Type::Object) {
+                entry.education = Education::deserialize(buf, 0);
+            }
+        } catch (...) {}
 
         try {
             if (buf.get_type(0, "validation_signature") == lite3cpp::Type::Object) {

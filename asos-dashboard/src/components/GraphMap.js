@@ -21,6 +21,14 @@ const getKAColor = (ka) => {
     13: "hsla(230, 80%, 40%, 0.8)",  // Computing Foundations
     14: "hsla(260, 80%, 40%, 0.8)",  // Math Foundations
     15: "hsla(200, 80%, 40%, 0.8)",  // Eng Foundations
+    
+    // Life Journaling Domains
+    20: "hsla(330, 90%, 60%, 0.85)", // Health & Wellness (Pink/Rose)
+    21: "hsla(15, 95%, 55%, 0.85)",  // Social & Relationships (Peach/Coral)
+    22: "hsla(280, 85%, 65%, 0.85)", // Personal Reflections (Lavender)
+    23: "hsla(265, 80%, 45%, 0.85)", // Leisure & Creativity (Deep Indigo)
+    24: "hsla(90, 75%, 50%, 0.85)",  // Daily Routine (Fresh Lime)
+    25: "hsla(45, 95%, 55%, 0.85)",  // Education & Learning (Amber)
   };
   return colors[ka] || "hsla(230, 20%, 40%, 0.8)";
 };
@@ -30,7 +38,9 @@ const getKAName = (ka) => {
     1: "Requirements", 2: "Design", 3: "Construction", 4: "Testing",
     5: "Maintenance", 6: "Config Mgmt", 7: "Eng Mgmt", 8: "Eng Process",
     9: "Eng Models", 10: "Quality", 11: "Professional", 12: "Economics",
-    13: "Computing", 14: "Math", 15: "Engineering"
+    13: "Computing", 14: "Math", 15: "Engineering",
+    20: "Wellness", 21: "Relationships", 22: "Reflections", 23: "Leisure",
+    24: "Routine", 25: "Education"
   };
   return names[ka] || "Unknown";
 };

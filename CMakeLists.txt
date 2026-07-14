@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Paths to dependencies
-set(L3KVG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../L3KVG)
+set(L3KVG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../l3kvg)
 
 # Include L3KVG, which transitively includes L3KV, lite3-cpp, libzmq, and cppzmq
 add_subdirectory(${L3KVG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/l3kvg)
@@ -52,24 +52,24 @@ add_executable(asos_daemon
 target_link_libraries(asos_daemon PRIVATE
     asos_engine
     Threads::Threads
-    ws2_32
-    bcrypt
-    iphlpapi
+    $<$<BOOL:${WIN32}>:ws2_32>
+    $<$<BOOL:${WIN32}>:bcrypt>
+    $<$<BOOL:${WIN32}>:iphlpapi>
 )
 
 # ASOS Verification Tool
 add_executable(asos_verify src/main_verify.cpp)
-target_link_libraries(asos_verify PRIVATE asos_engine Threads::Threads ws2_32 bcrypt iphlpapi)
+target_link_libraries(asos_verify PRIVATE asos_engine Threads::Threads $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
 
 # Scratch Test
 add_executable(test_orphan_rejection scratch/test_orphan_rejection.cpp)
-target_link_libraries(test_orphan_rejection PRIVATE asos_engine Threads::Threads ws2_32 bcrypt iphlpapi)
+target_link_libraries(test_orphan_rejection PRIVATE asos_engine Threads::Threads $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
 
 add_executable(dump_keys scratch/dump_keys.cpp)
-target_link_libraries(dump_keys PRIVATE asos_engine Threads::Threads ws2_32 bcrypt iphlpapi)
+target_link_libraries(dump_keys PRIVATE asos_engine Threads::Threads $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
 
 add_executable(seed_and_wait scratch/seed_and_wait.cpp)
-target_link_libraries(seed_and_wait PRIVATE asos_engine Threads::Threads ws2_32 bcrypt iphlpapi)
+target_link_libraries(seed_and_wait PRIVATE asos_engine Threads::Threads $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
 
 if(MSVC)
     target_compile_options(asos_verify PRIVATE /bigobj)
