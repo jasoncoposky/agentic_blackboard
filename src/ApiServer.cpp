@@ -32,17 +32,15 @@ void ApiServer::start(Blackboard* blackboard, int port) {
 }
 
 void ApiServer::stop() {
+    if (!running_) return;
     running_ = false;
-    for (int i = 0; i < 50; ++i) {
-        auto* s = s_server.load();
-        if (s) {
-            s->stop();
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    auto* s = s_server.load();
+    if (s) {
+        s->stop();
     }
     if (thread_.joinable())
         thread_.join();
+    s_server.store(nullptr);
 }
 
 void ApiServer::listen_loop() {
@@ -123,6 +121,12 @@ void ApiServer::listen_loop() {
     svr.Post("/api/v1/graph/bundle", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             auto j = json::parse(req.body);
+            if (!j.contains("atoms") || !j["atoms"].is_array()) {
+                res.status = 400;
+                res.set_content("Error: Missing atoms array", "text/plain");
+                return;
+            }
+
             std::string project_id = j.value("project_id", "");
             std::string agent_id = j.value("agent_id", "");
 
@@ -519,10 +523,8 @@ void ApiServer::listen_loop() {
             }
 
             std::set<std::string> unique_keys;
-            auto keys1 = store->get_prefix_keys_all_shards("n:", "n:", 1000);
-            auto keys2 = store->get_prefix_keys_all_shards("n:{", "n:{", 1000);
-            unique_keys.insert(keys1.begin(), keys1.end());
-            unique_keys.insert(keys2.begin(), keys2.end());
+            auto keys = store->get_prefix_keys_all_shards("n:", "n:", engine->get_settings().prefix_scan_limit);
+            unique_keys.insert(keys.begin(), keys.end());
 
             json matches = json::array();
             std::unordered_set<std::string> seen_uuids;
@@ -887,6 +889,14 @@ void ApiServer::listen_loop() {
                 principal_id = blackboard_->get_user_uid(active_user);
             }
 
+            std::string db_key = std::string(l3kvg::KeyBuilder::node_key(engine->get_resolver().parse_uuid(uuid)));
+            auto node_buf = store->get(db_key, principal_id);
+            if (node_buf.size() == 0) {
+                res.status = 404;
+                res.set_content("Node not found", "text/plain");
+                return;
+            }
+
             std::string direction = req.get_param_value("direction");
             if (direction.empty()) direction = "both";
 
@@ -1165,6 +1175,7 @@ void ApiServer::listen_loop() {
     if (!svr.listen("127.0.0.1", port_)) {
         std::cerr << "[API] FAILED to start server on port " << port_ << std::endl;
     }
+    s_server.store(nullptr);
 }
 
 

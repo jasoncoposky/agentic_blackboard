@@ -1004,6 +1004,56 @@ void test_api_search_and_links() {
         ASOS_CHECK(node_json["metrics"][0]["name"] == "baking_temp");
         ASOS_CHECK(node_json["attributes"]["difficulty"] == "Easy");
 
+        // 4b. Test POST /api/v1/graph/bundle error handling (missing/invalid atoms array)
+        nlohmann::json bad_bundle = {
+            {"project_id", "proj-bundle"},
+            {"agent_id", "agent-bundle"}
+        };
+        auto res_bad_bundle = cli.Post("/api/v1/graph/bundle", bad_bundle.dump(), "application/json");
+        ASOS_CHECK(res_bad_bundle && res_bad_bundle->status == 400);
+        ASOS_CHECK(res_bad_bundle->body == "Error: Missing atoms array");
+
+        // 5. Multi-Tenancy ACL Verification
+        // Commit a tenant-isolated note with X-Active-User: tenant-alice
+        nlohmann::json alice_bundle = {
+            {"project_id", "proj-alice"},
+            {"agent_id", "tenant-alice"},
+            {"atoms", nlohmann::json::array({
+                {
+                    {"uuid", "note-alice-secret-1"},
+                    {"statement", "Alice Secret Confidential Cognitive Architecture"},
+                    {"ka", 1},
+                    {"tags", {"ALICE_ONLY", "CONFIDENTIAL"}}
+                }
+            })}
+        };
+        httplib::Headers alice_headers = {{"X-Active-User", "tenant-alice"}};
+        auto res_alice = cli.Post("/api/v1/graph/bundle", alice_headers, alice_bundle.dump(), "application/json");
+        ASOS_CHECK(res_alice && res_alice->status == 200);
+
+        store->wait_all_shards();
+
+        // Bob queries GET /api/v1/search with X-Active-User: tenant-bob
+        httplib::Headers bob_headers = {{"X-Active-User", "tenant-bob"}};
+        auto res_bob_search = cli.Get("/api/v1/search?q=Confidential", bob_headers);
+        ASOS_CHECK(res_bob_search && res_bob_search->status == 200);
+        auto bob_search_json = nlohmann::json::parse(res_bob_search->body);
+        for (const auto& match : bob_search_json["matches"]) {
+            ASOS_CHECK(match["uuid"] != "note-alice-secret-1");
+        }
+
+        // Bob queries GET /api/v1/node/:id/links for Alice's note - assert 404 / access denied
+        auto res_bob_links = cli.Get("/api/v1/node/note-alice-secret-1/links", bob_headers);
+        ASOS_CHECK(res_bob_links && res_bob_links->status == 404);
+
+        // Non-existent node query should also return 404 Not Found
+        auto res_missing_links = cli.Get("/api/v1/node/nonexistent-node-12345/links");
+        ASOS_CHECK(res_missing_links && res_missing_links->status == 404);
+
+        // Alice queries GET /api/v1/node/:id/links for her note - should succeed (200)
+        auto res_alice_links = cli.Get("/api/v1/node/note-alice-secret-1/links", alice_headers);
+        ASOS_CHECK(res_alice_links && res_alice_links->status == 200);
+
         ApiServer::instance().stop();
     }
 #undef ASOS_CHECK
