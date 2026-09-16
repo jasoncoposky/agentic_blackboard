@@ -1,5 +1,6 @@
 #include "asos/ApiServer.hpp"
 #include "asos/Orchestrator.hpp"
+#include "asos/RdfExporter.hpp"
 #include "httplib.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -477,6 +478,30 @@ void ApiServer::listen_loop() {
             json err = {{"error", e.what()}, {"nodes", json::array()}, {"edges", json::array()}};
             res.status = 500;
             res.set_content(err.dump(2), "application/json");
+        }
+    });
+
+    // 4b. RDF Turtle Export Endpoint
+    svr.Get("/api/v1/graph/export", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string format = req.get_param_value("format");
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
+
+            if (format == "turtle" || format.empty()) {
+                std::string ttl = RdfExporter::export_turtle(blackboard_, principal_id);
+                res.set_content(ttl, "text/turtle");
+            } else {
+                res.status = 400;
+                res.set_content("Unsupported format: " + format, "text/plain");
+            }
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(e.what(), "text/plain");
         }
     });
 

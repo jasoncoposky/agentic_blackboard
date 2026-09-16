@@ -30,6 +30,7 @@ add_library(asos_engine STATIC
     src/DeltaEngine.cpp
     src/Monitor.cpp
     src/ApiServer.cpp
+    src/RdfExporter.cpp
 )
 
 
