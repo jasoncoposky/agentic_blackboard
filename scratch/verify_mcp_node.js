@@ -50,6 +50,7 @@ const {
   ensure_node,
   link_nodes,
   query_knowledge,
+  query_substrate,
   get_schema,
   get_skill,
   init_swarm,
@@ -82,7 +83,7 @@ async function ensureBackend() {
     detached: false,
   });
 
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 150; i++) {
     await new Promise((r) => setTimeout(r, 200));
     try {
       const resp = await axios.get(`${API_BASE}/schema`, { timeout: 1000 });
@@ -526,6 +527,27 @@ async function runTests() {
   }
   console.log("✓ mcpClient.readResource('asos://skills/knowledge-capture') verified via JSON-RPC.");
 
+  // 12d. List & Get Prompts via MCP Client
+  const promptsList = await mcpClient.listPrompts();
+  const promptNames = promptsList.prompts.map((p) => p.name);
+  if (!promptNames.includes("curate_note") || !promptNames.includes("author_catalog") || !promptNames.includes("init_swarm")) {
+    throw new Error(`Missing expected prompts in listPrompts: ${promptNames}`);
+  }
+  console.log(`✓ mcpClient.listPrompts() returned ${promptsList.prompts.length} prompts.`);
+
+  const promptRes = await mcpClient.getPrompt({
+    name: "curate_note",
+    arguments: { project_id: "p1", thesis: "test" },
+  });
+  if (!promptRes.messages || promptRes.messages.length === 0) {
+    throw new Error("getPrompt returned empty messages");
+  }
+  const promptContent = promptRes.messages[0].content.text || "";
+  if (!promptContent.includes("curating a Knowledge Note") || !promptContent.includes("p1") || !promptContent.includes("test")) {
+    throw new Error(`Unexpected prompt content: ${promptContent}`);
+  }
+  console.log("✓ mcpClient.getPrompt('curate_note') verified via JSON-RPC.");
+
   // 13. Test commit_anchored_knowledge with rich fields
   console.log("\n--- 13. Testing commit_anchored_knowledge with Rich Fields ---");
   const richAtomUuid = `note-rich-${runId}`;
@@ -558,6 +580,73 @@ async function runTests() {
     throw new Error(`Rich atom mismatch: ${richNodeStr}`);
   }
   console.log("✓ commit_anchored_knowledge with rich fields verified.");
+
+  // Verify commit_knowledge_bundle alias exported and functioning
+  const bundleAtomUuid = `note-bundle-${runId}`;
+  const bundleRes = await commit_knowledge_bundle({
+    project_id: "project:node_suite",
+    agent_id: "identity:node_verifier",
+    atoms: [
+      {
+        uuid: bundleAtomUuid,
+        statement: `Knowledge Bundle Alias Atom [${runId}]`,
+        content: "Testing commit_knowledge_bundle alias.",
+        ka: 31,
+        tags: ["BUNDLE_ALIAS", tagName],
+      },
+    ],
+  });
+  console.log("commit_knowledge_bundle result:", bundleRes);
+  if (!bundleRes.includes("Successfully committed")) {
+    throw new Error(`Expected success message in bundleRes: ${bundleRes}`);
+  }
+  const bundleNodeStr = await get_node(bundleAtomUuid);
+  const bundleNodeData = JSON.parse(bundleNodeStr);
+  if (bundleNodeData.statement !== `Knowledge Bundle Alias Atom [${runId}]`) {
+    throw new Error(`Bundle atom mismatch: ${bundleNodeStr}`);
+  }
+  console.log("✓ commit_knowledge_bundle alias verified.");
+
+  // Test commit_knowledge_bundle via MCP client tool
+  const mcpBundleCallRes = await mcpClient.callTool({
+    name: "commit_knowledge_bundle",
+    arguments: {
+      project_id: "project:node_suite",
+      agent_id: "identity:node_verifier",
+      atoms: [
+        {
+          statement: `MCP Tool Commit Knowledge Bundle [${runId}]`,
+          content: "Testing commit_knowledge_bundle via JSON-RPC.",
+          ka: 31,
+          tags: ["MCP_BUNDLE", tagName],
+        },
+      ],
+    },
+  });
+  if (!mcpBundleCallRes.content || mcpBundleCallRes.content.length === 0) {
+    throw new Error("mcpClient.callTool('commit_knowledge_bundle') returned empty content");
+  }
+  console.log("✓ mcpClient.callTool('commit_knowledge_bundle') verified via JSON-RPC.");
+
+  // 14. Test query_knowledge & query_substrate Parameter Handling
+  console.log("\n--- 14. Testing query_knowledge & query_substrate Parameter Handling ---");
+  // Positional call with where_eq as first argument: query_knowledge({ ka: 31 })
+  const qPosRes = await query_knowledge({ ka: 31 });
+  console.log("✓ query_knowledge(positional where_eq) verified.");
+
+  // Object options call with where_eq and match_alias
+  const qObjRes = await query_knowledge({ where_eq: { ka: 31 }, match_alias: "n" });
+  console.log("✓ query_knowledge(object options with match_alias) verified.");
+
+  // query_substrate via MCP client tool
+  const mcpSubstrateRes = await mcpClient.callTool({
+    name: "query_substrate",
+    arguments: { where_eq: { ka: 31 }, match_alias: "n" },
+  });
+  if (!mcpSubstrateRes.content || mcpSubstrateRes.content.length === 0) {
+    throw new Error("mcpClient.callTool('query_substrate') returned empty content");
+  }
+  console.log("✓ mcpClient.callTool('query_substrate') verified via JSON-RPC.");
 
   console.log("\n" + "=".repeat(60));
   console.log("ALL ASOS NODE.JS MCP VERIFICATION TESTS PASSED!");

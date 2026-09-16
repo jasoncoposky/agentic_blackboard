@@ -63,11 +63,7 @@ async function get_skill(name) {
       return `Error: Skill '${name}' not found.`;
     }
 
-    if (!fs.existsSync(skillPath) || !fs.statSync(skillPath).isFile()) {
-      return `Error: Skill '${name}' not found.`;
-    }
-
-    return await fs.promises.readFile(skillPath, "utf8");
+    return await fs.promises.readFile(skillPath, "utf-8");
   } catch (error) {
     return `Error: Skill '${name}' not found.`;
   }
@@ -447,6 +443,8 @@ async function commit_anchored_knowledge(projectIdOrArgs, agentIdParam, atomsPar
   }
 }
 
+const commit_knowledge_bundle = commit_anchored_knowledge;
+
 /**
  * Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the ASOS substrate.
  */
@@ -521,11 +519,21 @@ async function link_nodes(sourceOrArgs, targetParam, labelParam, weightParam, ac
  * Execute a graph query against the ASOS knowledge substrate.
  */
 async function query_knowledge(whereEqOrArgs, matchParam, activeUserParam) {
-  let where_eq, match, active_user;
+  let where_eq = {};
+  let match = "n";
+  let active_user;
+
   if (typeof whereEqOrArgs === "object" && whereEqOrArgs !== null) {
-    ({ where_eq = {}, match = "n", active_user } = whereEqOrArgs);
+    if ("where_eq" in whereEqOrArgs || "match" in whereEqOrArgs || "match_alias" in whereEqOrArgs || "active_user" in whereEqOrArgs) {
+      where_eq = whereEqOrArgs.where_eq || {};
+      match = whereEqOrArgs.match || whereEqOrArgs.match_alias || matchParam || "n";
+      active_user = whereEqOrArgs.active_user || activeUserParam;
+    } else {
+      where_eq = whereEqOrArgs;
+      match = matchParam || "n";
+      active_user = activeUserParam;
+    }
   } else {
-    where_eq = whereEqOrArgs || {};
     match = matchParam || "n";
     active_user = activeUserParam;
   }
@@ -542,6 +550,8 @@ async function query_knowledge(whereEqOrArgs, matchParam, activeUserParam) {
     return formatError(error);
   }
 }
+
+const query_substrate = query_knowledge;
 
 // Prompt templates matching FastMCP server
 function init_swarm(project_id, objective) {
@@ -604,6 +614,32 @@ const server = new Server(
     },
   }
 );
+
+const bundleInputProperties = {
+  project_id: { type: "string", description: "Mandatory project anchor ID" },
+  agent_id: { type: "string", description: "Mandatory author/agent identity anchor" },
+  active_user: { type: "string", description: "Optional tenant / active user identifier" },
+  atoms: {
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        uuid: { type: "string" },
+        statement: { type: "string" },
+        content: { type: "string" },
+        ka: { type: "number", description: "Knowledge Area integer ID" },
+        tags: { type: "array", items: { type: "string" } },
+        references: { type: "array", items: { type: "object" } },
+        note_links: { type: "array", items: { type: "object" } },
+        items: { type: "array", items: { type: "object" } },
+        steps: { type: "array", items: { type: "object" } },
+        metrics: { type: "array", items: { type: "object" } },
+        attributes: { type: "object" },
+      },
+      required: ["statement"],
+    },
+  },
+};
 
 // 1. List Available Tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -674,31 +710,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Atomically commit a subgraph of knowledge atoms, ensuring they are anchored to a Project and Identity.",
         inputSchema: {
           type: "object",
-          properties: {
-            project_id: { type: "string", description: "Mandatory project anchor ID" },
-            agent_id: { type: "string", description: "Mandatory author/agent identity anchor" },
-            active_user: { type: "string", description: "Optional tenant / active user identifier" },
-            atoms: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  uuid: { type: "string" },
-                  statement: { type: "string" },
-                  content: { type: "string" },
-                  ka: { type: "number", description: "Knowledge Area integer ID" },
-                  tags: { type: "array", items: { type: "string" } },
-                  references: { type: "array", items: { type: "object" } },
-                  note_links: { type: "array", items: { type: "object" } },
-                  items: { type: "array", items: { type: "object" } },
-                  steps: { type: "array", items: { type: "object" } },
-                  metrics: { type: "array", items: { type: "object" } },
-                  attributes: { type: "object" },
-                },
-                required: ["statement"],
-              },
-            },
-          },
+          properties: bundleInputProperties,
           required: ["project_id", "agent_id", "atoms"],
         },
       },
@@ -707,31 +719,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description: "Commit a bundle of knowledge atoms to the substrate anchored to a project and agent.",
         inputSchema: {
           type: "object",
-          properties: {
-            project_id: { type: "string", description: "Mandatory project anchor ID" },
-            agent_id: { type: "string", description: "Mandatory author/agent identity anchor" },
-            active_user: { type: "string", description: "Optional tenant / active user identifier" },
-            atoms: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  uuid: { type: "string" },
-                  statement: { type: "string" },
-                  content: { type: "string" },
-                  ka: { type: "number" },
-                  tags: { type: "array", items: { type: "string" } },
-                  references: { type: "array", items: { type: "object" } },
-                  note_links: { type: "array", items: { type: "object" } },
-                  items: { type: "array", items: { type: "object" } },
-                  steps: { type: "array", items: { type: "object" } },
-                  metrics: { type: "array", items: { type: "object" } },
-                  attributes: { type: "object" },
-                },
-                required: ["statement"],
-              },
-            },
-          },
+          properties: bundleInputProperties,
           required: ["project_id", "agent_id", "atoms"],
         },
       },
@@ -1093,9 +1081,11 @@ module.exports = {
   create_note,
   create_catalog_entry,
   commit_anchored_knowledge,
+  commit_knowledge_bundle,
   ensure_node,
   link_nodes,
   query_knowledge,
+  query_substrate,
   get_schema,
   get_skill,
   init_swarm,
