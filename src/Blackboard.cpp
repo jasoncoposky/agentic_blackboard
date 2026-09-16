@@ -461,6 +461,41 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(
         }
     }
 
+    // If any dst_uuid in outbound is an unresolved 16-hex hash, resolve via source note's note_links or references
+    uint32_t eff_principal = (principal_id == 0) ? l3kv::ADMIN_UID : principal_id;
+    auto src_buf = store->get(db_key, eff_principal);
+    if (src_buf.size() > 0) {
+        try {
+            CpbEntry src_entry = CpbEntry::deserialize(src_buf);
+            for (auto& [dst_uuid, rel_label] : outbound) {
+                if (dst_uuid.size() == 16) {
+                    for (const auto& nl : src_entry.payload.note_links) {
+                        if (!nl.target_uuid.empty()) {
+                            char hbuf[17];
+                            std::snprintf(hbuf, sizeof(hbuf), "%016llx",
+                                          static_cast<unsigned long long>(engine_->get_resolver().parse_uuid(nl.target_uuid)));
+                            if (dst_uuid == hbuf) {
+                                dst_uuid = nl.target_uuid;
+                                break;
+                            }
+                        }
+                    }
+                    for (const auto& r : src_entry.payload.references) {
+                        if (!r.uuid.empty()) {
+                            char hbuf[17];
+                            std::snprintf(hbuf, sizeof(hbuf), "%016llx",
+                                          static_cast<unsigned long long>(engine_->get_resolver().parse_uuid(r.uuid)));
+                            if (dst_uuid == hbuf) {
+                                dst_uuid = r.uuid;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (...) {}
+    }
+
     return outbound;
 }
 

@@ -523,6 +523,18 @@ void test_commonplace_note_references() {
             std::cerr << "[Test] FAILED: Reference 2 fields mismatch" << std::endl;
             exit(1);
         }
+
+        auto outbound = bb.get_outbound_links("note-ref-1");
+        bool has_doi_cites = false;
+        for (const auto& [dst, rel] : outbound) {
+            if (dst == "urn:doi:10.1145/367177.367199" && rel == rel::CITES) {
+                has_doi_cites = true;
+            }
+        }
+        if (!has_doi_cites) {
+            std::cerr << "[Test] FAILED: Outbound links for note-ref-1 missing (urn:doi:10.1145/367177.367199, CITES)" << std::endl;
+            exit(1);
+        }
     }
     std::filesystem::remove_all("test_note_ref_db");
     std::cout << "[Test] Commonplace Note References Verification PASSED" << std::endl;
@@ -535,15 +547,21 @@ void test_note_graph_backlinks() {
         Blackboard bb("test_backlinks_db", 9);
         auto* store = bb.get_engine()->get_store();
 
+        bb.register_user_credentials("alice", "alice-key");
+        uint32_t alice_uid = bb.get_user_uid("alice");
+
+        bb.register_user_credentials("intruder-agent", "intruder-key");
+        uint32_t intruder_uid = bb.get_user_uid("intruder-agent");
+
         CpbEntry note_a;
         note_a.header.uuid = "note-A";
-        note_a.header.origin.agent_id = "agent-backlinks";
+        note_a.header.origin.agent_id = "identity:alice";
         note_a.header.origin.project_id = "project-backlinks";
         note_a.payload.statement = "Note A on Foundations";
 
         CpbEntry note_b;
         note_b.header.uuid = "note-B";
-        note_b.header.origin.agent_id = "agent-backlinks";
+        note_b.header.origin.agent_id = "identity:alice";
         note_b.header.origin.project_id = "project-backlinks";
         note_b.payload.statement = "Note B on Recursion";
         NoteLink link_b;
@@ -554,7 +572,7 @@ void test_note_graph_backlinks() {
 
         CpbEntry note_c;
         note_c.header.uuid = "note-C";
-        note_c.header.origin.agent_id = "agent-backlinks";
+        note_c.header.origin.agent_id = "identity:alice";
         note_c.header.origin.project_id = "project-backlinks";
         note_c.payload.statement = "Note C related concepts";
         NoteLink link_c;
@@ -563,12 +581,19 @@ void test_note_graph_backlinks() {
         link_c.context = "Related context";
         note_c.payload.note_links.push_back(link_c);
 
-        bb.commit_cpb_entry(note_a);
-        bb.commit_cpb_entry(note_b);
-        bb.commit_cpb_entry(note_c);
+        bb.commit_cpb_entry(note_a, alice_uid);
+        bb.commit_cpb_entry(note_b, alice_uid);
+        bb.commit_cpb_entry(note_c, alice_uid);
         store->wait_all_shards();
 
-        auto backlinks = bb.get_backlinks("note-A");
+        // Multi-tenant isolation: intruder must not see Note A backlinks
+        auto intruder_backlinks = bb.get_backlinks("note-A", intruder_uid);
+        if (!intruder_backlinks.empty()) {
+            std::cerr << "[Test] FAILED: Multi-tenant isolation failure: intruder accessed note-A backlinks" << std::endl;
+            exit(1);
+        }
+
+        auto backlinks = bb.get_backlinks("note-A", alice_uid);
         bool has_b_extends = false;
         bool has_c_see_also = false;
         for (const auto& [src, rel] : backlinks) {
@@ -585,7 +610,7 @@ void test_note_graph_backlinks() {
             exit(1);
         }
 
-        auto outbound_b = bb.get_outbound_links("note-B");
+        auto outbound_b = bb.get_outbound_links("note-B", alice_uid);
         bool has_a_extends = false;
         for (const auto& [dst, rel] : outbound_b) {
             if (dst == "note-A" && rel == "EXTENDS") has_a_extends = true;
@@ -767,6 +792,9 @@ void test_rdf_export_notes_and_recipes() {
         recipe.payload.statement = "Classic Tiramisu";
         recipe.items.push_back({ "Mascarpone", 500.0, "g", "INGREDIENT", "room temperature" });
         recipe.steps.push_back({ 1, "Brew espresso and allow to cool", 300, "" });
+        recipe.metrics.push_back({ "prep_time", 30.0, "min" });
+        recipe.metrics.push_back({ "servings", 8.0, "yield" });
+        recipe.attributes["cuisine"] = "Italian";
 
         bb.commit_cpb_entry(recipe);
         store->wait_all_shards();
@@ -781,7 +809,10 @@ void test_rdf_export_notes_and_recipes() {
             "schema:recipeIngredient",
             "schema:recipeInstructions",
             "asos:extends",
-            "dc:title"
+            "dc:title",
+            "schema:Recipe",
+            "asos:metric",
+            "asos:attribute"
         };
 
         for (const auto& req : required_strings) {
