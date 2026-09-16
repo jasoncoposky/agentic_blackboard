@@ -2,14 +2,18 @@
 """
 Standalone verification script for ASOS FastMCP Atmosphere & Commonplace Server upgrades.
 Verifies:
-1. search_commonplace (text query, ka filter, tags filter)
-2. get_node (retrieval of full hydrated atom properties)
-3. get_node_links (inbound and outbound relationship queries)
-4. create_note (creation and duplicate detection on second attempt)
-5. create_catalog_entry (creation and duplicate detection)
-6. export_graph_rdf (W3C RDF Turtle serialization)
-7. Reading asos://skills/knowledge-capture resource
-8. Curate note & author catalog prompts
+1. HTTP Client Timeouts & Resource security (asos://schema, asos://skills/knowledge-capture, path traversal prevention)
+2. Prompts (curate_note, author_catalog)
+3. Anchor node creation (ensure_node)
+4. create_note (structured JSON response, auto-generated UUID, duplicate detection, deduplication limit)
+5. get_node (retrieval of full hydrated atom properties)
+6. create_catalog_entry (structured JSON response, auto-generated UUID, duplicate detection)
+7. search_commonplace (text query, ka filter, tags filter)
+8. link_nodes & get_node_links (inbound and outbound relationship queries)
+9. export_graph_rdf (W3C RDF Turtle serialization with RDF_TIMEOUT)
+10. FastMCP mcp.call_tool interface
+11. Multi-Tenancy Isolation (active_user tenant isolation between Alice and Bob)
+12. Error Propagation (httpx error response structure)
 """
 
 import asyncio
@@ -17,6 +21,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import time
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -38,6 +43,8 @@ from asos_mcp_server import (
     curate_note,
     author_catalog,
     ASOS_API_URL,
+    DEFAULT_TIMEOUT,
+    RDF_TIMEOUT,
 )
 
 started_process = None
@@ -85,8 +92,15 @@ async def run_tests():
     print("RUNNING ASOS FASTMCP ATMOSPHERE VERIFICATION SUITE")
     print("=" * 60)
 
-    # 1. Test Resources
-    print("\n--- 1. Testing Resources ---")
+    # 0. Test Timeout Configurations
+    print("\n--- 0. Testing Timeout Configurations ---")
+    assert DEFAULT_TIMEOUT.connect == 3.0, f"Expected connect=3.0, got {DEFAULT_TIMEOUT.connect}"
+    assert DEFAULT_TIMEOUT.read == 10.0, f"Expected read=10.0, got {DEFAULT_TIMEOUT.read}"
+    assert RDF_TIMEOUT.read == 30.0, f"Expected read=30.0, got {RDF_TIMEOUT.read}"
+    print("✓ DEFAULT_TIMEOUT and RDF_TIMEOUT configurations verified.")
+
+    # 1. Test Resources & Security
+    print("\n--- 1. Testing Resources & Security ---")
     schema_res = await mcp.read_resource("asos://schema")
     assert len(schema_res) > 0, "No content returned from asos://schema"
     schema_text = schema_res[0].content
@@ -103,8 +117,13 @@ async def run_tests():
 
     # Test get_skill directly with non-existent skill
     err_skill = await get_skill("nonexistent-skill-xyz")
-    assert "not found" in err_skill.lower(), "Expected not found error for nonexistent skill"
-    print("✓ Error handling for missing skill resource verified.")
+    assert err_skill == "Error: Skill 'nonexistent-skill-xyz' not found.", f"Unexpected output: {err_skill}"
+    print("✓ Error handling for missing skill resource verified without path leakage.")
+
+    # Test get_skill path traversal protection
+    err_traversal = await get_skill("../../src/ApiServer")
+    assert err_traversal == "Error: Skill '../../src/ApiServer' not found.", f"Unexpected traversal output: {err_traversal}"
+    print("✓ Path traversal protection for skill resource verified.")
 
     # 2. Test Prompts
     print("\n--- 2. Testing Prompts ---")
@@ -139,12 +158,11 @@ async def run_tests():
     print("ensure_node(IDENTITY):", a_res)
     print("✓ Anchors created/confirmed.")
 
-    import time
     run_id = str(int(time.time() * 1000))
     tag_name = f"SYN_{run_id}"
 
-    # 4. Test create_note & Duplicate Detection
-    print("\n--- 4. Testing create_note & Duplicate Detection ---")
+    # 4. Test create_note, Returned UUID, & Duplicate Detection
+    print("\n--- 4. Testing create_note, Returned UUID & Duplicate Detection ---")
     note_uuid = f"note-atmo-{run_id}"
     note_stmt = f"Atmosphere subagents require bidirectional synapse verification on creation [{run_id}]."
     note_content = "Detailed documentation on why bidirectional links ensure graph integrity."
@@ -170,8 +188,27 @@ async def run_tests():
         uuid=note_uuid,
         check_duplicates=True
     )
-    print("create_note (initial creation):", res_note1)
-    assert "Successfully committed" in res_note1 or "COMMITTED" in res_note1, f"Unexpected create_note response: {res_note1}"
+    print("create_note (initial creation with explicit UUID):", res_note1)
+    note1_data = json.loads(res_note1)
+    assert note1_data.get("status") == "COMMITTED", f"Expected COMMITTED, got {note1_data}"
+    assert note1_data.get("uuid") == note_uuid, f"Expected {note_uuid}, got {note1_data.get('uuid')}"
+    print(f"✓ create_note returned structured JSON with explicit UUID: {note1_data.get('uuid')}")
+
+    # Test create_note with client-side auto-generated UUID
+    res_note_auto = await create_note(
+        project_id="project:atmo_suite",
+        agent_id="identity:atmo_verifier",
+        statement=f"Auto generated UUID note assertion [{run_id}].",
+        content="Testing automatic UUID generation when uuid=None.",
+        tags=["AUTO_UUID", tag_name],
+        check_duplicates=False
+    )
+    print("create_note (auto-generated UUID):", res_note_auto)
+    auto_note_data = json.loads(res_note_auto)
+    assert auto_note_data.get("status") == "COMMITTED"
+    assigned_note_uuid = auto_note_data.get("uuid", "")
+    assert assigned_note_uuid.startswith("note-"), f"Expected UUID starting with 'note-', got: {assigned_note_uuid}"
+    print(f"✓ create_note auto-generated client-side UUID: {assigned_note_uuid}")
 
     # Attempt second creation with identical statement and check_duplicates=True
     res_note2 = await create_note(
@@ -199,7 +236,9 @@ async def run_tests():
         check_duplicates=False
     )
     print("create_note (force duplicate with check_duplicates=False):", res_note_force)
-    assert "Successfully committed" in res_note_force or "COMMITTED" in res_note_force
+    force_data = json.loads(res_note_force)
+    assert force_data.get("status") == "COMMITTED"
+    assert force_data.get("uuid") == forced_uuid
     print("✓ create_note forced creation with check_duplicates=False verified.")
 
     # 5. Test get_node
@@ -242,7 +281,24 @@ async def run_tests():
         check_duplicates=True
     )
     print("create_catalog_entry (initial creation):", res_cat1)
-    assert "Successfully committed" in res_cat1 or "COMMITTED" in res_cat1
+    cat1_data = json.loads(res_cat1)
+    assert cat1_data.get("status") == "COMMITTED"
+    assert cat1_data.get("uuid") == cat_uuid
+
+    # Test create_catalog_entry with auto-generated UUID
+    res_cat_auto = await create_catalog_entry(
+        project_id="project:atmo_suite",
+        agent_id="identity:atmo_verifier",
+        statement=f"Protocol: High Availability Failover Sequence [{run_id}]",
+        content="Automated failover sequence.",
+        check_duplicates=False
+    )
+    print("create_catalog_entry (auto-generated UUID):", res_cat_auto)
+    auto_cat_data = json.loads(res_cat_auto)
+    assert auto_cat_data.get("status") == "COMMITTED"
+    assigned_cat_uuid = auto_cat_data.get("uuid", "")
+    assert assigned_cat_uuid.startswith("catalog-"), f"Expected 'catalog-' prefix, got {assigned_cat_uuid}"
+    print(f"✓ create_catalog_entry auto-generated client-side UUID: {assigned_cat_uuid}")
 
     # Duplicate check for catalog entry
     res_cat2 = await create_catalog_entry(
@@ -322,6 +378,62 @@ async def run_tests():
     mcp_data = json.loads(mcp_text)
     assert mcp_data["count"] >= 1
     print("✓ FastMCP mcp.call_tool interface verified.")
+
+    # 11. Test Multi-Tenancy Isolation
+    print("\n--- 11. Testing Multi-Tenancy Isolation ---")
+    alice_stmt = f"Alice tenant confidential knowledge statement [{run_id}]."
+    alice_content = "Tenant Alice isolated knowledge content."
+    res_alice = await create_note(
+        project_id="project:atmo_suite",
+        agent_id="identity:tenant-alice",
+        statement=alice_stmt,
+        content=alice_content,
+        tags=["ALICE_ISOLATED", tag_name],
+        active_user="tenant-alice",
+        check_duplicates=True
+    )
+    print("create_note (tenant-alice):", res_alice)
+    alice_data = json.loads(res_alice)
+    assert alice_data.get("status") == "COMMITTED", f"Expected COMMITTED, got {alice_data}"
+    alice_uuid = alice_data.get("uuid")
+    assert alice_uuid, "Expected assigned/generated UUID for Alice note"
+    print(f"✓ Created Alice note with UUID: {alice_uuid}")
+
+    # Query search_commonplace with tenant-bob: Alice's note must NOT be returned
+    bob_search_str = await search_commonplace(query=alice_stmt, active_user="tenant-bob")
+    bob_search_data = json.loads(bob_search_str)
+    bob_match_uuids = [m["uuid"] for m in bob_search_data.get("matches", [])]
+    assert alice_uuid not in bob_match_uuids, f"Multi-tenancy isolation breach! Bob found Alice's note {alice_uuid}: {bob_match_uuids}"
+    print("✓ search_commonplace(active_user='tenant-bob') isolated from Alice's note.")
+
+    # Query get_node_links with tenant-bob: Bob cannot access Alice's node
+    bob_links_str = await get_node_links(uuid=alice_uuid, active_user="tenant-bob")
+    bob_links_data = json.loads(bob_links_str)
+    assert bob_links_data.get("status") == "ERROR", f"Expected error for Bob accessing Alice's links, got: {bob_links_str}"
+    assert bob_links_data.get("code") == 404, f"Expected 404 code, got: {bob_links_data.get('code')}"
+    print("✓ get_node_links(active_user='tenant-bob') rejected with 404 error.")
+
+    # Query search_commonplace with tenant-alice: Alice's note must be returned
+    alice_search_str = await search_commonplace(query=alice_stmt, active_user="tenant-alice")
+    alice_search_data = json.loads(alice_search_str)
+    alice_match_uuids = [m["uuid"] for m in alice_search_data.get("matches", [])]
+    assert alice_uuid in alice_match_uuids, f"Alice could not find her own note in search: {alice_match_uuids}"
+    print("✓ search_commonplace(active_user='tenant-alice') found Alice's note.")
+
+    # Query get_node_links with tenant-alice: must succeed
+    alice_links_str = await get_node_links(uuid=alice_uuid, active_user="tenant-alice")
+    alice_links_data = json.loads(alice_links_str)
+    assert "inbound" in alice_links_data and "outbound" in alice_links_data, f"Alice failed to retrieve links: {alice_links_str}"
+    print("✓ get_node_links(active_user='tenant-alice') succeeded.")
+
+    # 12. Test HTTP Error Propagation
+    print("\n--- 12. Testing HTTP Error Propagation ---")
+    bad_node_res = await get_node(uuid="nonexistent-atom-xyz-999")
+    bad_node_data = json.loads(bad_node_res)
+    assert bad_node_data.get("status") == "ERROR", f"Expected status ERROR, got {bad_node_data}"
+    assert bad_node_data.get("code") == 404, f"Expected 404 status code, got {bad_node_data.get('code')}"
+    assert "not found" in bad_node_data.get("message", "").lower(), f"Expected 'not found' message, got {bad_node_data.get('message')}"
+    print("✓ Backend HTTPStatusError propagation verified.")
 
     print("\n" + "=" * 60)
     print("ALL ASOS FASTMCP ATMOSPHERE VERIFICATION TESTS PASSED!")

@@ -1,6 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
+import uuid as uuid_mod
 import httpx
 from mcp.server.fastmcp import FastMCP
 
@@ -10,6 +11,9 @@ mcp = FastMCP("ASOS Substrate")
 ASOS_API_URL = "http://localhost:8085/api/v1"
 REPO_ROOT = Path(__file__).resolve().parent
 
+DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=3.0)
+RDF_TIMEOUT = httpx.Timeout(30.0)
+
 @mcp.tool()
 async def ensure_node(
     type: str,
@@ -17,7 +21,7 @@ async def ensure_node(
     description: str = "",
     status: str = "ACTIVE",
     content: str = "",
-    active_user: str = None
+    active_user: str | None = None
 ) -> str:
     """
     Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the ASOS substrate.
@@ -41,9 +45,10 @@ async def ensure_node(
         }
     }
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{ASOS_API_URL}/graph/node", json=payload, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
@@ -51,7 +56,7 @@ async def commit_knowledge_bundle(
     project_id: str,
     agent_id: str,
     atoms: list[dict],
-    active_user: str = None
+    active_user: str | None = None
 ) -> str:
     """
     Commit a bundle of knowledge atoms to the substrate anchored to a project and agent.
@@ -70,18 +75,19 @@ async def commit_knowledge_bundle(
         "atoms": atoms
     }
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{ASOS_API_URL}/graph/bundle", json=payload, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
 async def search_commonplace(
     query: str,
-    ka: int = None,
-    tags: list[str] = None,
+    ka: int | None = None,
+    tags: list[str] | None = None,
     limit: int = 10,
-    active_user: str = None
+    active_user: str | None = None
 ) -> str:
     """
     Search the ASOS Commonplace Book for existing notes, concepts, and recipes.
@@ -103,13 +109,14 @@ async def search_commonplace(
     if tags:
         params["tags"] = ",".join(tags)
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{ASOS_API_URL}/search", params=params, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
-async def get_node(uuid: str, active_user: str = None) -> str:
+async def get_node(uuid: str, active_user: str | None = None) -> str:
     """
     Retrieve full hydrated atom or node by UUID from the substrate.
 
@@ -121,13 +128,14 @@ async def get_node(uuid: str, active_user: str = None) -> str:
         JSON string containing node properties, taxonomy, and payload.
     """
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{ASOS_API_URL}/node/{uuid}", headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
-async def get_node_links(uuid: str, direction: str = "both", active_user: str = None) -> str:
+async def get_node_links(uuid: str, direction: str = "both", active_user: str | None = None) -> str:
     """
     Query synapses (inbound and/or outbound links) connected to a node.
 
@@ -141,13 +149,14 @@ async def get_node_links(uuid: str, direction: str = "both", active_user: str = 
     """
     params = {"direction": direction}
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{ASOS_API_URL}/node/{uuid}/links", params=params, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
-async def export_graph_rdf(active_user: str = None) -> str:
+async def export_graph_rdf(active_user: str | None = None) -> str:
     """
     Export the substrate knowledge graph as W3C RDF Turtle text.
     Mapped to standard ontologies (schema:Recipe, schema:HowToStep, dcterms:references, schema:citation).
@@ -159,9 +168,10 @@ async def export_graph_rdf(active_user: str = None) -> str:
         W3C RDF Turtle serialization of the knowledge graph.
     """
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=RDF_TIMEOUT) as client:
         response = await client.get(f"{ASOS_API_URL}/graph/export", headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
@@ -170,13 +180,13 @@ async def create_note(
     agent_id: str,
     statement: str,
     content: str = "",
-    references: list[dict] = None,
-    note_links: list[dict] = None,
-    tags: list[str] = None,
-    ka: int = 31,
-    uuid: str = None,
+    references: list[dict] | None = None,
+    note_links: list[dict] | None = None,
+    tags: list[str] | None = None,
+    ka: int | None = 31,
+    uuid: str | None = None,
     check_duplicates: bool = True,
-    active_user: str = None
+    active_user: str | None = None
 ) -> str:
     """
     Create a knowledge note atom in the ASOS substrate.
@@ -196,14 +206,14 @@ async def create_note(
         active_user: Optional tenant / active user identifier (sets X-Active-User header).
 
     Returns:
-        Success JSON string, or duplicate warning JSON if check_duplicates is True and match exists.
+        Structured JSON response with status, uuid, and message.
     """
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         if check_duplicates:
             search_res = await client.get(
                 f"{ASOS_API_URL}/search",
-                params={"q": statement},
+                params={"q": statement, "limit": 50},
                 headers=headers
             )
             if search_res.status_code == 200:
@@ -219,14 +229,14 @@ async def create_note(
                             "message": "Duplicate statement detected. Link to this existing atom or set check_duplicates=False to force creation."
                         })
 
+        node_uuid = uuid if uuid else f"note-{uuid_mod.uuid4().hex[:8]}"
         atom = {
             "statement": statement,
             "content": content,
-            "ka": ka,
+            "ka": ka if ka is not None else 31,
             "tags": tags or [],
+            "uuid": node_uuid,
         }
-        if uuid:
-            atom["uuid"] = uuid
         if references:
             atom["references"] = references
         if note_links:
@@ -242,8 +252,13 @@ async def create_note(
             json=payload,
             headers=headers
         )
-        response.raise_for_status()
-        return response.text
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
+        return json.dumps({
+            "status": "COMMITTED",
+            "uuid": node_uuid,
+            "message": response.text
+        })
 
 @mcp.tool()
 async def create_catalog_entry(
@@ -251,15 +266,15 @@ async def create_catalog_entry(
     agent_id: str,
     statement: str,
     content: str = "",
-    items: list[dict] = None,
-    steps: list[dict] = None,
-    metrics: list[dict] = None,
-    attributes: dict = None,
-    tags: list[str] = None,
-    ka: int = 27,
-    uuid: str = None,
+    items: list[dict] | None = None,
+    steps: list[dict] | None = None,
+    metrics: list[dict] | None = None,
+    attributes: dict | None = None,
+    tags: list[str] | None = None,
+    ka: int | None = 27,
+    uuid: str | None = None,
     check_duplicates: bool = True,
-    active_user: str = None
+    active_user: str | None = None
 ) -> str:
     """
     Create a structured catalog entry (recipe, protocol, runbook, or inventory) in the substrate.
@@ -281,14 +296,14 @@ async def create_catalog_entry(
         active_user: Optional tenant / active user identifier (sets X-Active-User header).
 
     Returns:
-        Success JSON string, or duplicate warning JSON if check_duplicates is True and match exists.
+        Structured JSON response with status, uuid, and message.
     """
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         if check_duplicates:
             search_res = await client.get(
                 f"{ASOS_API_URL}/search",
-                params={"q": statement},
+                params={"q": statement, "limit": 50},
                 headers=headers
             )
             if search_res.status_code == 200:
@@ -304,14 +319,14 @@ async def create_catalog_entry(
                             "message": "Duplicate statement detected. Link to this existing atom or set check_duplicates=False to force creation."
                         })
 
+        node_uuid = uuid if uuid else f"catalog-{uuid_mod.uuid4().hex[:8]}"
         atom = {
             "statement": statement,
             "content": content,
-            "ka": ka,
+            "ka": ka if ka is not None else 27,
             "tags": tags or [],
+            "uuid": node_uuid,
         }
-        if uuid:
-            atom["uuid"] = uuid
         if items:
             atom["items"] = items
         if steps:
@@ -331,8 +346,13 @@ async def create_catalog_entry(
             json=payload,
             headers=headers
         )
-        response.raise_for_status()
-        return response.text
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
+        return json.dumps({
+            "status": "COMMITTED",
+            "uuid": node_uuid,
+            "message": response.text
+        })
 
 @mcp.tool()
 async def link_nodes(
@@ -340,7 +360,7 @@ async def link_nodes(
     target: str,
     label: str,
     weight: float = 1.0,
-    active_user: str = None
+    active_user: str | None = None
 ) -> str:
     """
     Create a labeled relationship (synapse) between two nodes in the substrate.
@@ -360,16 +380,17 @@ async def link_nodes(
         "weight": weight
     }
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{ASOS_API_URL}/link", json=payload, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
 async def query_substrate(
     match_alias: str = "n",
-    where_eq: dict = None,
-    active_user: str = None
+    where_eq: dict | None = None,
+    active_user: str | None = None
 ) -> str:
     """
     Query the substrate for nodes matching specific criteria.
@@ -379,13 +400,19 @@ async def query_substrate(
         "where_eq": where_eq or {}
     }
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{ASOS_API_URL}/query", json=payload, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
-async def spawn_widget(atom_id: str, behavior: str, label: str = "", active_user: str = None) -> str:
+async def spawn_widget(
+    atom_id: str,
+    behavior: str,
+    label: str = "",
+    active_user: str | None = None
+) -> str:
     """
     Propose a Nucleus spatial widget for an ASOS Knowledge Atom.
     """
@@ -395,13 +422,19 @@ async def spawn_widget(atom_id: str, behavior: str, label: str = "", active_user
         "label": label
     }
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{ASOS_API_URL}/nucleus/materialize", json=payload, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.tool()
-async def bind_anchor_to_atom(marker_id: str, atom_id: str, device_id: str = "default", active_user: str = None) -> str:
+async def bind_anchor_to_atom(
+    marker_id: str,
+    atom_id: str,
+    device_id: str = "default",
+    active_user: str | None = None
+) -> str:
     """
     Bind a physical fiducial marker to an ASOS Knowledge Atom.
     """
@@ -411,11 +444,12 @@ async def bind_anchor_to_atom(marker_id: str, atom_id: str, device_id: str = "de
         "device_id": device_id
     }
     headers = {"X-Active-User": active_user} if active_user else {}
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         # We'll use a link endpoint to establish the ANCHORED_TO / REPRESENTED_BY chain
         # For MVP, we'll assume a composite operation in the backend
         response = await client.post(f"{ASOS_API_URL}/nucleus/bind", json=payload, headers=headers)
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.resource("asos://schema")
@@ -424,9 +458,10 @@ async def get_schema() -> str:
     Returns the ASOS Knowledge Schema, including valid node types, 
     Knowledge Areas (KA), and relationship labels.
     """
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{ASOS_API_URL}/schema")
-        response.raise_for_status()
+        if response.is_error:
+            return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
 @mcp.resource("asos://skills/{name}")
@@ -438,25 +473,21 @@ async def get_skill(name: str) -> str:
     Args:
         name: Skill name (e.g. 'knowledge-capture', 'graph-integrity-audit').
     """
-    clean_name = name.removesuffix("/SKILL.md").removesuffix(".md").strip("/")
-    skill_path = (REPO_ROOT / "skills" / clean_name / "SKILL.md").resolve()
-    skills_dir = (REPO_ROOT / "skills").resolve()
-
     try:
+        clean_name = name.removesuffix("/SKILL.md").removesuffix(".md").strip("/")
+        skills_dir = (REPO_ROOT / "skills").resolve()
+        skill_path = (skills_dir / clean_name / "SKILL.md").resolve()
         skill_path.relative_to(skills_dir)
-    except ValueError:
-        return f"Error: Invalid skill path for '{name}'."
 
-    if not skill_path.is_file():
-        return f"Error: Skill '{name}' not found at {skill_path}."
+        if not skill_path.is_file():
+            return f"Error: Skill '{name}' not found."
 
-    try:
         return skill_path.read_text(encoding="utf-8")
-    except Exception as e:
-        return f"Error reading skill '{name}': {e}"
+    except Exception:
+        return f"Error: Skill '{name}' not found."
 
 @mcp.prompt("init_swarm")
-def init_swarm(project_id: str, objective: str):
+def init_swarm(project_id: str, objective: str) -> str:
     """
     A template for initializing a new swarm project.
     """
