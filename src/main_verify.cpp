@@ -5,6 +5,9 @@
 #include "asos/DeltaEngine.hpp"
 #include "asos/Monitor.hpp"
 #include "asos/RdfExporter.hpp"
+#include "asos/ApiServer.hpp"
+#include "httplib.h"
+#include <nlohmann/json.hpp>
 #include "engine/store.hpp"
 #include "L3KVG/KeyBuilder.hpp"
 #include "L3KVG/Node.hpp"
@@ -827,6 +830,187 @@ void test_rdf_export_notes_and_recipes() {
     std::cout << "[Test] RDF Export Notes and Recipes Verification PASSED" << std::endl;
 }
 
+void test_api_search_and_links() {
+    std::cout << "\n[Test] Starting API Search and Node Links Verification..." << std::endl;
+    std::string db_dir = "test_api_search_db";
+    std::filesystem::remove_all(db_dir);
+
+#define ASOS_CHECK(cond) do { if (!(cond)) { std::cerr << "[Test] FAILED: " #cond " at line " << __LINE__ << std::endl; exit(1); } } while(0)
+
+    {
+        Blackboard bb(db_dir, 12);
+        auto* store = bb.get_engine()->get_store();
+
+        // Commit two linked notes
+        CpbEntry note1;
+        note1.header.uuid = "note-search-1";
+        note1.header.origin.project_id = "proj-search";
+        note1.header.origin.agent_id = "agent-search";
+        note1.payload.statement = "Searchable Strange Loops in Cognitive Science";
+        note1.taxonomy.tags = {"COGNITION", "LOOPS"};
+        note1.taxonomy.knowledge_area = KnowledgeArea::LITERATURE_READING;
+        Reference ref1;
+        ref1.title = "Gödel, Escher, Bach";
+        ref1.creator = "Douglas Hofstadter";
+        note1.payload.references.push_back(ref1);
+        ASOS_CHECK(bb.commit_cpb_entry(note1));
+
+        CpbEntry note2;
+        note2.header.uuid = "note-search-2";
+        note2.header.origin.project_id = "proj-search";
+        note2.header.origin.agent_id = "agent-search";
+        note2.payload.statement = "Recursion in Neural Computation";
+        note2.taxonomy.tags = {"NEURAL", "LOOPS"};
+        note2.taxonomy.knowledge_area = KnowledgeArea::COMPUTING_FOUNDATIONS;
+        NoteLink link;
+        link.target_uuid = "note-search-1";
+        link.relation = rel::EXTENDS;
+        link.context = "Builds upon strange loop cognitive architectures";
+        note2.payload.note_links.push_back(link);
+        ASOS_CHECK(bb.commit_cpb_entry(note2));
+
+        store->wait_all_shards();
+
+        // Verify Blackboard backlinks & outbound
+        auto backlinks = bb.get_backlinks("note-search-1");
+        ASOS_CHECK(backlinks.size() == 1);
+        ASOS_CHECK(backlinks[0].first == "note-search-2");
+        ASOS_CHECK(backlinks[0].second == rel::EXTENDS);
+
+        auto outbound = bb.get_outbound_links("note-search-2");
+        ASOS_CHECK(outbound.size() >= 1);
+        bool found_outbound = false;
+        for (auto& [dst, r] : outbound) {
+            if (dst == "note-search-1" && r == rel::EXTENDS) found_outbound = true;
+        }
+        ASOS_CHECK(found_outbound);
+
+        // Start ApiServer
+        int test_port = 18085;
+        ApiServer::instance().start(&bb, test_port);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        httplib::Client cli("127.0.0.1", test_port);
+
+        // 1. GET /api/v1/schema
+        auto res_schema = cli.Get("/api/v1/schema");
+        ASOS_CHECK(res_schema && res_schema->status == 200);
+        auto schema_json = nlohmann::json::parse(res_schema->body);
+        ASOS_CHECK(schema_json.contains("knowledge_areas"));
+        ASOS_CHECK(schema_json.contains("relationships"));
+        ASOS_CHECK(schema_json.contains("types"));
+        ASOS_CHECK(schema_json["types"].contains("CPB_ENTRY"));
+        ASOS_CHECK(schema_json["types"].contains("REFERENCE"));
+        ASOS_CHECK(schema_json["types"].contains("NOTE_LINK"));
+        ASOS_CHECK(schema_json["types"].contains("CATALOG_ITEM"));
+        ASOS_CHECK(schema_json["types"].contains("CATALOG_STEP"));
+        ASOS_CHECK(schema_json["types"].contains("CATALOG_METRIC"));
+
+        // 2. GET /api/v1/search
+        auto res_search = cli.Get("/api/v1/search?q=Strange");
+        ASOS_CHECK(res_search && res_search->status == 200);
+        auto search_json = nlohmann::json::parse(res_search->body);
+        ASOS_CHECK(search_json["count"].get<int>() >= 1);
+        ASOS_CHECK(search_json["matches"][0]["uuid"] == "note-search-1");
+
+        // Search by tag
+        auto res_tag_search = cli.Get("/api/v1/search?q=&tags=NEURAL");
+        ASOS_CHECK(res_tag_search && res_tag_search->status == 200);
+        auto tag_json = nlohmann::json::parse(res_tag_search->body);
+        ASOS_CHECK(tag_json["count"].get<int>() >= 1);
+        ASOS_CHECK(tag_json["matches"][0]["uuid"] == "note-search-2");
+
+        // 3. GET /api/v1/node/:id/links
+        auto res_links = cli.Get("/api/v1/node/note-search-1/links?direction=both");
+        ASOS_CHECK(res_links && res_links->status == 200);
+        auto links_json = nlohmann::json::parse(res_links->body);
+        ASOS_CHECK(links_json["uuid"] == "note-search-1");
+        ASOS_CHECK(links_json["inbound"].size() == 1);
+        ASOS_CHECK(links_json["inbound"][0]["source"] == "note-search-2");
+        ASOS_CHECK(links_json["inbound"][0]["relation"] == rel::EXTENDS);
+        ASOS_CHECK(links_json["inbound"][0]["statement"] == "Recursion in Neural Computation");
+
+        // 4. POST /api/v1/graph/bundle (rich deserialization)
+        nlohmann::json bundle = {
+            {"project_id", "proj-bundle"},
+            {"agent_id", "agent-bundle"},
+            {"atoms", nlohmann::json::array({
+                {
+                    {"uuid", "recipe-bundle-1"},
+                    {"statement", "Rich Bundled Espresso Torta"},
+                    {"ka", 27},
+                    {"tags", {"RECIPE", "DESSERT"}},
+                    {"references", nlohmann::json::array({
+                        {
+                            {"title", "Italian Baking Classics"},
+                            {"creator", "Nonna Rosa"},
+                            {"page_numbers", "p. 42"},
+                            {"uuid", "urn:isbn:123456"}
+                        }
+                    })},
+                    {"note_links", nlohmann::json::array({
+                        {
+                            {"target_uuid", "note-search-1"},
+                            {"relation", "PAIRS_WITH"},
+                            {"context", "Great reading companion"}
+                        }
+                    })},
+                    {"items", nlohmann::json::array({
+                        {
+                            {"name", "Dark Chocolate"},
+                            {"quantity", 200.0},
+                            {"unit", "g"},
+                            {"role", "INGREDIENT"},
+                            {"notes", "70% cocoa"}
+                        }
+                    })},
+                    {"steps", nlohmann::json::array({
+                        {
+                            {"step_number", 1},
+                            {"instruction", "Melt chocolate in bain-marie"},
+                            {"duration_minutes", 5.0}
+                        }
+                    })},
+                    {"metrics", nlohmann::json::array({
+                        {
+                            {"name", "baking_temp"},
+                            {"value", 180.0},
+                            {"unit", "C"}
+                        }
+                    })},
+                    {"attributes", {
+                        {"difficulty", "Easy"}
+                    }}
+                }
+            })}
+        };
+
+        auto res_bundle = cli.Post("/api/v1/graph/bundle", bundle.dump(), "application/json");
+        ASOS_CHECK(res_bundle && res_bundle->status == 200);
+
+        store->wait_all_shards();
+
+        // Verify bundle created the rich atom
+        auto res_get_node = cli.Get("/api/v1/node/recipe-bundle-1");
+        ASOS_CHECK(res_get_node && res_get_node->status == 200);
+        auto node_json = nlohmann::json::parse(res_get_node->body);
+        ASOS_CHECK(node_json["uuid"] == "recipe-bundle-1");
+        ASOS_CHECK(node_json["statement"] == "Rich Bundled Espresso Torta");
+        ASOS_CHECK(node_json["items"].size() == 1);
+        ASOS_CHECK(node_json["items"][0]["name"] == "Dark Chocolate");
+        ASOS_CHECK(node_json["steps"].size() == 1);
+        ASOS_CHECK(node_json["steps"][0]["step_number"] == 1);
+        ASOS_CHECK(node_json["metrics"].size() == 1);
+        ASOS_CHECK(node_json["metrics"][0]["name"] == "baking_temp");
+        ASOS_CHECK(node_json["attributes"]["difficulty"] == "Easy");
+
+        ApiServer::instance().stop();
+    }
+#undef ASOS_CHECK
+    std::filesystem::remove_all(db_dir);
+    std::cout << "[Test] API Search and Node Links Verification PASSED" << std::endl;
+}
+
 int main() {
     try {
         test_identity_integrity();
@@ -841,6 +1025,7 @@ int main() {
         test_note_graph_backlinks();
         test_universal_catalog_recipe();
         test_rdf_export_notes_and_recipes();
+        test_api_search_and_links();
         std::cout << "\n[SUCCESS] All ASOS Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {

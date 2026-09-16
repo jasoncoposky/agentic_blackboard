@@ -18,6 +18,8 @@ using json = nlohmann::json;
 
 namespace asos {
 
+static std::atomic<httplib::Server*> s_server{nullptr};
+
 ApiServer::~ApiServer() {
     stop();
 }
@@ -31,14 +33,21 @@ void ApiServer::start(Blackboard* blackboard, int port) {
 
 void ApiServer::stop() {
     running_ = false;
-    // In a real implementation, we'd trigger a dummy request to break the accept()
-    // For this prototype, we'll assume the thread terminates on its next check.
+    for (int i = 0; i < 50; ++i) {
+        auto* s = s_server.load();
+        if (s) {
+            s->stop();
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
     if (thread_.joinable())
         thread_.join();
 }
 
 void ApiServer::listen_loop() {
     httplib::Server svr;
+    s_server.store(&svr);
 
     // Enable CORS for Dashboard
     svr.set_default_headers({
@@ -52,18 +61,58 @@ void ApiServer::listen_loop() {
     });
 
     // 1. Schema Discovery Endpoint
-
     svr.Get("/api/v1/schema", [this](const httplib::Request&, httplib::Response& res) {
         std::cout << "[API] GET /api/v1/schema" << std::endl;
         json schema = {
-
             {"system", "ASOS v0.4-α"},
-            {"types", {
-                {"IDENTITY", {{"fields", {"id", "display_name", "role", "public_key", "content"}}}},
-                {"PROJECT", {{"fields", {"project_id", "description", "lifecycle_status", "content"}}}},
-                {"CPB_ENTRY", {{"fields", {"uuid", "agent_id", "project_id", "statement", "content", "ka", "applicability"}}}}
+            {"knowledge_areas", {
+                {"0", "UNKNOWN"},
+                {"1", "REQUIREMENTS"},
+                {"2", "DESIGN"},
+                {"3", "CONSTRUCTION"},
+                {"4", "TESTING"},
+                {"5", "MAINTENANCE"},
+                {"6", "CONFIG_MANAGEMENT"},
+                {"7", "ENGINEERING_MANAGEMENT"},
+                {"8", "ENGINEERING_PROCESS"},
+                {"9", "ENGINEERING_MODELS"},
+                {"10", "QUALITY"},
+                {"11", "PROFESSIONAL_PRACTICE"},
+                {"12", "ECONOMICS"},
+                {"13", "COMPUTING_FOUNDATIONS"},
+                {"14", "MATHEMATICAL_FOUNDATIONS"},
+                {"15", "ENGINEERING_FOUNDATIONS"},
+                {"20", "HEALTH_WELLNESS"},
+                {"21", "SOCIAL_RELATIONSHIPS"},
+                {"22", "PERSONAL_REFLECTIONS"},
+                {"23", "LEISURE_CREATIVITY"},
+                {"24", "DAILY_ROUTINE"},
+                {"25", "EDUCATION_LEARNING"},
+                {"26", "LITERATURE_READING"},
+                {"27", "CULINARY_RECIPES"},
+                {"28", "CREATIVE_ARTS"},
+                {"29", "PERSONAL_FINANCE"},
+                {"30", "HOME_LOGISTICS"},
+                {"31", "GENERAL_COMMONPLACE"}
             }},
-            {"relationships", {rel::CREATED_BY, rel::BELONGS_TO, rel::MAINTAINS, rel::CPB_SIMILARITY, rel::RELATED_TO}}
+            {"relationships", {
+                rel::CREATED_BY, rel::BELONGS_TO, rel::MAINTAINS, rel::SUPERSEDED_BY, rel::CPB_SIMILARITY, rel::RELATED_TO,
+                rel::REPRESENTED_BY, rel::ANCHORED_TO, rel::MENTIONS, rel::OCCURRED_AT,
+                rel::DEPENDS_ON, rel::BLOCKS, rel::SUBTASK_OF, rel::VALIDATED_BY, rel::CONTRIBUTES_TO,
+                rel::SEE_ALSO, rel::REFERENCES, rel::CITES, rel::SUPPORTS, rel::REFUTES, rel::EXTENDS, rel::SYNTHESIS_OF,
+                rel::QUESTION_RAISED_BY, rel::ANALOGY_TO,
+                rel::PAIRS_WITH, rel::VARIATION_OF, rel::USES_INGREDIENT
+            }},
+            {"types", {
+                {"CPB_ENTRY", {{"fields", {"uuid", "statement", "content", "ka", "tags", "applicability", "references", "note_links", "items", "steps", "metrics", "attributes"}}}},
+                {"REFERENCE", {{"fields", {"title", "page_numbers", "uuid", "creator", "tags", "excerpt"}}}},
+                {"NOTE_LINK", {{"fields", {"target_uuid", "relation", "context"}}}},
+                {"CATALOG_ITEM", {{"fields", {"name", "quantity", "unit", "role", "notes"}}}},
+                {"CATALOG_STEP", {{"fields", {"step_number", "instruction", "duration_minutes", "required_tools", "prerequisites"}}}},
+                {"CATALOG_METRIC", {{"fields", {"name", "value", "unit"}}}},
+                {"IDENTITY", {{"fields", {"id", "display_name", "role", "public_key", "content"}}}},
+                {"PROJECT", {{"fields", {"project_id", "description", "lifecycle_status", "content"}}}}
+            }}
         };
 
         res.set_content(schema.dump(2), "application/json");
@@ -144,6 +193,117 @@ void ApiServer::listen_loop() {
                     edu.focus_duration_minutes = item["education"].value("focus_duration_minutes", 0.0);
                     edu.credential_uuid = item["education"].value("credential_uuid", "");
                     e.education = edu;
+                }
+
+                // References
+                auto parse_references = [&](const json& refs_json) {
+                    for (const auto& r_json : refs_json) {
+                        Reference r;
+                        r.title = r_json.value("title", "");
+                        r.page_numbers = r_json.value("page_numbers", "");
+                        r.uuid = r_json.value("uuid", "");
+                        r.creator = r_json.value("creator", "");
+                        if (r_json.contains("tags") && r_json["tags"].is_array()) {
+                            for (auto& tag : r_json["tags"]) r.tags.push_back(tag.get<std::string>());
+                        }
+                        r.excerpt = r_json.value("excerpt", "");
+                        e.payload.references.push_back(r);
+                    }
+                };
+                if (item.contains("payload") && item["payload"].contains("references") && item["payload"]["references"].is_array()) {
+                    parse_references(item["payload"]["references"]);
+                } else if (item.contains("references") && item["references"].is_array()) {
+                    parse_references(item["references"]);
+                }
+
+                // Note Links
+                auto parse_note_links = [&](const json& links_json) {
+                    for (const auto& l_json : links_json) {
+                        NoteLink nl;
+                        nl.target_uuid = l_json.value("target_uuid", "");
+                        nl.relation = l_json.value("relation", "");
+                        nl.context = l_json.value("context", "");
+                        e.payload.note_links.push_back(nl);
+                    }
+                };
+                if (item.contains("payload") && item["payload"].contains("note_links") && item["payload"]["note_links"].is_array()) {
+                    parse_note_links(item["payload"]["note_links"]);
+                } else if (item.contains("note_links") && item["note_links"].is_array()) {
+                    parse_note_links(item["note_links"]);
+                }
+
+                // Items
+                if (item.contains("items") && item["items"].is_array()) {
+                    for (const auto& it_json : item["items"]) {
+                        CatalogItem ci;
+                        ci.name = it_json.value("name", "");
+                        ci.quantity = it_json.value("quantity", 0.0);
+                        ci.unit = it_json.value("unit", "");
+                        ci.role = it_json.value("role", "");
+                        ci.notes = it_json.value("notes", "");
+                        e.items.push_back(ci);
+                    }
+                }
+
+                // Steps
+                if (item.contains("steps") && item["steps"].is_array()) {
+                    for (const auto& st_json : item["steps"]) {
+                        CatalogStep cs;
+                        cs.step_number = st_json.value("step_number", 1);
+                        cs.instruction = st_json.value("instruction", "");
+                        if (st_json.contains("duration_seconds")) {
+                            cs.duration_seconds = st_json.value("duration_seconds", 0);
+                        } else if (st_json.contains("duration_minutes")) {
+                            cs.duration_seconds = static_cast<int32_t>(st_json.value("duration_minutes", 0.0) * 60);
+                        }
+                        cs.notes = st_json.value("notes", "");
+                        if (st_json.contains("required_tools") && st_json["required_tools"].is_array()) {
+                            std::string tools_str;
+                            for (auto& t : st_json["required_tools"]) {
+                                if (!tools_str.empty()) tools_str += ", ";
+                                tools_str += t.get<std::string>();
+                            }
+                            if (!tools_str.empty()) {
+                                if (!cs.notes.empty()) cs.notes += " | ";
+                                cs.notes += "Tools: " + tools_str;
+                            }
+                        }
+                        if (st_json.contains("prerequisites") && st_json["prerequisites"].is_array()) {
+                            std::string prereq_str;
+                            for (auto& p : st_json["prerequisites"]) {
+                                if (!prereq_str.empty()) prereq_str += ", ";
+                                prereq_str += p.get<std::string>();
+                            }
+                            if (!prereq_str.empty()) {
+                                if (!cs.notes.empty()) cs.notes += " | ";
+                                cs.notes += "Prereqs: " + prereq_str;
+                            }
+                        }
+                        e.steps.push_back(cs);
+                    }
+                }
+
+                // Metrics
+                if (item.contains("metrics") && item["metrics"].is_array()) {
+                    for (const auto& m_json : item["metrics"]) {
+                        CatalogMetric cm;
+                        cm.key = m_json.value("name", "");
+                        if (cm.key.empty()) cm.key = m_json.value("key", "");
+                        cm.value = m_json.value("value", 0.0);
+                        cm.unit = m_json.value("unit", "");
+                        e.metrics.push_back(cm);
+                    }
+                }
+
+                // Attributes
+                if (item.contains("attributes") && item["attributes"].is_object()) {
+                    for (auto& [k, v] : item["attributes"].items()) {
+                        if (v.is_string()) {
+                            e.attributes[k] = v.get<std::string>();
+                        } else {
+                            e.attributes[k] = v.dump();
+                        }
+                    }
                 }
 
                 std::cout << "[API] Processing Atom Statement: " << e.payload.statement << std::endl;
@@ -310,6 +470,154 @@ void ApiServer::listen_loop() {
         }
     });
 
+    // 4a. Commonplace Search API
+    svr.Get("/api/v1/search", [this](const httplib::Request& req, httplib::Response& res) {
+        std::cout << "[API] GET /api/v1/search" << std::endl;
+        try {
+            auto engine = blackboard_->get_engine();
+            auto store = engine->get_store();
+
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
+
+            std::string q = req.get_param_value("q");
+            auto to_lower = [](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+                return s;
+            };
+            std::string q_lower = to_lower(q);
+
+            bool filter_ka = req.has_param("ka");
+            int ka_val = 0;
+            if (filter_ka) {
+                try { ka_val = std::stoi(req.get_param_value("ka")); } catch (...) { filter_ka = false; }
+            }
+
+            bool filter_tags = req.has_param("tags") && !req.get_param_value("tags").empty();
+            std::vector<std::string> requested_tags;
+            if (filter_tags) {
+                std::string tag_str = req.get_param_value("tags");
+                std::stringstream ss(tag_str);
+                std::string item;
+                while (std::getline(ss, item, ',')) {
+                    size_t first = item.find_first_not_of(" \t\r\n");
+                    if (first != std::string::npos) {
+                        size_t last = item.find_last_not_of(" \t\r\n");
+                        requested_tags.push_back(to_lower(item.substr(first, last - first + 1)));
+                    }
+                }
+                if (requested_tags.empty()) filter_tags = false;
+            }
+
+            int limit = 10;
+            if (req.has_param("limit")) {
+                try { limit = std::stoi(req.get_param_value("limit")); } catch (...) {}
+            }
+
+            std::set<std::string> unique_keys;
+            auto keys1 = store->get_prefix_keys_all_shards("n:", "n:", 1000);
+            auto keys2 = store->get_prefix_keys_all_shards("n:{", "n:{", 1000);
+            unique_keys.insert(keys1.begin(), keys1.end());
+            unique_keys.insert(keys2.begin(), keys2.end());
+
+            json matches = json::array();
+            std::unordered_set<std::string> seen_uuids;
+
+            for (const auto& key : unique_keys) {
+                if (key.ends_with(":meta")) continue;
+
+                auto buf = store->get(key, principal_id);
+                if (buf.size() == 0) continue;
+
+                try {
+                    size_t h_idx = buf.get_obj(0, "header");
+                    bool has_type = false;
+                    std::string type = "";
+                    try {
+                        type = std::string(buf.get_str(h_idx, "type"));
+                        has_type = true;
+                    } catch (...) {}
+
+                    if (has_type && (type == "IDENTITY" || type == "PROJECT" || type == "EU" || type == "WBS_NODE" || type == "L3_DELTA_PATCH")) {
+                        continue;
+                    }
+
+                    auto entry = CpbEntry::deserialize(buf);
+                    if (entry.header.uuid.empty()) continue;
+                    if (seen_uuids.count(entry.header.uuid) > 0) continue;
+
+                    // Filter KA
+                    if (filter_ka && static_cast<int>(entry.taxonomy.knowledge_area) != ka_val) {
+                        continue;
+                    }
+
+                    // Filter Tags
+                    if (filter_tags) {
+                        bool any_tag_matched = false;
+                        for (const auto& req_tag : requested_tags) {
+                            for (const auto& at : entry.taxonomy.tags) {
+                                if (to_lower(at) == req_tag) {
+                                    any_tag_matched = true;
+                                    break;
+                                }
+                            }
+                            if (any_tag_matched) break;
+                        }
+                        if (!any_tag_matched) continue;
+                    }
+
+                    // Filter query string q
+                    if (!q_lower.empty()) {
+                        bool statement_match = to_lower(entry.payload.statement).find(q_lower) != std::string::npos;
+                        bool content_match = to_lower(entry.payload.content).find(q_lower) != std::string::npos;
+                        bool tag_match = false;
+                        for (const auto& at : entry.taxonomy.tags) {
+                            if (to_lower(at).find(q_lower) != std::string::npos) {
+                                tag_match = true;
+                                break;
+                            }
+                        }
+                        if (!statement_match && !content_match && !tag_match) {
+                            continue;
+                        }
+                    }
+
+                    seen_uuids.insert(entry.header.uuid);
+
+                    json match_obj = {
+                        {"uuid", entry.header.uuid},
+                        {"id", entry.header.uuid},
+                        {"statement", entry.payload.statement},
+                        {"content", entry.payload.content},
+                        {"ka", static_cast<int>(entry.taxonomy.knowledge_area)},
+                        {"tags", entry.taxonomy.tags},
+                        {"author", entry.header.origin.agent_id},
+                        {"project", entry.header.origin.project_id},
+                        {"score", 1.0}
+                    };
+                    matches.push_back(match_obj);
+
+                    if (limit > 0 && static_cast<int>(matches.size()) >= limit) {
+                        break;
+                    }
+                } catch (...) {}
+            }
+
+            json response = {
+                {"matches", matches},
+                {"count", matches.size()}
+            };
+            res.set_content(response.dump(2), "application/json");
+        } catch (const std::exception& e) {
+            std::cerr << "[API] Error in search: " << e.what() << std::endl;
+            res.status = 500;
+            res.set_content(e.what(), "text/plain");
+        }
+    });
 
     // 4. Graph Topology Snapshot
     svr.Get("/api/v1/graph/snapshot", [this](const httplib::Request& req, httplib::Response& res) {
@@ -565,6 +873,84 @@ void ApiServer::listen_loop() {
         }
     });
 
+    // 5b. Get Node Links (Inbound & Outbound)
+    svr.Get(R"(/api/v1/node/([^/]+)/links)", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string uuid = req.matches[1];
+            auto engine = blackboard_->get_engine();
+            auto store = engine->get_store();
+
+            std::string active_user = req.get_header_value("X-Active-User");
+            uint32_t principal_id = 0;
+            if (!active_user.empty() && active_user != "admin") {
+                blackboard_->register_user_credentials(active_user, active_user + "-key");
+                principal_id = blackboard_->get_user_uid(active_user);
+            }
+
+            std::string direction = req.get_param_value("direction");
+            if (direction.empty()) direction = "both";
+
+            auto hydrate_statement = [&](const std::string& target_id) -> std::string {
+                try {
+                    auto target_key = std::string(l3kvg::KeyBuilder::node_key(engine->get_resolver().parse_uuid(target_id)));
+                    auto target_buf = store->get(target_key, principal_id);
+                    if (target_buf.size() > 0) {
+                        try {
+                            size_t p_idx = target_buf.get_obj(0, "payload");
+                            return std::string(target_buf.get_str(p_idx, "statement"));
+                        } catch (...) {
+                            try {
+                                return std::string(target_buf.get_str(0, "display_name"));
+                            } catch (...) {
+                                try {
+                                    return std::string(target_buf.get_str(0, "description"));
+                                } catch (...) {}
+                            }
+                        }
+                    }
+                } catch (...) {}
+                return "";
+            };
+
+            json inbound_arr = json::array();
+            if (direction == "both" || direction == "inbound") {
+                auto backlinks = blackboard_->get_backlinks(uuid, principal_id);
+                for (const auto& [src, rel_name] : backlinks) {
+                    inbound_arr.push_back({
+                        {"uuid", src},
+                        {"source", src},
+                        {"relation", rel_name},
+                        {"statement", hydrate_statement(src)}
+                    });
+                }
+            }
+
+            json outbound_arr = json::array();
+            if (direction == "both" || direction == "outbound") {
+                auto outbound = blackboard_->get_outbound_links(uuid, principal_id);
+                for (const auto& [dst, rel_name] : outbound) {
+                    outbound_arr.push_back({
+                        {"uuid", dst},
+                        {"target", dst},
+                        {"relation", rel_name},
+                        {"statement", hydrate_statement(dst)}
+                    });
+                }
+            }
+
+            json response = {
+                {"uuid", uuid},
+                {"inbound", inbound_arr},
+                {"outbound", outbound_arr}
+            };
+            res.set_content(response.dump(2), "application/json");
+        } catch (const std::exception& e) {
+            std::cerr << "[API] Error in get_node_links: " << e.what() << std::endl;
+            res.status = 500;
+            res.set_content(e.what(), "text/plain");
+        }
+    });
+
     // 6. Get Node Details
     svr.Get(R"(/api/v1/node/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
         try {
@@ -588,7 +974,156 @@ void ApiServer::listen_loop() {
                 return;
             }
 
-            res.set_content("{\"id\":\"" + uuid + "\", \"found\":true}", "application/json");
+            size_t h_idx = buf.get_obj(0, "header");
+            bool has_type = false;
+            std::string type = "ATOM";
+            try {
+                type = std::string(buf.get_str(h_idx, "type"));
+                has_type = true;
+            } catch (...) {}
+
+            if (has_type && type == "IDENTITY") {
+                auto iden = IdentityNode::deserialize(buf);
+                json node_json = {
+                    {"id", iden.id},
+                    {"uuid", iden.id},
+                    {"type", "IDENTITY"},
+                    {"label", iden.display_name},
+                    {"display_name", iden.display_name},
+                    {"role", iden.role},
+                    {"public_key", iden.public_key},
+                    {"content", iden.content},
+                    {"found", true}
+                };
+                res.set_content(node_json.dump(2), "application/json");
+            } else if (has_type && type == "PROJECT") {
+                auto proj = ProjectNode::deserialize(buf);
+                json node_json = {
+                    {"id", proj.project_id},
+                    {"uuid", proj.project_id},
+                    {"project_id", proj.project_id},
+                    {"type", "PROJECT"},
+                    {"label", proj.project_id},
+                    {"status", proj.lifecycle_status},
+                    {"lifecycle_status", proj.lifecycle_status},
+                    {"description", proj.description},
+                    {"content", proj.content},
+                    {"found", true}
+                };
+                res.set_content(node_json.dump(2), "application/json");
+            } else {
+                auto entry = CpbEntry::deserialize(buf);
+                json node_json = {
+                    {"id", entry.header.uuid},
+                    {"uuid", entry.header.uuid},
+                    {"type", "ATOM"},
+                    {"label", entry.payload.statement},
+                    {"statement", entry.payload.statement},
+                    {"content", entry.payload.content},
+                    {"project", entry.header.origin.project_id},
+                    {"author", entry.header.origin.agent_id},
+                    {"ka", static_cast<int>(entry.taxonomy.knowledge_area)},
+                    {"tags", entry.taxonomy.tags},
+                    {"applicability", entry.taxonomy.applicability},
+                    {"uncertainty", entry.taxonomy.uncertainty},
+                    {"is_principle", entry.taxonomy.is_principle},
+                    {"found", true}
+                };
+
+                if (!entry.payload.references.empty()) {
+                    json refs_arr = json::array();
+                    for (const auto& r : entry.payload.references) {
+                        refs_arr.push_back({
+                            {"title", r.title},
+                            {"page_numbers", r.page_numbers},
+                            {"uuid", r.uuid},
+                            {"creator", r.creator},
+                            {"tags", r.tags},
+                            {"excerpt", r.excerpt}
+                        });
+                    }
+                    node_json["references"] = refs_arr;
+                }
+
+                if (!entry.payload.note_links.empty()) {
+                    json links_arr = json::array();
+                    for (const auto& l : entry.payload.note_links) {
+                        links_arr.push_back({
+                            {"target_uuid", l.target_uuid},
+                            {"relation", l.relation},
+                            {"context", l.context}
+                        });
+                    }
+                    node_json["note_links"] = links_arr;
+                }
+
+                if (!entry.items.empty()) {
+                    json items_arr = json::array();
+                    for (const auto& item : entry.items) {
+                        items_arr.push_back({
+                            {"name", item.name},
+                            {"quantity", item.quantity},
+                            {"unit", item.unit},
+                            {"role", item.role},
+                            {"notes", item.notes}
+                        });
+                    }
+                    node_json["items"] = items_arr;
+                }
+
+                if (!entry.steps.empty()) {
+                    json steps_arr = json::array();
+                    for (const auto& step : entry.steps) {
+                        steps_arr.push_back({
+                            {"step_number", step.step_number},
+                            {"instruction", step.instruction},
+                            {"duration_seconds", step.duration_seconds},
+                            {"notes", step.notes}
+                        });
+                    }
+                    node_json["steps"] = steps_arr;
+                }
+
+                if (!entry.metrics.empty()) {
+                    json metrics_arr = json::array();
+                    for (const auto& metric : entry.metrics) {
+                        metrics_arr.push_back({
+                            {"name", metric.key},
+                            {"key", metric.key},
+                            {"value", metric.value},
+                            {"unit", metric.unit}
+                        });
+                    }
+                    node_json["metrics"] = metrics_arr;
+                }
+
+                if (!entry.attributes.empty()) {
+                    node_json["attributes"] = entry.attributes;
+                }
+
+                if (entry.wellness.has_value()) {
+                    node_json["wellness"] = {
+                        {"mood_sentiment", entry.wellness->mood_sentiment},
+                        {"energy_level", entry.wellness->energy_level},
+                        {"sleep_hours", entry.wellness->sleep_hours},
+                        {"active_minutes", entry.wellness->active_minutes},
+                        {"step_count", entry.wellness->step_count},
+                        {"activity_type", entry.wellness->activity_type}
+                    };
+                }
+
+                if (entry.education.has_value()) {
+                    node_json["education"] = {
+                        {"institution_platform", entry.education->institution_platform},
+                        {"resource_type", entry.education->resource_type},
+                        {"progress_percent", entry.education->progress_percent},
+                        {"focus_duration_minutes", entry.education->focus_duration_minutes},
+                        {"credential_uuid", entry.education->credential_uuid}
+                    };
+                }
+
+                res.set_content(node_json.dump(2), "application/json");
+            }
         } catch (const std::exception& e) {
             res.status = 500;
             res.set_content(e.what(), "text/plain");
