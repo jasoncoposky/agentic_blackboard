@@ -69,12 +69,12 @@ Represents every discrete physical or chemical entity required for the procedure
 Represents a discrete, sequential instruction in the procedure:
 - `step_number` (int32): 1-indexed execution sequence (1, 2, 3...). Must be strictly increasing.
 - `instruction` (string): Concise, imperative operational command (e.g., `"Knead dough at speed 2 for 8 minutes until gluten windowpane test passes."`).
-- `duration_seconds` (int32): Duration in seconds (e.g., `480` for 8 minutes). Use `0` for instantaneous or non-timed actions.
+- `duration_seconds` (int32): Duration in seconds (e.g., `480` for 8 minutes). Use `0` for instantaneous or non-timed actions. Accepts both `duration_seconds` and `duration_minutes` (the substrate automatically normalizes to seconds).
 - `notes` (string): Quality gates, sensory cues, safety hazards, or tolerances (e.g., `"Internal dough temperature must not exceed 26°C."`).
 
 ### 3. CatalogMetric (Quantitative Performance Targets & Telemetry)
 Represents measured values, physical parameters, or nutritional/energetic totals:
-- `key` (string): Identifier for the metric (e.g., `"prep_time_minutes"`, `"bake_time_minutes"`, `"oven_temperature_c"`, `"torque_nm"`, `"total_calories_kcal"`).
+- `key` (string): Identifier for the metric (e.g., `"prep_time_minutes"`, `"bake_time_minutes"`, `"oven_temperature_c"`, `"torque_nm"`, `"total_calories_kcal"`). Accepts both `key` and `name`.
 - `value` (float64): Numerical value.
 - `unit` (string): Unit of measurement (e.g., `"minutes"`, `"°C"`, `"N*m"`, `"kcal"`, `"bar"`).
 
@@ -253,7 +253,7 @@ After the catalog entry is committed:
    - `PAIRS_WITH`: Connect to companion recipes, sauces, or drink pairings (e.g., connecting focaccia to a roasted garlic dipping oil).
    - `VARIATION_OF`: Connect a customized iteration to its baseline catalog entry.
    - `USES_INGREDIENT`: Connect the catalog recipe to specific ingredient notes or starter cultures in the substrate.
-3. Validate W3C RDF Turtle projection with `export_graph_rdf` to ensure export conforms to `schema:Recipe`, `schema:HowToStep`, and `schema:HowToSupply` vocabularies.
+3. Validate W3C RDF Turtle projection with `export_graph_rdf` to ensure export conforms to `schema:Recipe`, `schema:recipeIngredient`, `schema:recipeInstructions`, and `asos:metric` vocabularies.
 
 ---
 

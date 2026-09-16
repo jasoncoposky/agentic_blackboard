@@ -46,6 +46,8 @@ The ASOS Commonplace Book serves as a lifelong digital Zettelkasten, dialectic m
   - `EXTENDS`: Specializes, elaborates, builds upon, or adapts the target note's concept to a new domain.
   - `CITES`: References or attributes conceptual origins to the target note.
   - `SYNTHESIS_OF`: Reconciles two or more previously disparate or conflicting notes into a higher-order principle.
+  - `QUESTION_RAISED_BY`: Capturing unanswered questions stemming from a thesis.
+  - `ANALOGY_TO`: Cross-domain structural or metaphorical mapping.
 - **Contextual Annotation**: Every link must include a `context` string articulating *why* the connection exists and how the dialectic relationship functions.
 
 ---
@@ -152,7 +154,7 @@ Call the `create_note` MCP tool with automated duplicate checking enabled:
 2. Traversal & Synthesis:
    - Identify nodes that receive a high in-degree of `SUPPORTS` or `REFUTES` links (intellectual focal points or controversies).
    - When 3 or more related notes form a triad or chain, author a higher-order note using `relation: "SYNTHESIS_OF"` connecting them together into an integrated mental model.
-3. Verify RDF graph projection with `export_graph_rdf` to confirm alignment with W3C RDF Turtle ontologies (`dcterms:references`, `schema:citation`, `skos:related`).
+3. Verify RDF graph projection with `export_graph_rdf` to confirm alignment with W3C RDF Turtle ontologies (`schema:citation`, `rdfs:seeAlso`, and `asos:supports` / `asos:refutes` / `asos:extends`).
 
 ---
 
