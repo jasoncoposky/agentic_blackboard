@@ -80,6 +80,8 @@ async def ensure_backend():
 
     # Wait up to 30 seconds for daemon to initialize
     for _ in range(150):
+        if started_process and started_process.poll() is not None:
+            raise RuntimeError(f"ASOS daemon exited prematurely with code {started_process.returncode}")
         await asyncio.sleep(0.2)
         try:
             async with httpx.AsyncClient() as client:
@@ -297,6 +299,9 @@ async def run_full_cycle():
     inbound_list = in_data.get("inbound", [])
     inbound_sources = [link["source"] for link in inbound_list]
     assert note_uuid in inbound_sources, f"Expected {note_uuid} in inbound links of recipe: {in_data}"
+    in_link = next(link for link in inbound_list if link["source"] == note_uuid)
+    assert in_link["relation"] == "PAIRS_WITH", f"Expected PAIRS_WITH, got {in_link.get('relation')}"
+    assert in_link.get("statement"), f"Expected populated statement in inbound link: {in_link}"
     print(f"Recipe inbound backlinks found: {inbound_sources}")
 
     # Outbound synapses inspection on note
@@ -305,6 +310,9 @@ async def run_full_cycle():
     outbound_list = out_data.get("outbound", [])
     outbound_targets = [link["target"] for link in outbound_list]
     assert recipe_uuid in outbound_targets, f"Expected {recipe_uuid} in outbound links of note: {out_data}"
+    out_link = next(link for link in outbound_list if link["target"] == recipe_uuid)
+    assert out_link["relation"] == "PAIRS_WITH", f"Expected PAIRS_WITH, got {out_link.get('relation')}"
+    assert out_link.get("statement"), f"Expected populated statement in outbound link: {out_link}"
     print(f"Note outbound synapses found: {outbound_targets}")
 
     # Inspect bidirectional links
@@ -328,10 +336,8 @@ async def run_full_cycle():
     assert "schema:recipeIngredient" in rdf_text, "Missing schema:recipeIngredient in RDF export"
     assert "schema:recipeInstructions" in rdf_text, "Missing schema:recipeInstructions in RDF export"
 
-    # Verify rel predicate mapping (e.g. asos:pairsWith or asos:extends or rdfs:seeAlso)
-    assert "asos:pairsWith" in rdf_text or "rdfs:seeAlso" in rdf_text or "asos:extends" in rdf_text, (
-        "Missing expected rel predicate in RDF export"
-    )
+    # Verify rel predicate mapping
+    assert "asos:pairsWith" in rdf_text, "Missing asos:pairsWith in RDF export"
     print(f"RDF Turtle export validated ({len(rdf_text)} bytes). Verified schema:Recipe, schema:citation, and rel predicates.")
     print("✓ Checkpoint 6 PASSED: W3C RDF Turtle ontology export fully asserted.")
 
@@ -457,7 +463,7 @@ async def run_full_cycle():
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-    stdout, stderr = await proc.communicate()
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
     out_str = stdout.decode("utf-8", errors="replace")
     err_str = stderr.decode("utf-8", errors="replace")
 
@@ -483,7 +489,7 @@ async def main():
             print("[CLEANUP] Stopping ASOS daemon process...")
             started_process.terminate()
             try:
-                started_process.wait(timeout=5)
+                started_process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 started_process.kill()
             print("[CLEANUP] Daemon stopped cleanly.")
