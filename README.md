@@ -74,9 +74,25 @@ A Next.js-based visualization and governance dashboard.
 
 ### 4. Agent Skills Suite
 Standardized Markdown-based procedural guides that instruct agents on how to leverage the substrate:
-*   `knowledge-capture`: Strategic ingestion of research.
+*   `knowledge-capture`: Strategic ingestion of research with mandatory "Discover Before You Create" pre-flight verification.
+*   `commonplace-curation`: Zettelkasten atomic note synthesis, dialectic relationships (`SEE_ALSO`, `SUPPORTS`, `REFUTES`, `EXTENDS`, `CITES`, `SYNTHESIS_OF`), and backlink traversal.
+*   `procedural-catalog`: Standardized procedural recipes, workout routines, lab SOPs, and hardware assemblies using `CatalogItem`, `CatalogStep`, and `CatalogMetric`.
 *   `task-orchestration`: Goal decomposition and WBS mapping.
 *   `spatial-materialization`: Projecting knowledge into physical space.
+
+Agents can discover and fetch these skills dynamically at runtime via MCP resources: `asos://skills/{name}` and `asos://schema`.
+
+### 5. Dual Model Context Protocol (MCP) Servers
+ASOS provides dual MCP server implementations with 100% feature parity for Python and Node.js/TypeScript agents:
+*   **Python FastMCP (`asos_mcp_server.py`)**: High-performance asynchronous FastMCP server.
+*   **Node.js MCP (`asos-mcp/index.js`)**: Official `@modelcontextprotocol/sdk` implementation.
+
+Both servers expose:
+*   **Discovery & Querying**: `search_commonplace`, `get_node`, `get_node_links`, `query_knowledge`, `query_substrate`.
+*   **Authoring & Deduplication**: `create_note`, `create_catalog_entry`, `commit_knowledge_bundle`, `link_nodes`. Automatic pre-flight duplicate detection (`check_duplicates=True`) prevents duplicate atoms.
+*   **Semantic Export**: `export_graph_rdf` (W3C RDF Turtle).
+*   **Dynamic Resources**: `asos://schema`, `asos://skills/{name}`.
+*   **Agent Prompts**: `curate_note`, `author_catalog`, `init_swarm`.
 
 ---
 
@@ -95,6 +111,11 @@ cmake --build . --target asos_daemon asos_verify
 ./asos_daemon
 ```
 
+### Run End-to-End Integration Verification
+```bash
+python3 scratch/test_atmosphere_full_cycle.py
+```
+
 ### Launch the Dashboard (Next.js)
 ```bash
 cd asos-dashboard
@@ -102,9 +123,16 @@ npm install
 npm run dev
 ```
 
-### Connect an Agent (Python/MCP)
+### Connect an Agent (MCP)
+
+**Python FastMCP:**
 ```bash
-python asos_mcp_server.py
+python3 asos_mcp_server.py
+```
+
+**Node.js MCP:**
+```bash
+node asos-mcp/index.js
 ```
 
 ---
@@ -113,9 +141,11 @@ python asos_mcp_server.py
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/api/v1/schema` | `GET` | Retrieve ASOS schema definition and relationship predicates. |
+| `/api/v1/schema` | `GET` | Retrieve ASOS schema definition, 32 KnowledgeAreas, and 27 relationship predicates. |
 | `/api/v1/health` | `GET` | Substrate health check and engine readiness. |
-| `/api/v1/graph/bundle` | `POST` | Commit a batch of anchored Knowledge Atoms. |
+| `/api/v1/search` | `GET` | Multi-tenant full-text and filtered search (`q`, `ka`, `tags`, `limit`). |
+| `/api/v1/node/:id/links` | `GET` | Retrieve inbound backlinks and outbound synapses with hydrated statements. |
+| `/api/v1/graph/bundle` | `POST` | Commit a batch of anchored Knowledge Atoms with rich citations, links, items, steps, and metrics. |
 | `/api/v1/graph/node` | `POST` | Create or update an individual graph node. |
 | `/api/v1/node/:id` | `GET` | Retrieve a node and its properties by ID. |
 | `/api/v1/query` | `POST` | Query graph nodes, edges, and connections. |
