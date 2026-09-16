@@ -76,7 +76,7 @@ graph TD
   - New `KnowledgeArea` enums: `LITERATURE_READING = 26`, `CULINARY_RECIPES = 27`, `CREATIVE_ARTS = 28`, `PERSONAL_FINANCE = 29`, `HOME_LOGISTICS = 30`, `GENERAL_COMMONPLACE = 31`
   - New `namespace rel` predicates: `SEE_ALSO`, `REFERENCES`, `CITES`, `SUPPORTS`, `REFUTES`, `EXTENDS`, `SYNTHESIS_OF`, `QUESTION_RAISED_BY`, `ANALOGY_TO`, `PAIRS_WITH`, `VARIATION_OF`, `USES_INGREDIENT`
 
-- [ ] **Step 1: Add new relationship constants to `namespace rel` in `include/asos/schema.hpp`**
+- [x] **Step 1: Add new relationship constants to `namespace rel` in `include/asos/schema.hpp`**
 
 ```cpp
 namespace rel {
@@ -116,7 +116,7 @@ namespace rel {
 }
 ```
 
-- [ ] **Step 2: Add new `KnowledgeArea` entries in `include/asos/schema.hpp`**
+- [x] **Step 2: Add new `KnowledgeArea` entries in `include/asos/schema.hpp`**
 
 ```cpp
     // Life-Long Commonplace Book Domains
@@ -128,23 +128,23 @@ namespace rel {
     GENERAL_COMMONPLACE = 31,
 ```
 
-- [ ] **Step 3: Define `Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, and `CatalogMetric` in `include/asos/schema.hpp`**
+- [x] **Step 3: Define `Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, and `CatalogMetric` in `include/asos/schema.hpp`**
 
 Implement full structs with `serialize(lite3cpp::Buffer& buf, size_t parent)` and `deserialize(const lite3cpp::Buffer& buf, size_t parent)`.
 
-- [ ] **Step 4: Update `CpbEntry` with new fields and serialization logic**
+- [x] **Step 4: Update `CpbEntry` with new fields and serialization logic**
 
 Update `CpbEntry::Payload` with `references` and `note_links`.
 Update `CpbEntry` with `items`, `steps`, `metrics`, and `attributes`.
 Update `serialize()` to write BSON arrays for `references`, `note_links`, `items`, `steps`, `metrics`, and BSON object for `attributes`.
 Update `deserialize()` to read them safely with `try / catch`.
 
-- [ ] **Step 5: Verify compilation**
+- [x] **Step 5: Verify compilation**
 
 Run: `cmake --build build --target asos_engine`
 Expected: Build succeeds with 0 errors.
 
-- [ ] **Step 6: Commit changes**
+- [x] **Step 6: Commit changes**
 
 ```bash
 git add include/asos/schema.hpp
@@ -166,14 +166,14 @@ git commit -m "feat(schema): add universal librarian primitives, note references
   - `Blackboard::get_backlinks(const std::string& note_uuid, uint32_t principal_id = 0)`
   - `Blackboard::get_outbound_links(const std::string& note_uuid, uint32_t principal_id = 0)`
 
-- [ ] **Step 1: Declare methods in `include/asos/Blackboard.hpp`**
+- [x] **Step 1: Declare methods in `include/asos/Blackboard.hpp`**
 
 ```cpp
 std::vector<std::pair<std::string, std::string>> get_backlinks(const std::string& note_uuid, uint32_t principal_id = 0);
 std::vector<std::pair<std::string, std::string>> get_outbound_links(const std::string& note_uuid, uint32_t principal_id = 0);
 ```
 
-- [ ] **Step 2: Implement auto-projection in `src/Blackboard.cpp` (`commit_entry`)**
+- [x] **Step 2: Implement auto-projection in `src/Blackboard.cpp` (`commit_entry`)**
 
 Iterate over `entry.payload.note_links`:
 ```cpp
@@ -198,16 +198,16 @@ for (const auto& ref : entry.payload.references) {
 }
 ```
 
-- [ ] **Step 3: Implement `get_backlinks` and `get_outbound_links` in `src/Blackboard.cpp`**
+- [x] **Step 3: Implement `get_backlinks` and `get_outbound_links` in `src/Blackboard.cpp`**
 
 Use `engine_->get_node()` and `node->get_edges()` or store scanning to collect inbound and outbound connections with their relationship labels.
 
-- [ ] **Step 4: Verify compilation**
+- [x] **Step 4: Verify compilation**
 
 Run: `cmake --build build --target asos_engine`
 Expected: Build succeeds.
 
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes**
 
 ```bash
 git add include/asos/Blackboard.hpp src/Blackboard.cpp
@@ -226,7 +226,7 @@ git commit -m "feat(blackboard): add automatic edge projection and backlink quer
 - Consumes: `asos::CpbEntry`
 - Produces: Enhanced `RdfExporter::export_turtle` formatting notes, citations, recipes, items, and steps.
 
-- [ ] **Step 1: Update `src/RdfExporter.cpp` to emit Schema.org & Dublin Core properties**
+- [x] **Step 1: Update `src/RdfExporter.cpp` to emit Schema.org & Dublin Core properties**
 
 Add `@prefix schema: <http://schema.org/> .\n` to turtle header.
 If `entry.payload.references` is non-empty, emit `schema:citation` sub-nodes with title, page, author, and excerpt.
@@ -235,12 +235,12 @@ If `entry.steps` is non-empty, emit `schema:recipeInstructions` or `schema:step`
 If `entry.metrics` is non-empty, emit metric triples.
 Emit note link predicates (`asos:supports`, `asos:refutes`, `asos:extends`, `rdfs:seeAlso`).
 
-- [ ] **Step 2: Verify compilation**
+- [x] **Step 2: Verify compilation**
 
 Run: `cmake --build build --target asos_engine`
 Expected: Build succeeds.
 
-- [ ] **Step 3: Commit changes**
+- [x] **Step 3: Commit changes**
 
 ```bash
 git add src/RdfExporter.cpp
@@ -261,28 +261,28 @@ git commit -m "feat(rdf): add Schema.org and Dublin Core export for notes and re
   - `test_universal_catalog_recipe()`
   - `test_rdf_export_notes_and_recipes()`
 
-- [ ] **Step 1: Write `test_commonplace_note_references` in `src/main_verify.cpp`**
+- [x] **Step 1: Write `test_commonplace_note_references` in `src/main_verify.cpp`**
 
 Assert multi-reference note serialization and deserialization in `lite3-cpp`.
 
-- [ ] **Step 2: Write `test_note_graph_backlinks` in `src/main_verify.cpp`**
+- [x] **Step 2: Write `test_note_graph_backlinks` in `src/main_verify.cpp`**
 
 Assert note-to-note linking via `rel::EXTENDS` and `rel::SEE_ALSO`, verify auto-projection into `l3kvg`, and query `get_backlinks`.
 
-- [ ] **Step 3: Write `test_universal_catalog_recipe` in `src/main_verify.cpp`**
+- [x] **Step 3: Write `test_universal_catalog_recipe` in `src/main_verify.cpp`**
 
 Create and commit a recipe with ingredients, instructions, and metrics. Assert round-trip fidelity.
 
-- [ ] **Step 4: Write `test_rdf_export_notes_and_recipes` in `src/main_verify.cpp`**
+- [x] **Step 4: Write `test_rdf_export_notes_and_recipes` in `src/main_verify.cpp`**
 
 Call `RdfExporter::export_turtle` and assert presence of citations, ingredients, and relations.
 
-- [ ] **Step 5: Run verification suite**
+- [x] **Step 5: Run verification suite**
 
 Run: `cmake --build build --target asos_verify && ./build/asos_verify`
 Expected: Output `[SUCCESS] All ASOS Verification Tests Passed!` with 0 errors.
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 ```bash
 git add src/main_verify.cpp
