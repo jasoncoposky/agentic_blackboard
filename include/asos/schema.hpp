@@ -22,6 +22,29 @@ namespace rel {
     const std::string ANCHORED_TO = "ANCHORED_TO";      // Widget -> SpatialAnchor
     const std::string MENTIONS = "MENTIONS";            // Journal -> Identity (Person mentioned)
     const std::string OCCURRED_AT = "OCCURRED_AT";      // Journal -> SpatialAnchor
+
+    // Task & Strategic Alignment
+    const std::string DEPENDS_ON = "DEPENDS_ON";
+    const std::string BLOCKS = "BLOCKS";
+    const std::string SUBTASK_OF = "SUBTASK_OF";
+    const std::string VALIDATED_BY = "VALIDATED_BY";
+    const std::string CONTRIBUTES_TO = "CONTRIBUTES_TO";
+
+    // Literature & Intellectual Dialectic
+    const std::string SEE_ALSO = "SEE_ALSO";
+    const std::string REFERENCES = "REFERENCES";
+    const std::string CITES = "CITES";
+    const std::string SUPPORTS = "SUPPORTS";
+    const std::string REFUTES = "REFUTES";
+    const std::string EXTENDS = "EXTENDS";
+    const std::string SYNTHESIS_OF = "SYNTHESIS_OF";
+    const std::string QUESTION_RAISED_BY = "QUESTION_RAISED_BY";
+    const std::string ANALOGY_TO = "ANALOGY_TO";
+
+    // Culinary & Composition
+    const std::string PAIRS_WITH = "PAIRS_WITH";
+    const std::string VARIATION_OF = "VARIATION_OF";
+    const std::string USES_INGREDIENT = "USES_INGREDIENT";
 }
 
 
@@ -52,6 +75,14 @@ enum class KnowledgeArea : uint8_t {
     LEISURE_CREATIVITY = 23,
     DAILY_ROUTINE = 24,
     EDUCATION_LEARNING = 25,
+
+    // Life-Long Commonplace Book Domains
+    LITERATURE_READING = 26,
+    CULINARY_RECIPES = 27,
+    CREATIVE_ARTS = 28,
+    PERSONAL_FINANCE = 29,
+    HOME_LOGISTICS = 30,
+    GENERAL_COMMONPLACE = 31,
     
     UNKNOWN = 0
 };
@@ -310,6 +341,175 @@ struct Education {
 };
 
 /**
+ * @brief Rich Bibliographic Reference
+ */
+struct Reference {
+    std::string title;
+    std::string page_numbers;
+    std::string uuid;
+    std::string creator;
+    std::vector<std::string> tags;
+    std::string excerpt;
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t target_idx = parent;
+        lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + parent));
+        if (nv.type() == lite3cpp::Type::Array) {
+            target_idx = buf.arr_append_obj(parent);
+        }
+        buf.set_str(target_idx, "title", title);
+        buf.set_str(target_idx, "page_numbers", page_numbers);
+        buf.set_str(target_idx, "uuid", uuid);
+        buf.set_str(target_idx, "creator", creator);
+        size_t tags_idx = buf.set_arr(target_idx, "tags");
+        for (const auto& tag : tags) {
+            buf.arr_append_str(tags_idx, tag);
+        }
+        buf.set_str(target_idx, "excerpt", excerpt);
+    }
+
+    static Reference deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        Reference ref;
+        try { ref.title = std::string(buf.get_str(parent, "title")); } catch (...) {}
+        try { ref.page_numbers = std::string(buf.get_str(parent, "page_numbers")); } catch (...) {}
+        try { ref.uuid = std::string(buf.get_str(parent, "uuid")); } catch (...) {}
+        try { ref.creator = std::string(buf.get_str(parent, "creator")); } catch (...) {}
+        try {
+            if (buf.get_type(parent, "tags") == lite3cpp::Type::Array) {
+                size_t tags_idx = buf.get_arr(parent, "tags");
+                lite3cpp::NodeView tags_nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + tags_idx));
+                for (uint32_t i = 0; i < tags_nv.size(); ++i) {
+                    ref.tags.push_back(std::string(buf.arr_get_str(tags_idx, i)));
+                }
+            }
+        } catch (...) {}
+        try { ref.excerpt = std::string(buf.get_str(parent, "excerpt")); } catch (...) {}
+        return ref;
+    }
+};
+
+/**
+ * @brief Inter-Note Synapse Link
+ */
+struct NoteLink {
+    std::string target_uuid;
+    std::string relation;
+    std::string context;
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t target_idx = parent;
+        lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + parent));
+        if (nv.type() == lite3cpp::Type::Array) {
+            target_idx = buf.arr_append_obj(parent);
+        }
+        buf.set_str(target_idx, "target_uuid", target_uuid);
+        buf.set_str(target_idx, "relation", relation);
+        buf.set_str(target_idx, "context", context);
+    }
+
+    static NoteLink deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        NoteLink nl;
+        try { nl.target_uuid = std::string(buf.get_str(parent, "target_uuid")); } catch (...) {}
+        try { nl.relation = std::string(buf.get_str(parent, "relation")); } catch (...) {}
+        try { nl.context = std::string(buf.get_str(parent, "context")); } catch (...) {}
+        return nl;
+    }
+};
+
+/**
+ * @brief Catalog Item (Ingredients, materials, equipment, components)
+ */
+struct CatalogItem {
+    std::string name;
+    double quantity = 0.0;
+    std::string unit;
+    std::string role;
+    std::string notes;
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t target_idx = parent;
+        lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + parent));
+        if (nv.type() == lite3cpp::Type::Array) {
+            target_idx = buf.arr_append_obj(parent);
+        }
+        buf.set_str(target_idx, "name", name);
+        buf.set_f64(target_idx, "quantity", quantity);
+        buf.set_str(target_idx, "unit", unit);
+        buf.set_str(target_idx, "role", role);
+        buf.set_str(target_idx, "notes", notes);
+    }
+
+    static CatalogItem deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        CatalogItem item;
+        try { item.name = std::string(buf.get_str(parent, "name")); } catch (...) {}
+        try { item.quantity = buf.get_f64(parent, "quantity"); } catch (...) {}
+        try { item.unit = std::string(buf.get_str(parent, "unit")); } catch (...) {}
+        try { item.role = std::string(buf.get_str(parent, "role")); } catch (...) {}
+        try { item.notes = std::string(buf.get_str(parent, "notes")); } catch (...) {}
+        return item;
+    }
+};
+
+/**
+ * @brief Catalog Step (Procedural sequence, instruction)
+ */
+struct CatalogStep {
+    int32_t step_number = 1;
+    std::string instruction;
+    int32_t duration_seconds = 0;
+    std::string notes;
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t target_idx = parent;
+        lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + parent));
+        if (nv.type() == lite3cpp::Type::Array) {
+            target_idx = buf.arr_append_obj(parent);
+        }
+        buf.set_i64(target_idx, "step_number", static_cast<int64_t>(step_number));
+        buf.set_str(target_idx, "instruction", instruction);
+        buf.set_i64(target_idx, "duration_seconds", static_cast<int64_t>(duration_seconds));
+        buf.set_str(target_idx, "notes", notes);
+    }
+
+    static CatalogStep deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        CatalogStep step;
+        try { step.step_number = static_cast<int32_t>(buf.get_i64(parent, "step_number")); } catch (...) {}
+        try { step.instruction = std::string(buf.get_str(parent, "instruction")); } catch (...) {}
+        try { step.duration_seconds = static_cast<int32_t>(buf.get_i64(parent, "duration_seconds")); } catch (...) {}
+        try { step.notes = std::string(buf.get_str(parent, "notes")); } catch (...) {}
+        return step;
+    }
+};
+
+/**
+ * @brief Catalog Metric (Quantitative measurements with units)
+ */
+struct CatalogMetric {
+    std::string key;
+    double value = 0.0;
+    std::string unit;
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t target_idx = parent;
+        lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + parent));
+        if (nv.type() == lite3cpp::Type::Array) {
+            target_idx = buf.arr_append_obj(parent);
+        }
+        buf.set_str(target_idx, "key", key);
+        buf.set_f64(target_idx, "value", value);
+        buf.set_str(target_idx, "unit", unit);
+    }
+
+    static CatalogMetric deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        CatalogMetric metric;
+        try { metric.key = std::string(buf.get_str(parent, "key")); } catch (...) {}
+        try { metric.value = buf.get_f64(parent, "value"); } catch (...) {}
+        try { metric.unit = std::string(buf.get_str(parent, "unit")); } catch (...) {}
+        return metric;
+    }
+};
+
+/**
  * @brief Universal Atom Schema (CPB_ENTRY)
  */
 struct CpbEntry {
@@ -319,7 +519,8 @@ struct CpbEntry {
             std::string agent_id;
             std::string project_id;
         } origin;
-        int64_t timestamp;
+        int64_t timestamp = 0;
+        int64_t event_timestamp = 0;
     } header;
 
     struct Taxonomy {
@@ -335,7 +536,14 @@ struct CpbEntry {
         std::string statement;
         std::string content;
         std::vector<std::string> artifact_refs;
+        std::vector<Reference> references;
+        std::vector<NoteLink> note_links;
     } payload;
+
+    std::vector<CatalogItem> items;
+    std::vector<CatalogStep> steps;
+    std::vector<CatalogMetric> metrics;
+    std::map<std::string, std::string> attributes;
 
     std::optional<Wellness> wellness;
     std::optional<Education> education;
@@ -347,6 +555,7 @@ struct CpbEntry {
         size_t h_idx = buf.set_obj(0, "header");
         buf.set_str(h_idx, "uuid", header.uuid);
         buf.set_i64(h_idx, "timestamp", header.timestamp);
+        buf.set_i64(h_idx, "event_timestamp", header.event_timestamp);
         size_t o_idx = buf.set_obj(h_idx, "origin");
         buf.set_str(o_idx, "agent_id", header.origin.agent_id);
         buf.set_str(o_idx, "project_id", header.origin.project_id);
@@ -366,6 +575,41 @@ struct CpbEntry {
         size_t refs_idx = buf.set_arr(p_idx, "artifact_refs");
         for (const auto& ref : payload.artifact_refs) buf.arr_append_str(refs_idx, ref);
 
+        size_t references_arr = buf.set_arr(p_idx, "references");
+        for (const auto& ref : payload.references) {
+            size_t obj_idx = buf.arr_append_obj(references_arr);
+            ref.serialize(buf, obj_idx);
+        }
+
+        size_t note_links_arr = buf.set_arr(p_idx, "note_links");
+        for (const auto& link : payload.note_links) {
+            size_t obj_idx = buf.arr_append_obj(note_links_arr);
+            link.serialize(buf, obj_idx);
+        }
+
+        size_t items_arr = buf.set_arr(0, "items");
+        for (const auto& item : items) {
+            size_t obj_idx = buf.arr_append_obj(items_arr);
+            item.serialize(buf, obj_idx);
+        }
+
+        size_t steps_arr = buf.set_arr(0, "steps");
+        for (const auto& step : steps) {
+            size_t obj_idx = buf.arr_append_obj(steps_arr);
+            step.serialize(buf, obj_idx);
+        }
+
+        size_t metrics_arr = buf.set_arr(0, "metrics");
+        for (const auto& metric : metrics) {
+            size_t obj_idx = buf.arr_append_obj(metrics_arr);
+            metric.serialize(buf, obj_idx);
+        }
+
+        size_t attr_idx = buf.set_obj(0, "attributes");
+        for (const auto& [k, v] : attributes) {
+            buf.set_str(attr_idx, k, v);
+        }
+
         if (wellness) {
             wellness->serialize(buf, 0);
         }
@@ -382,6 +626,11 @@ struct CpbEntry {
         size_t h_idx = buf.get_obj(0, "header");
         entry.header.uuid = buf.get_str(h_idx, "uuid");
         entry.header.timestamp = buf.get_i64(h_idx, "timestamp");
+        try {
+            entry.header.event_timestamp = buf.get_i64(h_idx, "event_timestamp");
+        } catch (...) {
+            entry.header.event_timestamp = 0;
+        }
         size_t o_idx = buf.get_obj(h_idx, "origin");
         entry.header.origin.agent_id = buf.get_str(o_idx, "agent_id");
         entry.header.origin.project_id = buf.get_str(o_idx, "project_id");
@@ -408,6 +657,70 @@ struct CpbEntry {
         for (uint32_t i = 0; i < refs_nv.size(); ++i) {
             entry.payload.artifact_refs.push_back(std::string(buf.arr_get_str(refs_idx, i)));
         }
+
+        try {
+            if (buf.get_type(p_idx, "references") == lite3cpp::Type::Array) {
+                size_t references_arr = buf.get_arr(p_idx, "references");
+                lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + references_arr));
+                for (uint32_t i = 0; i < nv.size(); ++i) {
+                    size_t obj_idx = buf.arr_get_obj(references_arr, i);
+                    entry.payload.references.push_back(Reference::deserialize(buf, obj_idx));
+                }
+            }
+        } catch (...) {}
+
+        try {
+            if (buf.get_type(p_idx, "note_links") == lite3cpp::Type::Array) {
+                size_t links_arr = buf.get_arr(p_idx, "note_links");
+                lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + links_arr));
+                for (uint32_t i = 0; i < nv.size(); ++i) {
+                    size_t obj_idx = buf.arr_get_obj(links_arr, i);
+                    entry.payload.note_links.push_back(NoteLink::deserialize(buf, obj_idx));
+                }
+            }
+        } catch (...) {}
+
+        try {
+            if (buf.get_type(0, "items") == lite3cpp::Type::Array) {
+                size_t items_arr = buf.get_arr(0, "items");
+                lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + items_arr));
+                for (uint32_t i = 0; i < nv.size(); ++i) {
+                    size_t obj_idx = buf.arr_get_obj(items_arr, i);
+                    entry.items.push_back(CatalogItem::deserialize(buf, obj_idx));
+                }
+            }
+        } catch (...) {}
+
+        try {
+            if (buf.get_type(0, "steps") == lite3cpp::Type::Array) {
+                size_t steps_arr = buf.get_arr(0, "steps");
+                lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + steps_arr));
+                for (uint32_t i = 0; i < nv.size(); ++i) {
+                    size_t obj_idx = buf.arr_get_obj(steps_arr, i);
+                    entry.steps.push_back(CatalogStep::deserialize(buf, obj_idx));
+                }
+            }
+        } catch (...) {}
+
+        try {
+            if (buf.get_type(0, "metrics") == lite3cpp::Type::Array) {
+                size_t metrics_arr = buf.get_arr(0, "metrics");
+                lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + metrics_arr));
+                for (uint32_t i = 0; i < nv.size(); ++i) {
+                    size_t obj_idx = buf.arr_get_obj(metrics_arr, i);
+                    entry.metrics.push_back(CatalogMetric::deserialize(buf, obj_idx));
+                }
+            }
+        } catch (...) {}
+
+        try {
+            if (buf.get_type(0, "attributes") == lite3cpp::Type::Object) {
+                size_t attr_idx = buf.get_obj(0, "attributes");
+                for (auto it = buf.begin(attr_idx); it != buf.end(attr_idx); ++it) {
+                    entry.attributes[std::string(it->key)] = std::string(buf.get_str(attr_idx, it->key));
+                }
+            }
+        } catch (...) {}
 
         try {
             if (buf.get_type(0, "wellness") == lite3cpp::Type::Object) {
