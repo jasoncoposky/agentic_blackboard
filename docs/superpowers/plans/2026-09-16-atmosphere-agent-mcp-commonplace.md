@@ -81,7 +81,7 @@ graph TD
   - `GET /api/v1/node/:id/links?direction=` returning inbound backlinks and outbound synapses with statements.
   - Enhanced `POST /api/v1/graph/bundle` deserializing `references`, `note_links`, `items`, `steps`, `metrics`, `attributes`.
 
-- [ ] **Step 1: Write failing test `test_api_search_and_links` in `src/main_verify.cpp`**
+- [x] **Step 1: Write failing test `test_api_search_and_links` in `src/main_verify.cpp`**
 
 ```cpp
 void test_api_search_and_links() {
@@ -136,17 +136,17 @@ void test_api_search_and_links() {
 }
 ```
 
-- [ ] **Step 2: Add test invocation to `src/main_verify.cpp` and run to check compilation**
+- [x] **Step 2: Add test invocation to `src/main_verify.cpp` and run to check compilation**
 
 Add `test_api_search_and_links();` inside `main()` in `src/main_verify.cpp`.
 Run: `cmake --build build --target asos_verify && ./build/asos_verify`
 Expected: Test passes.
 
-- [ ] **Step 3: Update `GET /api/v1/schema` in `src/ApiServer.cpp`**
+- [x] **Step 3: Update `GET /api/v1/schema` in `src/ApiServer.cpp`**
 
 Replace lines 58-67 in `src/ApiServer.cpp` to output all 32 knowledge areas, all relationship predicates, and schemas for `CPB_ENTRY`, `REFERENCE`, `NOTE_LINK`, `CATALOG_ITEM`, `CATALOG_STEP`, `CATALOG_METRIC`.
 
-- [ ] **Step 4: Update `POST /api/v1/graph/bundle` in `src/ApiServer.cpp` to unpack rich commonplace fields**
+- [x] **Step 4: Update `POST /api/v1/graph/bundle` in `src/ApiServer.cpp` to unpack rich commonplace fields**
 
 Add parsing for:
 - `item["payload"]["references"]`
@@ -156,20 +156,20 @@ Add parsing for:
 - `item["metrics"]`
 - `item["attributes"]`
 
-- [ ] **Step 5: Add `GET /api/v1/search` endpoint in `src/ApiServer.cpp`**
+- [x] **Step 5: Add `GET /api/v1/search` endpoint in `src/ApiServer.cpp`**
 
 Implement search scanning node keys `n:`, filtering by query `q` (case-insensitive substring of statement, content, or tags), `ka`, and `tags`, returning `{ "matches": [...], "count": N }`.
 
-- [ ] **Step 6: Add `GET /api/v1/node/:id/links` endpoint in `src/ApiServer.cpp`**
+- [x] **Step 6: Add `GET /api/v1/node/:id/links` endpoint in `src/ApiServer.cpp`**
 
 Call `blackboard_->get_backlinks(uuid, principal_id)` and `blackboard_->get_outbound_links(uuid, principal_id)` and hydrate statement labels for connected nodes into JSON.
 
-- [ ] **Step 7: Compile and verify with `asos_verify`**
+- [x] **Step 7: Compile and verify with `asos_verify`**
 
 Run: `cmake --build build --target asos_verify && ./build/asos_verify`
 Expected: All tests pass.
 
-- [ ] **Step 8: Commit changes**
+- [x] **Step 8: Commit changes**
 
 ```bash
 git add src/ApiServer.cpp src/main_verify.cpp
@@ -191,7 +191,7 @@ git commit -m "feat(api): add /search and /node/:id/links endpoints and unpack r
   - Resources: `asos://schema`, `asos://skills/{name}`
   - Prompts: `curate_note`, `author_catalog`
 
-- [ ] **Step 1: Implement `search_commonplace` tool in `asos_mcp_server.py`**
+- [x] **Step 1: Implement `search_commonplace` tool in `asos_mcp_server.py`**
 
 ```python
 @mcp.tool()
@@ -211,7 +211,7 @@ async def search_commonplace(query: str, ka: int = None, tags: list[str] = None,
         return response.text
 ```
 
-- [ ] **Step 2: Implement `get_node` and `get_node_links` tools in `asos_mcp_server.py`**
+- [x] **Step 2: Implement `get_node` and `get_node_links` tools in `asos_mcp_server.py`**
 
 ```python
 @mcp.tool()
@@ -234,19 +234,19 @@ async def get_node_links(uuid: str, direction: str = "both") -> str:
         return response.text
 ```
 
-- [ ] **Step 3: Implement `create_note` and `create_catalog_entry` with deduplication in `asos_mcp_server.py`**
+- [x] **Step 3: Implement `create_note` and `create_catalog_entry` with deduplication in `asos_mcp_server.py`**
 
 Include pre-flight check when `check_duplicates=True`. If an exact statement match is found, return `{ "status": "ALREADY_EXISTS", "uuid": match["uuid"] }`.
 
-- [ ] **Step 4: Add dynamic `asos://skills/{name}` resource and prompts in `asos_mcp_server.py`**
+- [x] **Step 4: Add dynamic `asos://skills/{name}` resource and prompts in `asos_mcp_server.py`**
 
 Read corresponding markdown files from `skills/<name>/SKILL.md` and return content. Add `@mcp.prompt("curate_note")` and `@mcp.prompt("author_catalog")`.
 
-- [ ] **Step 5: Write and run end-to-end integration test `scratch/verify_mcp_atmosphere.py`**
+- [x] **Step 5: Write and run end-to-end integration test `scratch/verify_mcp_atmosphere.py`**
 
 Start `asos_daemon` or run test client against live or mock API to verify tool functionality and duplicate checks.
 
-- [ ] **Step 6: Commit changes**
+- [x] **Step 6: Commit changes**
 
 ```bash
 git add asos_mcp_server.py scratch/verify_mcp_atmosphere.py
@@ -266,24 +266,24 @@ git commit -m "feat(mcp-python): add commonplace search, node links, create_note
   - Matching tool suite for TypeScript / Node agents
   - Resource handlers for `asos://schema` and `asos://skills/{name}`
 
-- [ ] **Step 1: Add tool declarations in `asos-mcp/index.js`**
+- [x] **Step 1: Add tool declarations in `asos-mcp/index.js`**
 
 Add `search_commonplace`, `get_node`, `get_node_links`, `create_note`, `create_catalog_entry`, and `export_graph_rdf` to `ListToolsRequestSchema` with strict input schemas.
 
-- [ ] **Step 2: Add tool execution handlers in `asos-mcp/index.js`**
+- [x] **Step 2: Add tool execution handlers in `asos-mcp/index.js`**
 
 Implement the tool call handlers forwarding requests to `${API_BASE}/search`, `${API_BASE}/node/:id/links`, `${API_BASE}/graph/bundle`, and `${API_BASE}/graph/export`.
 
-- [ ] **Step 3: Add resource handlers for `asos://skills/{name}` in `asos-mcp/index.js`**
+- [x] **Step 3: Add resource handlers for `asos://skills/{name}` in `asos-mcp/index.js`**
 
 Read files from `skills/${name}/SKILL.md` using `fs.promises.readFile`.
 
-- [ ] **Step 4: Test Node.js MCP Server**
+- [x] **Step 4: Test Node.js MCP Server**
 
 Run: `node -e "require('./asos-mcp/index.js')"`
 Verify syntax and clean startup without runtime exceptions.
 
-- [ ] **Step 5: Commit changes**
+- [x] **Step 5: Commit changes**
 
 ```bash
 git add asos-mcp/index.js
@@ -303,11 +303,11 @@ git commit -m "feat(mcp-node): add commonplace discovery, links, note authoring,
 - Consumes: MCP tool definitions from Tasks 2 & 3
 - Produces: Standardized agent workflows and checklists
 
-- [ ] **Step 1: Update `skills/knowledge-capture/SKILL.md`**
+- [x] **Step 1: Update `skills/knowledge-capture/SKILL.md`**
 
 Add Step 0: "Discover Before You Create" (mandatory call to `search_commonplace`). Document bibliographic `Reference`s and `NoteLink`s.
 
-- [ ] **Step 2: Author `skills/commonplace-curation/SKILL.md`**
+- [x] **Step 2: Author `skills/commonplace-curation/SKILL.md`**
 
 Create comprehensive guide covering:
 - Atomic note principles (single core thesis in `statement`).
@@ -315,7 +315,7 @@ Create comprehensive guide covering:
 - Dialectic relationships via `NoteLink` (`rel::SEE_ALSO`, `rel::SUPPORTS`, `rel::REFUTES`, `rel::EXTENDS`, `rel::CITES`, `rel::SYNTHESIS_OF`).
 - Traversing backlinks via `get_node_links` to synthesize connections.
 
-- [ ] **Step 3: Author `skills/procedural-catalog/SKILL.md`**
+- [x] **Step 3: Author `skills/procedural-catalog/SKILL.md`**
 
 Create comprehensive guide covering:
 - Procedural structuring for recipes, workout routines, lab SOPs, and hardware assemblies.
@@ -323,7 +323,7 @@ Create comprehensive guide covering:
 - Defining ordered execution steps, tool requirements, and prerequisites via `CatalogStep`.
 - Quantified descriptors (duration, temperature, calories) via `CatalogMetric`.
 
-- [ ] **Step 4: Commit skills**
+- [x] **Step 4: Commit skills**
 
 ```bash
 git add skills/
@@ -347,17 +347,17 @@ git commit -m "docs(skills): add commonplace-curation, procedural-catalog, and u
   6. Exports W3C RDF Turtle (`export_graph_rdf`)
   7. Reads skill resource (`asos://skills/commonplace-curation`)
 
-- [ ] **Step 1: Build the C++ daemon and verify test binary**
+- [x] **Step 1: Build the C++ daemon and verify test binary**
 
 Run: `cmake --build build --target asos_daemon asos_verify && ./build/asos_verify`
 Expected: Build succeeds and verification passes.
 
-- [ ] **Step 2: Execute full cycle script against running daemon**
+- [x] **Step 2: Execute full cycle script against running daemon**
 
 Run `asos_daemon` in background, execute `scratch/test_atmosphere_full_cycle.py`.
 Expected: All 7 integration checkpoints pass with 0 errors.
 
-- [ ] **Step 3: Commit and finalize branch**
+- [x] **Step 3: Commit and finalize branch**
 
 ```bash
 git add scratch/test_atmosphere_full_cycle.py
