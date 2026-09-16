@@ -4,6 +4,7 @@
 #include "asos/Validator.hpp"
 #include "asos/DeltaEngine.hpp"
 #include "asos/Monitor.hpp"
+#include "asos/RdfExporter.hpp"
 #include "engine/store.hpp"
 #include "L3KVG/KeyBuilder.hpp"
 #include "L3KVG/Node.hpp"
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <vector>
 #include <cassert>
+#include <filesystem>
 
 using namespace asos;
 
@@ -312,6 +314,7 @@ void test_safe_mode() {
 
 void test_life_journaling() {
     std::cout << "[Test] Starting Life Journaling Verification..." << std::endl;
+    std::filesystem::remove_all("test_journal_db");
     Blackboard bb("test_journal_db", 7);
     auto* store = bb.get_engine()->get_store();
 
@@ -455,6 +458,344 @@ void test_life_journaling() {
     std::cout << "[Test] Life Journaling Verification PASSED" << std::endl;
 }
 
+void test_commonplace_note_references() {
+    std::cout << "[Test] Starting Commonplace Note References Verification..." << std::endl;
+    std::filesystem::remove_all("test_note_ref_db");
+    {
+        Blackboard bb("test_note_ref_db", 8);
+        auto* store = bb.get_engine()->get_store();
+
+        CpbEntry entry;
+        entry.header.uuid = "note-ref-1";
+        entry.header.origin.agent_id = "agent-ref";
+        entry.header.origin.project_id = "project-ref";
+        entry.taxonomy.knowledge_area = KnowledgeArea::LITERATURE_READING;
+        entry.payload.statement = "SICP and Lisp Foundations";
+
+        Reference ref1;
+        ref1.title = "Structure and Interpretation of Computer Programs";
+        ref1.page_numbers = "pp. 359-380";
+        ref1.creator = "Harold Abelson";
+        ref1.tags = {"lisp", "metalinguistic"};
+        ref1.excerpt = "The evaluator, which determines the meaning of expressions...";
+        entry.payload.references.push_back(ref1);
+
+        Reference ref2;
+        ref2.title = "Recursive Functions of Symbolic Expressions";
+        ref2.page_numbers = "CACM 3(4)";
+        ref2.creator = "John McCarthy";
+        ref2.tags = {"lisp", "lambda-calculus"};
+        ref2.uuid = "urn:doi:10.1145/367177.367199";
+        entry.payload.references.push_back(ref2);
+
+        bb.commit_cpb_entry(entry);
+        store->wait_all_shards();
+
+        auto key = std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("note-ref-1")));
+        auto raw_buf = store->get(key);
+        if (raw_buf.size() == 0) {
+            std::cerr << "[Test] FAILED: Could not retrieve note-ref-1 from store" << std::endl;
+            exit(1);
+        }
+
+        CpbEntry fetched = CpbEntry::deserialize(raw_buf);
+        if (fetched.payload.references.size() != 2) {
+            std::cerr << "[Test] FAILED: Expected 2 references, got " << fetched.payload.references.size() << std::endl;
+            exit(1);
+        }
+
+        const auto& r1 = fetched.payload.references[0];
+        if (r1.title != "Structure and Interpretation of Computer Programs" ||
+            r1.page_numbers != "pp. 359-380" ||
+            r1.creator != "Harold Abelson" ||
+            r1.tags != std::vector<std::string>{"lisp", "metalinguistic"} ||
+            r1.excerpt != "The evaluator, which determines the meaning of expressions...") {
+            std::cerr << "[Test] FAILED: Reference 1 fields mismatch" << std::endl;
+            exit(1);
+        }
+
+        const auto& r2 = fetched.payload.references[1];
+        if (r2.title != "Recursive Functions of Symbolic Expressions" ||
+            r2.page_numbers != "CACM 3(4)" ||
+            r2.creator != "John McCarthy" ||
+            r2.tags != std::vector<std::string>{"lisp", "lambda-calculus"} ||
+            r2.uuid != "urn:doi:10.1145/367177.367199") {
+            std::cerr << "[Test] FAILED: Reference 2 fields mismatch" << std::endl;
+            exit(1);
+        }
+    }
+    std::filesystem::remove_all("test_note_ref_db");
+    std::cout << "[Test] Commonplace Note References Verification PASSED" << std::endl;
+}
+
+void test_note_graph_backlinks() {
+    std::cout << "[Test] Starting Note Graph Backlinks Verification..." << std::endl;
+    std::filesystem::remove_all("test_backlinks_db");
+    {
+        Blackboard bb("test_backlinks_db", 9);
+        auto* store = bb.get_engine()->get_store();
+
+        CpbEntry note_a;
+        note_a.header.uuid = "note-A";
+        note_a.header.origin.agent_id = "agent-backlinks";
+        note_a.header.origin.project_id = "project-backlinks";
+        note_a.payload.statement = "Note A on Foundations";
+
+        CpbEntry note_b;
+        note_b.header.uuid = "note-B";
+        note_b.header.origin.agent_id = "agent-backlinks";
+        note_b.header.origin.project_id = "project-backlinks";
+        note_b.payload.statement = "Note B on Recursion";
+        NoteLink link_b;
+        link_b.target_uuid = "note-A";
+        link_b.relation = rel::EXTENDS;
+        link_b.context = "Extends Note A on recursion";
+        note_b.payload.note_links.push_back(link_b);
+
+        CpbEntry note_c;
+        note_c.header.uuid = "note-C";
+        note_c.header.origin.agent_id = "agent-backlinks";
+        note_c.header.origin.project_id = "project-backlinks";
+        note_c.payload.statement = "Note C related concepts";
+        NoteLink link_c;
+        link_c.target_uuid = "note-A";
+        link_c.relation = ""; // empty relation defaults to rel::SEE_ALSO
+        link_c.context = "Related context";
+        note_c.payload.note_links.push_back(link_c);
+
+        bb.commit_cpb_entry(note_a);
+        bb.commit_cpb_entry(note_b);
+        bb.commit_cpb_entry(note_c);
+        store->wait_all_shards();
+
+        auto backlinks = bb.get_backlinks("note-A");
+        bool has_b_extends = false;
+        bool has_c_see_also = false;
+        for (const auto& [src, rel] : backlinks) {
+            if (src == "note-B" && rel == "EXTENDS") has_b_extends = true;
+            if (src == "note-C" && rel == "SEE_ALSO") has_c_see_also = true;
+        }
+
+        if (!has_b_extends) {
+            std::cerr << "[Test] FAILED: Backlinks for note-A missing (note-B, EXTENDS)" << std::endl;
+            exit(1);
+        }
+        if (!has_c_see_also) {
+            std::cerr << "[Test] FAILED: Backlinks for note-A missing (note-C, SEE_ALSO)" << std::endl;
+            exit(1);
+        }
+
+        auto outbound_b = bb.get_outbound_links("note-B");
+        bool has_a_extends = false;
+        for (const auto& [dst, rel] : outbound_b) {
+            if (dst == "note-A" && rel == "EXTENDS") has_a_extends = true;
+        }
+
+        if (!has_a_extends) {
+            std::cerr << "[Test] FAILED: Outbound links for note-B missing (note-A, EXTENDS)" << std::endl;
+            exit(1);
+        }
+    }
+    std::filesystem::remove_all("test_backlinks_db");
+    std::cout << "[Test] Note Graph Backlinks Verification PASSED" << std::endl;
+}
+
+void test_universal_catalog_recipe() {
+    std::cout << "[Test] Starting Universal Catalog Recipe Verification..." << std::endl;
+    std::filesystem::remove_all("test_recipe_db");
+    {
+        Blackboard bb("test_recipe_db", 10);
+        auto* store = bb.get_engine()->get_store();
+
+        CpbEntry recipe;
+        recipe.header.uuid = "recipe-tiramisu";
+        recipe.header.origin.agent_id = "chef-luigi";
+        recipe.header.origin.project_id = "project-cookbook";
+        recipe.taxonomy.knowledge_area = KnowledgeArea::CULINARY_RECIPES;
+        recipe.payload.statement = "Classic Tiramisu";
+
+        recipe.items.push_back({ "Mascarpone", 500.0, "g", "INGREDIENT", "room temperature" });
+        recipe.items.push_back({ "Ladyfingers", 30.0, "pcs", "INGREDIENT", "Savoiardi" });
+        recipe.items.push_back({ "Espresso", 250.0, "ml", "INGREDIENT", "freshly brewed" });
+
+        recipe.steps.push_back({ 1, "Brew espresso and allow to cool", 300, "" });
+        recipe.steps.push_back({ 2, "Whisk egg yolks with sugar, fold in mascarpone", 600, "" });
+        recipe.steps.push_back({ 3, "Dip ladyfingers in espresso and layer with cream", 450, "" });
+
+        recipe.metrics.push_back({ "prep_time", 30.0, "min" });
+        recipe.metrics.push_back({ "servings", 8.0, "yield" });
+        recipe.metrics.push_back({ "calories", 420.0, "kcal" });
+
+        recipe.attributes["cuisine"] = "Italian";
+        recipe.attributes["course"] = "DESSERT";
+
+        bb.commit_cpb_entry(recipe);
+        store->wait_all_shards();
+
+        auto key = std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("recipe-tiramisu")));
+        auto raw_buf = store->get(key);
+        if (raw_buf.size() == 0) {
+            std::cerr << "[Test] FAILED: Could not retrieve recipe-tiramisu from store" << std::endl;
+            exit(1);
+        }
+
+        CpbEntry fetched = CpbEntry::deserialize(raw_buf);
+
+        if (fetched.items.size() != 3) {
+            std::cerr << "[Test] FAILED: Expected 3 items, got " << fetched.items.size() << std::endl;
+            exit(1);
+        }
+        if (fetched.items[0].name != "Mascarpone" || fetched.items[0].quantity != 500.0 ||
+            fetched.items[0].unit != "g" || fetched.items[0].role != "INGREDIENT" ||
+            fetched.items[0].notes != "room temperature") {
+            std::cerr << "[Test] FAILED: Item 0 mismatch" << std::endl;
+            exit(1);
+        }
+        if (fetched.items[1].name != "Ladyfingers" || fetched.items[1].quantity != 30.0 ||
+            fetched.items[1].unit != "pcs" || fetched.items[1].role != "INGREDIENT" ||
+            fetched.items[1].notes != "Savoiardi") {
+            std::cerr << "[Test] FAILED: Item 1 mismatch" << std::endl;
+            exit(1);
+        }
+        if (fetched.items[2].name != "Espresso" || fetched.items[2].quantity != 250.0 ||
+            fetched.items[2].unit != "ml" || fetched.items[2].role != "INGREDIENT" ||
+            fetched.items[2].notes != "freshly brewed") {
+            std::cerr << "[Test] FAILED: Item 2 mismatch" << std::endl;
+            exit(1);
+        }
+
+        if (fetched.steps.size() != 3) {
+            std::cerr << "[Test] FAILED: Expected 3 steps, got " << fetched.steps.size() << std::endl;
+            exit(1);
+        }
+        if (fetched.steps[0].step_number != 1 || fetched.steps[0].instruction != "Brew espresso and allow to cool" ||
+            fetched.steps[0].duration_seconds != 300 || fetched.steps[0].notes != "") {
+            std::cerr << "[Test] FAILED: Step 0 mismatch" << std::endl;
+            exit(1);
+        }
+        if (fetched.steps[1].step_number != 2 || fetched.steps[1].instruction != "Whisk egg yolks with sugar, fold in mascarpone" ||
+            fetched.steps[1].duration_seconds != 600 || fetched.steps[1].notes != "") {
+            std::cerr << "[Test] FAILED: Step 1 mismatch" << std::endl;
+            exit(1);
+        }
+        if (fetched.steps[2].step_number != 3 || fetched.steps[2].instruction != "Dip ladyfingers in espresso and layer with cream" ||
+            fetched.steps[2].duration_seconds != 450 || fetched.steps[2].notes != "") {
+            std::cerr << "[Test] FAILED: Step 2 mismatch" << std::endl;
+            exit(1);
+        }
+
+        if (fetched.metrics.size() != 3) {
+            std::cerr << "[Test] FAILED: Expected 3 metrics, got " << fetched.metrics.size() << std::endl;
+            exit(1);
+        }
+        if (fetched.metrics[0].key != "prep_time" || fetched.metrics[0].value != 30.0 || fetched.metrics[0].unit != "min") {
+            std::cerr << "[Test] FAILED: Metric 0 mismatch" << std::endl;
+            exit(1);
+        }
+        if (fetched.metrics[1].key != "servings" || fetched.metrics[1].value != 8.0 || fetched.metrics[1].unit != "yield") {
+            std::cerr << "[Test] FAILED: Metric 1 mismatch" << std::endl;
+            exit(1);
+        }
+        if (fetched.metrics[2].key != "calories" || fetched.metrics[2].value != 420.0 || fetched.metrics[2].unit != "kcal") {
+            std::cerr << "[Test] FAILED: Metric 2 mismatch" << std::endl;
+            exit(1);
+        }
+
+        if (fetched.attributes.count("cuisine") == 0 || fetched.attributes["cuisine"] != "Italian") {
+            std::cerr << "[Test] FAILED: Attribute cuisine mismatch" << std::endl;
+            exit(1);
+        }
+        if (fetched.attributes.count("course") == 0 || fetched.attributes["course"] != "DESSERT") {
+            std::cerr << "[Test] FAILED: Attribute course mismatch" << std::endl;
+            exit(1);
+        }
+    }
+    std::filesystem::remove_all("test_recipe_db");
+    std::cout << "[Test] Universal Catalog Recipe Verification PASSED" << std::endl;
+}
+
+void test_rdf_export_notes_and_recipes() {
+    std::cout << "[Test] Starting RDF Export Notes and Recipes Verification..." << std::endl;
+    std::filesystem::remove_all("test_rdf_export_db");
+    {
+        Blackboard bb("test_rdf_export_db", 11);
+        auto* store = bb.get_engine()->get_store();
+
+        // 1. Identity
+        IdentityNode identity;
+        identity.id = "identity:doug";
+        identity.display_name = "Douglas Hofstadter";
+        identity.role = "Author";
+        bb.commit_identity_node(identity);
+
+        // 2. Project
+        ProjectNode project;
+        project.project_id = "project:commonplace";
+        project.description = "Life-long Commonplace Book";
+        project.lifecycle_status = "ACTIVE";
+        bb.commit_project_node(project);
+
+        // 3. Note
+        CpbEntry note;
+        note.header.uuid = "note-ref-1";
+        note.header.origin.agent_id = "identity:doug";
+        note.header.origin.project_id = "project:commonplace";
+        note.taxonomy.knowledge_area = KnowledgeArea::LITERATURE_READING;
+        note.payload.statement = "Gödel, Escher, Bach: Strange Loops";
+
+        Reference ref;
+        ref.title = "Gödel, Escher, Bach: an Eternal Golden Braid";
+        ref.creator = "Douglas Hofstadter";
+        ref.page_numbers = "pp. 1-742";
+        ref.uuid = "urn:isbn:0465026567";
+        note.payload.references.push_back(ref);
+
+        NoteLink link;
+        link.target_uuid = "note-foundation";
+        link.relation = rel::EXTENDS;
+        link.context = "Extends foundation note";
+        note.payload.note_links.push_back(link);
+
+        bb.commit_cpb_entry(note);
+
+        // 4. Recipe
+        CpbEntry recipe;
+        recipe.header.uuid = "recipe-tiramisu";
+        recipe.header.origin.agent_id = "identity:doug";
+        recipe.header.origin.project_id = "project:commonplace";
+        recipe.taxonomy.knowledge_area = KnowledgeArea::CULINARY_RECIPES;
+        recipe.payload.statement = "Classic Tiramisu";
+        recipe.items.push_back({ "Mascarpone", 500.0, "g", "INGREDIENT", "room temperature" });
+        recipe.steps.push_back({ 1, "Brew espresso and allow to cool", 300, "" });
+
+        bb.commit_cpb_entry(recipe);
+        store->wait_all_shards();
+
+        std::string ttl = RdfExporter::export_turtle(&bb);
+
+        std::vector<std::string> required_strings = {
+            "@prefix schema: <http://schema.org/>",
+            "@prefix dc: <http://purl.org/dc/terms/>",
+            "schema:CreativeWork",
+            "schema:citation",
+            "schema:recipeIngredient",
+            "schema:recipeInstructions",
+            "asos:extends",
+            "dc:title"
+        };
+
+        for (const auto& req : required_strings) {
+            if (ttl.find(req) == std::string::npos) {
+                std::cerr << "[Test] FAILED: RDF export missing expected substring: " << req << std::endl;
+                std::cerr << "Exported Turtle:\n" << ttl << std::endl;
+                exit(1);
+            }
+        }
+    }
+    std::filesystem::remove_all("test_rdf_export_db");
+    std::cout << "[Test] RDF Export Notes and Recipes Verification PASSED" << std::endl;
+}
+
 int main() {
     try {
         test_identity_integrity();
@@ -465,6 +806,10 @@ int main() {
         test_delta_sync();
         test_safe_mode();
         test_life_journaling();
+        test_commonplace_note_references();
+        test_note_graph_backlinks();
+        test_universal_catalog_recipe();
+        test_rdf_export_notes_and_recipes();
         std::cout << "\n[SUCCESS] All ASOS Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
