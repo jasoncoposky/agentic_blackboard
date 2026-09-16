@@ -524,15 +524,15 @@ struct CpbEntry {
     } header;
 
     struct Taxonomy {
-        KnowledgeArea knowledge_area;
+        KnowledgeArea knowledge_area = KnowledgeArea::UNKNOWN;
         std::vector<std::string> tags;
-        int64_t applicability; // 0-100
+        int64_t applicability = 100; // 0-100
         bool uncertainty = false;
         bool is_principle = false; // Promoted state
     } taxonomy;
 
     struct Payload {
-        std::string content_type;
+        std::string content_type = "text/markdown";
         std::string statement;
         std::string content;
         std::vector<std::string> artifact_refs;
