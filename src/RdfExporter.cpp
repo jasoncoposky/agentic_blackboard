@@ -11,6 +11,7 @@
 #include <vector>
 #include <string>
 #include <cmath>
+#include <limits>
 
 namespace asos {
 
@@ -55,7 +56,7 @@ std::string format_quantity(double q) {
     if (std::isnan(q) || std::isinf(q)) {
         return "0";
     }
-    if (q == static_cast<int64_t>(q)) {
+    if (std::abs(q) <= static_cast<double>(std::numeric_limits<int64_t>::max()) && q == static_cast<int64_t>(q)) {
         return std::to_string(static_cast<int64_t>(q));
     }
     std::ostringstream ss;
