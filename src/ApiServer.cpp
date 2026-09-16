@@ -485,6 +485,10 @@ void ApiServer::listen_loop() {
     svr.Get("/api/v1/graph/export", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             std::string format = req.get_param_value("format");
+            std::string format_lower = format;
+            std::transform(format_lower.begin(), format_lower.end(), format_lower.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+
             std::string active_user = req.get_header_value("X-Active-User");
             uint32_t principal_id = 0;
             if (!active_user.empty() && active_user != "admin") {
@@ -492,7 +496,7 @@ void ApiServer::listen_loop() {
                 principal_id = blackboard_->get_user_uid(active_user);
             }
 
-            if (format == "turtle" || format.empty()) {
+            if (format_lower.empty() || format_lower == "turtle" || format_lower == "ttl" || format_lower == "text/turtle") {
                 std::string ttl = RdfExporter::export_turtle(blackboard_, principal_id);
                 res.set_content(ttl, "text/turtle");
             } else {
