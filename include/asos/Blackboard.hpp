@@ -4,6 +4,8 @@
 #include "schema.hpp"
 #include <memory>
 #include <string>
+#include <vector>
+#include <utility>
 
 namespace asos {
 
@@ -34,6 +36,16 @@ public:
      * @brief Reconcile an incoming atom with the local graph.
      */
     bool semantic_merge(const CpbEntry& entry);
+
+    /**
+     * @brief Query incoming backlinks for a given note atom.
+     */
+    std::vector<std::pair<std::string, std::string>> get_backlinks(const std::string& note_uuid, uint32_t principal_id = 0);
+
+    /**
+     * @brief Query outgoing links from a given note atom.
+     */
+    std::vector<std::pair<std::string, std::string>> get_outbound_links(const std::string& note_uuid, uint32_t principal_id = 0);
 
 
     // Task Management (WBS)

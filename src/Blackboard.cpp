@@ -7,9 +7,85 @@
 #include "L3KVG/Node.hpp"
 #include "engine/store.hpp"
 #include "engine/credential_manager.hpp"
+#include <algorithm>
 
+namespace {
 
+const std::vector<std::string>& get_note_link_relation_labels() {
+    static const std::vector<std::string> labels = {
+        asos::rel::SEE_ALSO,
+        asos::rel::REFERENCES,
+        asos::rel::CITES,
+        asos::rel::SUPPORTS,
+        asos::rel::REFUTES,
+        asos::rel::EXTENDS,
+        asos::rel::SYNTHESIS_OF,
+        asos::rel::QUESTION_RAISED_BY,
+        asos::rel::ANALOGY_TO,
+        asos::rel::PAIRS_WITH,
+        asos::rel::VARIATION_OF,
+        asos::rel::USES_INGREDIENT,
+        asos::rel::DEPENDS_ON,
+        asos::rel::BLOCKS,
+        asos::rel::SUBTASK_OF,
+        asos::rel::VALIDATED_BY,
+        asos::rel::CONTRIBUTES_TO
+    };
+    return labels;
+}
 
+std::string extract_uuid_from_buf(const lite3cpp::Buffer& buf) {
+    if (buf.size() == 0) return "";
+    try {
+        if (buf.get_type(0, "header") == lite3cpp::Type::Object) {
+            size_t h_idx = buf.get_obj(0, "header");
+            if (buf.get_type(h_idx, "uuid") == lite3cpp::Type::String) {
+                std::string u = std::string(buf.get_str(h_idx, "uuid"));
+                if (!u.empty()) return u;
+            }
+        }
+    } catch (...) {}
+    try {
+        if (buf.get_type(0, "id") == lite3cpp::Type::String) {
+            std::string u = std::string(buf.get_str(0, "id"));
+            if (!u.empty()) return u;
+        }
+    } catch (...) {}
+    try {
+        if (buf.get_type(0, "project_id") == lite3cpp::Type::String) {
+            std::string u = std::string(buf.get_str(0, "project_id"));
+            if (!u.empty()) return u;
+        }
+    } catch (...) {}
+    try {
+        if (buf.get_type(0, "_binary") == lite3cpp::Type::Bytes) {
+            auto bin = buf.get_bytes(0, "_binary");
+            std::vector<uint8_t> vec;
+            vec.reserve(bin.size());
+            for (auto b : bin) vec.push_back(static_cast<uint8_t>(b));
+            lite3cpp::Buffer nested(std::move(vec));
+            return extract_uuid_from_buf(nested);
+        }
+    } catch (...) {}
+    return "";
+}
+
+std::string resolve_node_uuid(l3kvg::Engine* engine, uint64_t nid) {
+    try {
+        std::string nkey = std::string(l3kvg::KeyBuilder::node_key(nid));
+        auto buf = engine->get_store()->get(nkey);
+        std::string u = extract_uuid_from_buf(buf);
+        if (!u.empty()) {
+            return u;
+        }
+    } catch (...) {}
+
+    char hex[17];
+    std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(nid));
+    return std::string(hex);
+}
+
+} // anonymous namespace
 
 namespace asos {
 
@@ -148,6 +224,43 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
         engine_->add_edge(adjusted.header.uuid, rel::BELONGS_TO, 1.0, project_id);
     }
 
+    // 3. Auto-project Note Links
+    for (const auto& link : adjusted.payload.note_links) {
+        if (!link.target_uuid.empty()) {
+            std::string rel_label = link.relation.empty() ? rel::SEE_ALSO : link.relation;
+            engine_->add_edge(adjusted.header.uuid, rel_label, 1.0, link.target_uuid);
+            if (principal_id != 0) {
+                std::string hex_part = db_key.substr(2);
+                creds.set_acl(principal_id, "e:out:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                creds.set_acl(principal_id, "e:in:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+
+                auto target_key_uuid = engine_->get_resolver().parse_uuid(link.target_uuid);
+                std::string target_db_key = std::string(l3kvg::KeyBuilder::node_key(target_key_uuid));
+                std::string target_hex_part = target_db_key.substr(2);
+                creds.set_acl(principal_id, "e:out:" + target_hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                creds.set_acl(principal_id, "e:in:" + target_hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+            }
+        }
+    }
+
+    // 4. Auto-project Reference Citations
+    for (const auto& ref : adjusted.payload.references) {
+        if (!ref.uuid.empty()) {
+            engine_->add_edge(adjusted.header.uuid, rel::CITES, 1.0, ref.uuid);
+            if (principal_id != 0) {
+                std::string hex_part = db_key.substr(2);
+                creds.set_acl(principal_id, "e:out:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                creds.set_acl(principal_id, "e:in:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+
+                auto target_key_uuid = engine_->get_resolver().parse_uuid(ref.uuid);
+                std::string target_db_key = std::string(l3kvg::KeyBuilder::node_key(target_key_uuid));
+                std::string target_hex_part = target_db_key.substr(2);
+                creds.set_acl(principal_id, "e:out:" + target_hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                creds.set_acl(principal_id, "e:in:" + target_hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+            }
+        }
+    }
+
 
     // Telemetry
     Monitor::instance().report_atom_commit();
@@ -263,6 +376,78 @@ bool Blackboard::commit_engineering_unit(const EngineeringUnit& eu) {
     std::string key = "eu:" + eu.header.uuid;
     engine_->put_node(key, std::string(reinterpret_cast<const char*>(buf.data()), buf.size()));
     return true;
+}
+
+std::vector<std::pair<std::string, std::string>> Blackboard::get_backlinks(const std::string& note_uuid, uint32_t principal_id) {
+    if (note_uuid.empty() || !engine_) {
+        return {};
+    }
+
+    if (principal_id != 0) {
+        auto key_uuid = engine_->get_resolver().parse_uuid(note_uuid);
+        std::string db_key = std::string(l3kvg::KeyBuilder::node_key(key_uuid));
+        auto perm = engine_->get_store()->credentials().check_permission(principal_id, db_key);
+        if (!(perm & l3kv::Permission::READ) && !(perm & l3kv::Permission::ADMIN)) {
+            return {};
+        }
+    }
+
+    auto node = engine_->get_node(note_uuid);
+    if (!node) {
+        return {};
+    }
+
+    std::vector<std::pair<std::string, std::string>> backlinks;
+    const auto& labels = get_note_link_relation_labels();
+    for (const auto& label : labels) {
+        auto in_neighbors = node->get_in_neighbors(label, principal_id);
+        for (uint64_t src_nid : in_neighbors) {
+            std::string src_uuid = resolve_node_uuid(engine_.get(), src_nid);
+            auto item = std::make_pair(src_uuid, label);
+            if (std::find(backlinks.begin(), backlinks.end(), item) == backlinks.end()) {
+                backlinks.push_back(std::move(item));
+            }
+        }
+    }
+
+    return backlinks;
+}
+
+std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(const std::string& note_uuid, uint32_t principal_id) {
+    if (note_uuid.empty() || !engine_) {
+        return {};
+    }
+
+    if (principal_id != 0) {
+        auto key_uuid = engine_->get_resolver().parse_uuid(note_uuid);
+        std::string db_key = std::string(l3kvg::KeyBuilder::node_key(key_uuid));
+        auto perm = engine_->get_store()->credentials().check_permission(principal_id, db_key);
+        if (!(perm & l3kv::Permission::READ) && !(perm & l3kv::Permission::ADMIN)) {
+            return {};
+        }
+    }
+
+    auto node = engine_->get_node(note_uuid);
+    if (!node) {
+        return {};
+    }
+
+    std::vector<std::pair<std::string, std::string>> outbound;
+    const auto& labels = get_note_link_relation_labels();
+    for (const auto& label : labels) {
+        auto edges = node->get_edges(label, -999999.0, principal_id);
+        for (const auto& edge : edges) {
+            if (!edge) continue;
+            uint64_t dst_nid = edge->get_dst();
+            std::string dst_uuid = resolve_node_uuid(engine_.get(), dst_nid);
+            auto item = std::make_pair(dst_uuid, label);
+            if (std::find(outbound.begin(), outbound.end(), item) == outbound.end()) {
+                outbound.push_back(std::move(item));
+            }
+        }
+    }
+
+    return outbound;
 }
 
 } // namespace asos
