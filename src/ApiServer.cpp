@@ -1,12 +1,12 @@
-#include "asos/ApiServer.hpp"
-#include "asos/Orchestrator.hpp"
-#include "asos/RdfExporter.hpp"
+#include <agentic_blackboard/ApiServer.hpp>
+#include <agentic_blackboard/Orchestrator.hpp>
+#include <agentic_blackboard/RdfExporter.hpp>
 #include "httplib.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <vector>
 #include <string>
-#include "asos/schema.hpp"
+#include <agentic_blackboard/schema.hpp>
 #include "L3KVG/KeyBuilder.hpp"
 #include "L3KVG/Node.hpp"
 #include "L3KVG/Query.hpp"
@@ -56,7 +56,7 @@ std::string extract_token(const httplib::Request& req) {
 
 } // anonymous namespace
 
-namespace asos {
+namespace agentic_blackboard {
 
 static std::atomic<httplib::Server*> s_server{nullptr};
 
@@ -323,7 +323,7 @@ void ApiServer::listen_loop() {
     svr.Get("/api/v1/schema", [this](const httplib::Request&, httplib::Response& res) {
         std::cout << "[API] GET /api/v1/schema" << std::endl;
         json schema = {
-            {"system", "ASOS v0.4-α"},
+            {"system", "Agentic Blackboard v0.4-α"},
             {"knowledge_areas", {
                 {"0", "UNKNOWN"},
                 {"1", "REQUIREMENTS"},
@@ -766,7 +766,7 @@ void ApiServer::listen_loop() {
                 }}
             };
 
-            asos::Orchestrator::instance().dispatch_nucleus_command(nucleus_req.dump());
+            agentic_blackboard::Orchestrator::instance().dispatch_nucleus_command(nucleus_req.dump());
             res.set_content("{\"status\":\"DISPATCHED\"}", "application/json");
         } catch (const std::exception& e) {
             res.status = 400;
@@ -795,7 +795,7 @@ void ApiServer::listen_loop() {
                 }}
             };
 
-            asos::Orchestrator::instance().dispatch_nucleus_command(nucleus_req.dump());
+            agentic_blackboard::Orchestrator::instance().dispatch_nucleus_command(nucleus_req.dump());
             res.set_content("{\"status\":\"BOUND\"}", "application/json");
         } catch (const std::exception& e) {
             res.status = 400;
@@ -1740,7 +1740,7 @@ void ApiServer::listen_loop() {
         }
     });
 
-    std::cout << "[API] ASOS Server starting on " << host_ << ":" << port_ << "..." << std::endl;
+    std::cout << "[API] Agentic Blackboard Server starting on " << host_ << ":" << port_ << "..." << std::endl;
 
     if (!svr.listen(host_.c_str(), port_)) {
         std::cerr << "[API] FAILED to start server on " << host_ << ":" << port_ << std::endl;
@@ -1749,4 +1749,4 @@ void ApiServer::listen_loop() {
 }
 
 
-} // namespace asos
+} // namespace agentic_blackboard

@@ -1,5 +1,5 @@
-#include "asos/RdfExporter.hpp"
-#include "asos/schema.hpp"
+#include <agentic_blackboard/RdfExporter.hpp>
+#include <agentic_blackboard/schema.hpp>
 #include "engine/store.hpp"
 #include "L3KVG/KeyBuilder.hpp"
 #include "L3KVG/Node.hpp"
@@ -13,7 +13,7 @@
 #include <cmath>
 #include <limits>
 
-namespace asos {
+namespace agentic_blackboard {
 
 namespace {
 
@@ -489,4 +489,4 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
     return ss.str();
 }
 
-} // namespace asos
+} // namespace agentic_blackboard

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "asos/Blackboard.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
 #include <string>
 #include <memory>
 #include <atomic>
@@ -17,7 +17,7 @@ class Request;
 class Response;
 }
 
-namespace asos {
+namespace agentic_blackboard {
 
 struct SurfaceInfo {
     std::string surface_id;
@@ -72,7 +72,7 @@ private:
 };
 
 /**
- * @brief ASOS High-Performance API Server
+ * @brief Agentic Blackboard High-Performance API Server
  * Exposes REST and BSON interfaces for external agents and MCP bridges.
  */
 class ApiServer {
@@ -114,4 +114,6 @@ private:
     ContextBroker context_broker_;
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+
+namespace ab = agentic_blackboard;

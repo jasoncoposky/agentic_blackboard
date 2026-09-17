@@ -1,8 +1,8 @@
-#include "asos/Librarian.hpp"
+#include <agentic_blackboard/Librarian.hpp>
 #include "buffer.hpp"
 #include "engine/store.hpp"
 #include "L3KVG/KeyBuilder.hpp"
-#include "asos/schema.hpp"
+#include <agentic_blackboard/schema.hpp>
 #include "L3KVG/Node.hpp"
 
 
@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace asos {
+namespace agentic_blackboard {
 
 // Helper: Calculate Jaccard Similarity between two sets of tags
 static double calculate_jaccard(const std::vector<std::string>& a, const std::vector<std::string>& b) {
@@ -170,4 +170,4 @@ void Librarian::analysis_loop() {
     }
 }
 
-} // namespace asos
+} // namespace agentic_blackboard

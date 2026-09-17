@@ -1,10 +1,10 @@
-#include "asos/Monitor.hpp"
-#include "asos/Orchestrator.hpp"
+#include <agentic_blackboard/Monitor.hpp>
+#include <agentic_blackboard/Orchestrator.hpp>
 #include <iostream>
 #include <chrono>
 #include <numeric>
 
-namespace asos {
+namespace agentic_blackboard {
 
 Monitor::~Monitor() {
     stop();
@@ -96,7 +96,7 @@ void Monitor::ensure_anchors() {
     if (!engine->get_node("project:governance")) {
         ProjectNode pn;
         pn.project_id = "project:governance";
-        pn.description = "Global ASOS Governance & SRE Substrate";
+        pn.description = "Global Agentic Blackboard Governance & SRE Substrate";
         pn.lifecycle_status = "ACTIVE";
         
         lite3cpp::Buffer buf;
@@ -120,4 +120,4 @@ void Monitor::ensure_anchors() {
 }
 
 
-} // namespace asos
+} // namespace agentic_blackboard

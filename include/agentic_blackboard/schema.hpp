@@ -8,7 +8,7 @@
 #include <optional>
 #include <map>
 
-namespace asos {
+namespace agentic_blackboard {
 
 // Relationship Constants
 namespace rel {
@@ -967,4 +967,6 @@ struct NucleusWidgetNode {
     }
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+ 
+namespace ab = agentic_blackboard;

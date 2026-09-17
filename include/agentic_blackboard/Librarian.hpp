@@ -1,10 +1,10 @@
 #pragma once
 
-#include "Blackboard.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
 #include <thread>
 #include <atomic>
 
-namespace asos {
+namespace agentic_blackboard {
 
 /**
  * @brief Singleton analyzer that creates "Synapses" (Edges) between CPB atoms.
@@ -40,4 +40,6 @@ private:
     Blackboard* blackboard_;
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+
+namespace ab = agentic_blackboard;

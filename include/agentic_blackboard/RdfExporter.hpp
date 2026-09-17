@@ -1,13 +1,15 @@
 #pragma once
 
-#include "asos/Blackboard.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
 #include <string>
 
-namespace asos {
+namespace agentic_blackboard {
 
 class RdfExporter {
 public:
     static std::string export_turtle(Blackboard* blackboard, uint32_t principal_id = 0);
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+
+namespace ab = agentic_blackboard;

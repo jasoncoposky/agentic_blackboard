@@ -1,9 +1,9 @@
 #pragma once
 
-#include "asos/Blackboard.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
 #include <string>
 
-namespace asos {
+namespace agentic_blackboard {
 
 /**
  * @brief Manages the V&V lifecycle of Knowledge Atoms.
@@ -31,4 +31,6 @@ private:
     Blackboard* blackboard_;
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+
+namespace ab = agentic_blackboard;

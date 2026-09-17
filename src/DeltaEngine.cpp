@@ -1,10 +1,10 @@
-#include "asos/DeltaEngine.hpp"
+#include <agentic_blackboard/DeltaEngine.hpp>
 #include <xxhash.h>
 #include <algorithm>
 #include <cstring>
 #include <iostream>
 
-namespace asos {
+namespace agentic_blackboard {
 
 uint64_t DeltaEngine::calculate_checksum(const lite3cpp::Buffer& buf) {
     return XXH3_64bits(buf.data(), buf.size());
@@ -62,4 +62,4 @@ std::optional<lite3cpp::Buffer> DeltaEngine::apply_xor_patch(const lite3cpp::Buf
     return reconstructed;
 }
 
-} // namespace asos
+} // namespace agentic_blackboard

@@ -1,11 +1,11 @@
 #pragma once
 
 #include "buffer.hpp"
-#include "asos/schema.hpp"
+#include <agentic_blackboard/schema.hpp>
 #include <vector>
 #include <cstdint>
 
-namespace asos {
+namespace agentic_blackboard {
 
 /**
  * @brief Utility for computing and applying binary deltas for CPB Atoms.
@@ -30,4 +30,6 @@ public:
     static uint64_t calculate_checksum(const lite3cpp::Buffer& buf);
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+
+namespace ab = agentic_blackboard;

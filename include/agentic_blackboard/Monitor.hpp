@@ -1,12 +1,12 @@
 #pragma once
 
-#include "asos/Blackboard.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <vector>
 
-namespace asos {
+namespace agentic_blackboard {
 
 /**
  * @brief Singleton for SRE Metrics and Swarm Governance.
@@ -59,4 +59,6 @@ private:
     std::mutex history_mutex_;
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+
+namespace ab = agentic_blackboard;

@@ -4,12 +4,12 @@
 #include <csignal>
 #include <atomic>
 #include <thread>
-#include "asos/Blackboard.hpp"
-#include "asos/Librarian.hpp"
-#include "asos/Orchestrator.hpp"
-#include "asos/Validator.hpp"
-#include "asos/Monitor.hpp"
-#include "asos/ApiServer.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
+#include <agentic_blackboard/Librarian.hpp>
+#include <agentic_blackboard/Orchestrator.hpp>
+#include <agentic_blackboard/Validator.hpp>
+#include <agentic_blackboard/Monitor.hpp>
+#include <agentic_blackboard/ApiServer.hpp>
 
 #include "L3KVG/KeyBuilder.hpp"
 #include "engine/store.hpp"
@@ -71,13 +71,13 @@ std::atomic<bool> g_running(true);
 
 void signal_handler(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
-        std::cout << "\n[ASOS] Shutdown signal received (" << signal << ")..." << std::endl;
+        std::cout << "\n[AgenticBlackboard] Shutdown signal received (" << signal << ")..." << std::endl;
         g_running = false;
     }
 }
 
 int main(int argc, char* argv[]) {
-    std::string db_path = "asos_db";
+    std::string db_path = "ab_db";
     uint32_t node_id = 1;
     std::string auth_mode = "trusted_network";
 
@@ -123,7 +123,7 @@ int main(int argc, char* argv[]) {
                         else if (k == "host") host = v;
                         else if (k == "mode" || k == "auth_mode") auth_mode = v;
                         else if (k == "data_dir") {
-                            db_path = v + "/asos_db";
+                            db_path = v + "/ab_db";
                         }
                     }
                 }
@@ -133,7 +133,7 @@ int main(int argc, char* argv[]) {
 
     // Auto-discover admin token if not passed directly
     if (admin_token.empty()) {
-        std::string parent_dir = "asos_db";
+        std::string parent_dir = "ab_db";
         auto pos = db_path.find_last_of("/\\");
         if (pos != std::string::npos) {
             parent_dir = db_path.substr(0, pos);
@@ -159,10 +159,10 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, signal_handler);
 
     try {
-        std::cout << "--- ASOS Blackboard Engine v0.4 (Substrate Complete) ---" << std::endl;
+        std::cout << "--- Agentic Blackboard Engine v0.4 (Substrate Complete) ---" << std::endl;
         
         // 1. Initialize Substrate (Storage)
-        asos::Blackboard bb(db_path, node_id);
+        agentic_blackboard::Blackboard bb(db_path, node_id);
         bb.set_auth_mode(auth_mode);
         if (!admin_token.empty()) {
             bb.register_token(admin_token, "admin", "admin");
@@ -172,42 +172,42 @@ int main(int argc, char* argv[]) {
         bool should_exit = false;
         for (int i = 1; i < argc; ++i) {
             if (std::string(argv[i]) == "--seed") {
-                std::cout << "[ASOS] Seeding Substrate with Identity and Project Anchors..." << std::endl;
+                std::cout << "[AgenticBlackboard] Seeding Substrate with Identity and Project Anchors..." << std::endl;
                 
                 // Seed auth tokens for admin and curator
                 bb.register_token("ab_adm_0123456789abcdef0123456789abcdef", "admin", "admin");
                 bb.register_token("ab_usr_fedcba9876543210fedcba9876543210", "alice", "curator");
                 
                 // Agents
-                asos::IdentityNode agent1 = {"Nexus_Agent_7", "Nexus Agent 7", "Lead Architect", "pub-key-n7"};
-                asos::IdentityNode agent2 = {"auditor-prime", "Auditor Prime", "SWEBOK Compliance", "pub-key-ap"};
+                agentic_blackboard::IdentityNode agent1 = {"Nexus_Agent_7", "Nexus Agent 7", "Lead Architect", "pub-key-n7"};
+                agentic_blackboard::IdentityNode agent2 = {"auditor-prime", "Auditor Prime", "SWEBOK Compliance", "pub-key-ap"};
                 if (bb.commit_identity_node(agent1)) std::cout << "[SEED] Committed Identity: Nexus_Agent_7" << std::endl;
                 if (bb.commit_identity_node(agent2)) std::cout << "[SEED] Committed Identity: auditor-prime" << std::endl;
 
                 // Projects
-                asos::ProjectNode proj1 = {"ALPHA_SWARM", "Distributed Resilience Initiative", "ACTIVE"};
-                asos::ProjectNode proj2 = {"shakedown-final", "Final Integration Verification", "ACTIVE"};
+                agentic_blackboard::ProjectNode proj1 = {"ALPHA_SWARM", "Distributed Resilience Initiative", "ACTIVE"};
+                agentic_blackboard::ProjectNode proj2 = {"shakedown-final", "Final Integration Verification", "ACTIVE"};
                 if (bb.commit_project_node(proj1)) std::cout << "[SEED] Committed Project: ALPHA_SWARM" << std::endl;
                 if (bb.commit_project_node(proj2)) std::cout << "[SEED] Committed Project: shakedown-final" << std::endl;
 
                 // Atoms
-                asos::CpbEntry atom1;
+                agentic_blackboard::CpbEntry atom1;
                 atom1.header.uuid = "atom-raft-01";
                 atom1.header.origin.agent_id = "Nexus_Agent_7";
                 atom1.header.origin.project_id = "ALPHA_SWARM";
                 atom1.payload.statement = "Raft consensus requires a majority of nodes for stability.";
-                atom1.taxonomy.knowledge_area = asos::KnowledgeArea::COMPUTING_FOUNDATIONS;
+                atom1.taxonomy.knowledge_area = agentic_blackboard::KnowledgeArea::COMPUTING_FOUNDATIONS;
                 bb.commit_cpb_entry(atom1);
 
-                asos::CpbEntry atom2;
+                agentic_blackboard::CpbEntry atom2;
                 atom2.header.uuid = "atom-auditor-01";
                 atom2.header.origin.agent_id = "auditor-prime";
                 atom2.header.origin.project_id = "shakedown-final";
                 atom2.payload.statement = "SWEBOK audit of distributed swarm health passed.";
-                atom2.taxonomy.knowledge_area = asos::KnowledgeArea::ENGINEERING_MANAGEMENT;
+                atom2.taxonomy.knowledge_area = agentic_blackboard::KnowledgeArea::ENGINEERING_MANAGEMENT;
                 bb.commit_cpb_entry(atom2);
 
-                std::cout << "[ASOS] Seed Complete. Substrate Prepared with 2 Agents, 2 Projects, and 2 Atoms." << std::endl;
+                std::cout << "[AgenticBlackboard] Seed Complete. Substrate Prepared with 2 Agents, 2 Projects, and 2 Atoms." << std::endl;
                 should_exit = true;
 
 
@@ -219,19 +219,19 @@ int main(int argc, char* argv[]) {
         
         // 2. Start Distributed Connectivity
         std::string loc = (node_id == 1) ? "Apex_NC" : "Pittsburgh_PA";
-        asos::Orchestrator::instance().start(&bb, loc, 8090, 8090);
+        agentic_blackboard::Orchestrator::instance().start(&bb, loc, 8090, 8090);
         
         // 3. Start Observability & API
-        asos::Monitor::instance().start(&bb);
-        asos::ApiServer::instance().start(&bb, port, host);
+        agentic_blackboard::Monitor::instance().start(&bb);
+        agentic_blackboard::ApiServer::instance().start(&bb, port, host);
 
 
         // 4. Start Intelligence & Governance
 
-        asos::Librarian::instance().start(&bb);
+        agentic_blackboard::Librarian::instance().start(&bb);
         // Validator is reactive, no thread needed yet.
 
-        std::cout << "[ASOS] Swarm Substrate Active. Governance Governor running." << std::endl;
+        std::cout << "[AgenticBlackboard] Swarm Substrate Active. Governance Governor running." << std::endl;
 
         auto* store = bb.get_engine()->get_store();
 
@@ -242,7 +242,7 @@ int main(int argc, char* argv[]) {
             // Periodically check Swarm Health
             auto raw = store->get(std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("governance:swarm_health"))));
             if (raw.size() > 0) {
-                auto summary = asos::SwarmHealthSummary::deserialize(raw);
+                auto summary = agentic_blackboard::SwarmHealthSummary::deserialize(raw);
                 
                 std::cout << "[Governor] Health: Velocity=" << summary.metrics.knowledge_velocity 
                           << " | Toil=" << summary.metrics.toil_ratio 
@@ -258,17 +258,17 @@ int main(int argc, char* argv[]) {
         }
 
         // 6. Graceful Atomic Shutdown Sequence
-        std::cout << "[ASOS] Initiating graceful shutdown..." << std::endl;
+        std::cout << "[AgenticBlackboard] Initiating graceful shutdown..." << std::endl;
         
-        asos::ApiServer::instance().stop();    // Stop API server and disconnect SSE clients first
-        asos::Librarian::instance().stop();    // Stop intelligence second
-        asos::Monitor::instance().stop();      // Stop metrics third
-        asos::Orchestrator::instance().stop(); // Stop network fourth
+        agentic_blackboard::ApiServer::instance().stop();    // Stop API server and disconnect SSE clients first
+        agentic_blackboard::Librarian::instance().stop();    // Stop intelligence second
+        agentic_blackboard::Monitor::instance().stop();      // Stop metrics third
+        agentic_blackboard::Orchestrator::instance().stop(); // Stop network fourth
         
-        std::cout << "[ASOS] Clean shutdown complete. Substrate de-commissioned." << std::endl;
+        std::cout << "[AgenticBlackboard] Clean shutdown complete. Substrate de-commissioned." << std::endl;
 
     } catch (const std::exception& e) {
-        std::cerr << "[CRITICAL] ASOS Daemon Crash: " << e.what() << std::endl;
+        std::cerr << "[CRITICAL] Agentic Blackboard Daemon Crash: " << e.what() << std::endl;
         return 1;
     }
 

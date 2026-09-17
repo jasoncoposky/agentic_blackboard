@@ -6,9 +6,9 @@
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
-#include "schema.hpp"
+#include <agentic_blackboard/schema.hpp>
 
-namespace asos {
+namespace agentic_blackboard {
     class Blackboard;
 
 /**
@@ -76,4 +76,6 @@ private:
 
 
 
-} // namespace asos
+} // namespace agentic_blackboard
+
+namespace ab = agentic_blackboard;

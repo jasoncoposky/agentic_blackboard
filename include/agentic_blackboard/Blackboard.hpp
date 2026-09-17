@@ -1,17 +1,17 @@
 #pragma once
 
 #include "L3KVG/Engine.hpp"
-#include "schema.hpp"
+#include <agentic_blackboard/schema.hpp>
 #include <memory>
 #include <string>
 #include <vector>
 #include <utility>
 #include <shared_mutex>
 
-namespace asos {
+namespace agentic_blackboard {
 
 /**
- * @brief Main entry point for the ASOS Blackboard System.
+ * @brief Main entry point for the Agentic Blackboard System.
  * Wraps L3KVG to provide knowledge-aware graph operations.
  */
 class Blackboard {
@@ -89,4 +89,6 @@ private:
     std::vector<std::pair<std::string, std::string>> registered_users_;
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
+ 
+namespace ab = agentic_blackboard;

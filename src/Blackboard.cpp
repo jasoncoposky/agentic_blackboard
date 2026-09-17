@@ -1,7 +1,7 @@
-#include "asos/Blackboard.hpp"
-#include "asos/Orchestrator.hpp"
-#include "asos/DeltaEngine.hpp"
-#include "asos/Monitor.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
+#include <agentic_blackboard/Orchestrator.hpp>
+#include <agentic_blackboard/DeltaEngine.hpp>
+#include <agentic_blackboard/Monitor.hpp>
 #include "buffer.hpp"
 #include "json.hpp"
 #include "L3KVG/KeyBuilder.hpp"
@@ -18,7 +18,7 @@
 namespace {
 
 std::string hash_token_sha256(const std::string& token) {
-    const std::string salt = "asos_salt_token_v1:";
+    const std::string salt = "ab_salt_token_v1:";
     std::string salted = salt + token;
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned int len = 0;
@@ -91,7 +91,7 @@ std::string resolve_node_uuid(l3kvg::Engine* engine, uint64_t nid, uint32_t prin
 
 } // anonymous namespace
 
-namespace asos {
+namespace agentic_blackboard {
 
 Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) {
     engine_ = std::make_unique<l3kvg::Engine>(db_path, node_id);
@@ -752,4 +752,4 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(
     return outbound;
 }
 
-} // namespace asos
+} // namespace agentic_blackboard

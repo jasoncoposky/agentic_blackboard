@@ -1,10 +1,10 @@
-#include "asos/Validator.hpp"
-#include "asos/schema.hpp"
+#include <agentic_blackboard/Validator.hpp>
+#include <agentic_blackboard/schema.hpp>
 #include "engine/store.hpp"
 #include "L3KVG/KeyBuilder.hpp"
 #include <chrono>
 
-namespace asos {
+namespace agentic_blackboard {
 
 bool Validator::verify_atom(const std::string& uuid, const std::string& auditor_id) {
     auto* store = blackboard_->get_engine()->get_store();
@@ -70,4 +70,4 @@ bool Validator::try_promote(const std::string& uuid) {
     return false;
 }
 
-} // namespace asos
+} // namespace agentic_blackboard

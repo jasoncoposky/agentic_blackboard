@@ -1,10 +1,10 @@
-#include "asos/Orchestrator.hpp"
-#include "asos/Blackboard.hpp"
+#include <agentic_blackboard/Orchestrator.hpp>
+#include <agentic_blackboard/Blackboard.hpp>
 #include "buffer.hpp"
 #include <iostream>
 #include <chrono>
 
-namespace asos {
+namespace agentic_blackboard {
 
 Orchestrator::~Orchestrator() {
     stop();
@@ -18,7 +18,7 @@ void Orchestrator::start(Blackboard* bb, const std::string& location_id, int pub
     heartbeat_thread_ = std::thread(&Orchestrator::heartbeat_loop, this);
     listen_thread_ = std::thread(&Orchestrator::listen_loop, this);
     
-    std::cout << "[Orchestrator] ASOS Distributed Blackboard Active (ZMQ port " << pub_port << ")" << std::endl;
+    std::cout << "[Orchestrator] Agentic Blackboard Active (ZMQ port " << pub_port << ")" << std::endl;
 }
 
 void Orchestrator::stop() {
@@ -163,4 +163,4 @@ void Orchestrator::listen_loop() {
     }
 }
 
-} // namespace asos
+} // namespace agentic_blackboard
