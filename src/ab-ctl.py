@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import sys
@@ -142,12 +143,16 @@ def insert_token_to_db(db_path: Path, token: str, username: str, role: str,
         print(f"[WARN] Failed to write to credentials.db: {e}", file=sys.stderr)
 
 
-def get_auth_headers(token: str | None) -> dict:
-    """Generate HTTP headers for authentication."""
+def get_auth_headers(token: str | None, active_user: str | None = None, active_agent: str | None = None) -> dict:
+    """Generate HTTP headers for authentication with optional dual-identity."""
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
         headers["X-AB-Key"] = token
+    if active_user:
+        headers["X-Active-User"] = active_user
+    if active_agent:
+        headers["X-Active-Agent"] = active_agent
     return headers
 
 
@@ -483,6 +488,688 @@ def handle_context(args, cfg: dict):
             return 1
 
     return 0
+
+
+# ----------------------------------------------------------------------
+# Swarm Coordination & Core Lease Management Helpers and Handlers
+# ----------------------------------------------------------------------
+
+def http_request_json(url: str, method: str = "GET", payload: dict | list | None = None,
+                      headers: dict | None = None, timeout: float = 10.0) -> tuple[int, dict | list | str]:
+    """Execute HTTP request and return (status_code, parsed_body_or_raw_str)."""
+    h = dict(headers or {})
+    data_bytes = None
+    if payload is not None:
+        data_bytes = json.dumps(payload).encode("utf-8")
+        if "Content-Type" not in h:
+            h["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(url, data=data_bytes, headers=h, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body_str = resp.read().decode("utf-8", errors="replace")
+            try:
+                return resp.status, json.loads(body_str)
+            except Exception:
+                return resp.status, body_str
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(err_body)
+        except Exception:
+            return e.code, err_body
+    except Exception as e:
+        return 0, str(e)
+
+
+def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, active_agent: str | None = None) -> dict:
+    """Resolve authentication and dual-identity headers."""
+    token = getattr(args, "token", None) or cfg.get("token")
+    user = (getattr(args, "active_user", None) or
+            getattr(args, "user", None) or
+            active_user or
+            os.environ.get("AB_ACTIVE_USER") or
+            os.environ.get("AB_USER") or
+            "cpg-swarm-user")
+    agent = (getattr(args, "active_agent", None) or
+             getattr(args, "agent", None) or
+             active_agent or
+             os.environ.get("AB_ACTIVE_AGENT") or
+             os.environ.get("AB_AGENT") or
+             "cpg-swarm-agent")
+    return get_auth_headers(token, active_user=user, active_agent=agent)
+
+
+def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: str, metadata: dict) -> tuple[bool, str]:
+    """Commit or update a node in the blackboard substrate with bundle fallback."""
+    node_url = f"{connect_url}/api/v1/graph/node"
+    payload = {
+        "type": node_type,
+        "id": node_id,
+        "metadata": metadata
+    }
+    status, res = http_request_json(node_url, method="POST", payload=payload, headers=headers)
+    if status in (200, 201):
+        return True, ""
+
+    # Fallback to /api/v1/graph/bundle for daemons requiring atomic bundle format
+    if status in (400, 500):
+        bundle_url = f"{connect_url}/api/v1/graph/bundle"
+        project_id = metadata.get("context_id") or "default-swarm"
+        agent_id = metadata.get("agent_id") or headers.get("X-Active-Agent") or "cpg-swarm-agent"
+        user_id = headers.get("X-Active-User") or "cpg-swarm-user"
+
+        atom = {
+            "uuid": node_id,
+            "header": {
+                "uuid": node_id,
+                "origin": {
+                    "project_id": project_id,
+                    "agent_id": agent_id,
+                    "user_id": user_id,
+                    "context_id": metadata.get("context_id", ""),
+                }
+            },
+            "payload": {
+                "statement": metadata.get("name") or metadata.get("statement") or node_id,
+                "content": json.dumps(metadata)
+            },
+            "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in metadata.items()}
+        }
+        b_payload = {
+            "project_id": project_id,
+            "agent_id": agent_id,
+            "atoms": [atom]
+        }
+        b_status, b_res = http_request_json(bundle_url, method="POST", payload=b_payload, headers=headers)
+        if b_status in (200, 201):
+            return True, ""
+
+    return False, str(res)
+
+
+def fetch_graph_node(connect_url: str, headers: dict, node_id: str) -> tuple[int, dict | None]:
+    """Fetch node details by ID."""
+    url = f"{connect_url}/api/v1/node/{urllib.parse.quote(node_id)}"
+    status, res = http_request_json(url, method="GET", headers=headers)
+    if status == 200 and isinstance(res, dict):
+        return 200, res
+    return status, None
+
+
+def extract_node_metadata(node_data: dict) -> dict:
+    """Normalize metadata from node object."""
+    if not node_data:
+        return {}
+    meta = node_data.get("metadata")
+    if isinstance(meta, dict) and meta:
+        meta_copy = dict(meta)
+        if "status" not in meta_copy and "status" in node_data:
+            meta_copy["status"] = node_data["status"]
+        if "lease" not in meta_copy and "lease" in node_data:
+            meta_copy["lease"] = node_data["lease"]
+        if "context_id" not in meta_copy and "context_id" in node_data:
+            meta_copy["context_id"] = node_data["context_id"]
+        return meta_copy
+
+    attributes = node_data.get("attributes", {})
+    if isinstance(attributes, dict) and attributes:
+        constructed = {}
+        for k, v in attributes.items():
+            try:
+                constructed[k] = json.loads(v)
+            except Exception:
+                constructed[k] = v
+        if "status" in node_data and "status" not in constructed:
+            constructed["status"] = node_data["status"]
+        if "status" in constructed:
+            return constructed
+
+    content = node_data.get("content", "")
+    if isinstance(content, str) and content.startswith("{"):
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict) and "status" in parsed:
+                return parsed
+        except Exception:
+            pass
+
+    return {
+        "status": node_data.get("status", "READY"),
+        "workflow": node_data.get("workflow", "feature"),
+        "target_symbols": node_data.get("target_symbols", []),
+        "lease": node_data.get("lease", {}),
+        "depends_on": node_data.get("depends_on", []),
+        "name": node_data.get("label") or node_data.get("statement") or node_data.get("id"),
+        "context_id": node_data.get("context_id", ""),
+    }
+
+
+def create_graph_link(connect_url: str, headers: dict, source: str, target: str, label: str, weight: float = 1.0) -> bool:
+    """Create relationship edge between two nodes in substrate."""
+    link_url = f"{connect_url}/api/v1/link"
+    payload = {
+        "source": source,
+        "target": target,
+        "label": label,
+        "weight": weight
+    }
+    status, _ = http_request_json(link_url, method="POST", payload=payload, headers=headers)
+    return status in (200, 201)
+
+
+def fetch_node_links(connect_url: str, headers: dict, node_id: str, direction: str = "both") -> dict:
+    """Fetch inbound and outbound links for a node."""
+    links_url = f"{connect_url}/api/v1/node/{urllib.parse.quote(node_id)}/links?direction={direction}"
+    status, res = http_request_json(links_url, method="GET", headers=headers)
+    if status == 200 and isinstance(res, dict):
+        return res
+    return {"inbound": [], "outbound": []}
+
+
+def handle_swarm_init(args, cfg: dict) -> int:
+    """Register context and create initial requirement knowledge atom."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    context_id = args.context
+    name = args.name
+    requirement = args.requirement
+    headers = resolve_swarm_headers(args, cfg)
+
+    # 1. Register context ID
+    reg_url = f"{connect_url}/api/v1/context/register"
+    reg_payload = {
+        "context_id": context_id,
+        "surface_id": "swarm-coordinator",
+        "client_app": "ab-ctl-swarm",
+        "capabilities": {
+            "swarm_name": name,
+            "surface_type": "orchestrator"
+        }
+    }
+    st, res = http_request_json(reg_url, method="POST", payload=reg_payload, headers=headers)
+    if st not in (200, 201):
+        print(f"Error registering swarm context: HTTP {st}: {res}", file=sys.stderr)
+        return 1
+
+    # 2. Create initial requirement knowledge atom
+    req_id = f"req-{context_id}"
+    req_meta = {
+        "name": name,
+        "statement": requirement or f"Requirement for {name}",
+        "description": requirement or f"Requirement for {name}",
+        "context_id": context_id,
+        "status": "PROPOSED",
+        "created_at": int(time.time())
+    }
+    ok, err = commit_graph_node(connect_url, headers, "requirement", req_id, req_meta)
+    if not ok:
+        print(f"Error creating requirement atom: {err}", file=sys.stderr)
+        return 1
+
+    print(f"Swarm context initialized: {context_id} (Name: {name})")
+    print(f"Requirement atom created: {req_id}")
+    return 0
+
+
+def handle_swarm_task_create(args, cfg: dict) -> int:
+    """Create task atom and establish DEPENDS_ON links."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    agent_id = getattr(args, "agent", None) or "cpg-architect"
+    headers = resolve_swarm_headers(args, cfg, active_agent=agent_id)
+
+    context_id = args.context
+    name = args.name
+    workflow = getattr(args, "workflow", "feature") or "feature"
+    symbols_raw = getattr(args, "symbols", "") or ""
+    depends_raw = getattr(args, "depends_on", "") or ""
+
+    symbols = [s.strip() for s in symbols_raw.split(",") if s.strip()]
+    depends_on = [d.strip() for d in depends_raw.split(",") if d.strip()]
+
+    # Determine task_id
+    task_id = getattr(args, "id", None)
+    if not task_id:
+        if re.match(r"^[a-zA-Z0-9_\-]+$", name):
+            task_id = name
+        else:
+            task_id = f"task-{secrets.token_hex(4)}"
+
+    task_meta = {
+        "name": name,
+        "workflow": workflow,
+        "target_symbols": symbols,
+        "status": "READY",
+        "context_id": context_id,
+        "agent_id": agent_id,
+        "lease": {
+            "holder": None,
+            "expires_at": 0
+        },
+        "depends_on": depends_on,
+        "created_at": int(time.time())
+    }
+
+    ok, err = commit_graph_node(connect_url, headers, "task", task_id, task_meta)
+    if not ok:
+        print(f"Error creating task node: {err}", file=sys.stderr)
+        return 1
+
+    # Create DEPENDS_ON edges to prerequisite tasks
+    for dep_id in depends_on:
+        create_graph_link(connect_url, headers, task_id, dep_id, "DEPENDS_ON")
+
+    print(f"Task created: {task_id} (Name: {name}, Status: READY)")
+    if depends_on:
+        print(f"Dependencies: {', '.join(depends_on)}")
+    return 0
+
+
+def handle_swarm_task_list(args, cfg: dict) -> int:
+    """List tasks in a swarm context as table or JSON."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_swarm_headers(args, cfg)
+    context_id = args.context
+    output_format = getattr(args, "format", "table") or "table"
+
+    tasks_map = {}
+
+    # Query context endpoint
+    ctx_url = f"{connect_url}/api/v1/context/{urllib.parse.quote(context_id)}"
+    st, ctx_data = http_request_json(ctx_url, method="GET", headers=headers)
+    if st == 200 and isinstance(ctx_data, dict):
+        for item in ctx_data.get("tasks", []):
+            tid = item.get("id") or item.get("uuid")
+            if tid:
+                tasks_map[tid] = item
+        for item in ctx_data.get("nodes", []):
+            tid = item.get("id") or item.get("uuid")
+            if tid and (item.get("type") == "task" or "task" in tid.lower()):
+                tasks_map[tid] = item
+
+    # Query search endpoint by context
+    search_url = f"{connect_url}/api/v1/search?q={urllib.parse.quote(context_id)}"
+    st, search_data = http_request_json(search_url, method="GET", headers=headers)
+    if st == 200 and isinstance(search_data, dict):
+        for item in search_data.get("results", []):
+            tid = item.get("id") or item.get("uuid")
+            if tid:
+                meta = item.get("metadata", {})
+                if meta.get("context_id") == context_id or item.get("context_id") == context_id:
+                    tasks_map[tid] = item
+
+    # General search fallback if empty
+    if not tasks_map:
+        all_url = f"{connect_url}/api/v1/search?q="
+        st, all_data = http_request_json(all_url, method="GET", headers=headers)
+        if st == 200 and isinstance(all_data, dict):
+            for item in all_data.get("results", []):
+                tid = item.get("id") or item.get("uuid")
+                meta = item.get("metadata", {})
+                if meta.get("context_id") == context_id or item.get("context_id") == context_id:
+                    tasks_map[tid] = item
+
+    task_rows = []
+    for tid, node in tasks_map.items():
+        meta = extract_node_metadata(node)
+        name = meta.get("name") or node.get("label") or node.get("statement") or tid
+        status = meta.get("status", "READY")
+        lease = meta.get("lease", {})
+        holder = lease.get("holder") if isinstance(lease, dict) else None
+
+        # Fetch links for dependencies and verdicts
+        links_data = fetch_node_links(connect_url, headers, tid, direction="both")
+        dep_names = list(meta.get("depends_on", []))
+        verdicts = []
+        for l in links_data.get("outbound", []):
+            rel = l.get("relation", "")
+            target = l.get("target") or l.get("uuid")
+            if rel == "DEPENDS_ON" and target and target not in dep_names:
+                dep_names.append(target)
+            elif rel in ("VALIDATED_BY", "REFUTES", "ACCEPTS", "HAS_SOLUTION"):
+                verdicts.append(f"{rel}:{target}")
+        for l in links_data.get("inbound", []):
+            rel = l.get("relation", "")
+            source = l.get("source") or l.get("uuid")
+            if rel in ("ACCEPTS",):
+                verdicts.append(f"{rel}:{source}")
+
+        dep_str = ", ".join(dep_names) if dep_names else ""
+        verdict_str = ", ".join(verdicts) if verdicts else ""
+        extra = []
+        if dep_str:
+            extra.append(f"depends: {dep_str}")
+        if verdict_str:
+            extra.append(verdict_str)
+        extra_str = "; ".join(extra) if extra else "-"
+
+        task_rows.append({
+            "id": tid,
+            "name": name,
+            "status": status,
+            "lease_holder": holder or "-",
+            "dependencies": dep_names,
+            "verdicts": verdicts,
+            "details": extra_str,
+            "metadata": meta
+        })
+
+    if output_format == "json":
+        print(json.dumps(task_rows, indent=2))
+        return 0
+
+    if not task_rows:
+        print(f"No tasks found for context: {context_id}")
+        return 0
+
+    col_id = max(max(len(r["id"]) for r in task_rows), 16)
+    col_name = max(max(len(r["name"]) for r in task_rows), 20)
+    col_status = max(max(len(r["status"]) for r in task_rows), 14)
+    col_holder = max(max(len(r["lease_holder"]) for r in task_rows), 14)
+    col_details = max(max(len(r["details"]) for r in task_rows), 25)
+
+    header = f"{'ID':<{col_id}}  {'Name':<{col_name}}  {'Status':<{col_status}}  {'Lease Holder':<{col_holder}}  {'Dependencies / Verdicts':<{col_details}}"
+    print(header)
+    print("-" * len(header))
+    for r in task_rows:
+        print(f"{r['id']:<{col_id}}  {r['name']:<{col_name}}  {r['status']:<{col_status}}  {r['lease_holder']:<{col_holder}}  {r['details']:<{col_details}}")
+    return 0
+
+
+def handle_swarm_lease_claim(args, cfg: dict) -> int:
+    """Verify prerequisites and claim an exclusive lease on a task."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_swarm_headers(args, cfg, active_agent=args.agent)
+    task_id = args.task_id
+    ttl = getattr(args, "ttl", None) or 600
+
+    # 1. Fetch task node
+    status, node_data = fetch_graph_node(connect_url, headers, task_id)
+    if status != 200 or not node_data:
+        print(f"Error: Task '{task_id}' not found (HTTP {status})", file=sys.stderr)
+        return 1
+
+    metadata = extract_node_metadata(node_data)
+
+    # 2. Fetch links to find prerequisites
+    links_data = fetch_node_links(connect_url, headers, task_id, direction="both")
+    prereq_ids = set(metadata.get("depends_on", []))
+    for l in links_data.get("outbound", []):
+        if l.get("relation", "").upper() == "DEPENDS_ON":
+            dep = l.get("target") or l.get("uuid")
+            if dep and dep != task_id:
+                prereq_ids.add(dep)
+
+    # 3. Verify all prerequisites have COMPLETED or VALIDATED status
+    for dep_id in prereq_ids:
+        dep_st, dep_node = fetch_graph_node(connect_url, headers, dep_id)
+        if dep_st != 200 or not dep_node:
+            print(f"[BLOCKED] Prerequisite {dep_id} not found in blackboard", file=sys.stderr)
+            return 1
+        dep_meta = extract_node_metadata(dep_node)
+        dep_status = dep_meta.get("status", "UNKNOWN").upper()
+        if dep_status not in ("COMPLETED", "VALIDATED"):
+            print(f"[BLOCKED] Prerequisite {dep_id} not validated (Current status: {dep_status})", file=sys.stderr)
+            return 1
+
+    # 4. Check lease status
+    lease = metadata.get("lease") or {}
+    holder = lease.get("holder")
+    expires_at = lease.get("expires_at") or 0
+    now = time.time()
+
+    if holder and holder != args.agent and expires_at > now:
+        print(f"[BLOCKED] Task {task_id} is already leased by agent '{holder}' until {int(expires_at)}", file=sys.stderr)
+        return 1
+
+    # 5. Unblocked: claim lease
+    metadata["status"] = "IN_PROGRESS"
+    metadata["lease"] = {
+        "holder": args.agent,
+        "expires_at": int(now + ttl)
+    }
+
+    ok, err = commit_graph_node(connect_url, headers, "task", task_id, metadata)
+    if not ok:
+        print(f"Error updating task lease: {err}", file=sys.stderr)
+        return 1
+
+    print(f"Lease claimed for task {task_id} by agent {args.agent} (TTL: {ttl}s, Status: IN_PROGRESS)")
+    return 0
+
+
+def handle_swarm_lease_release(args, cfg: dict) -> int:
+    """Release active lease on a task and return it to READY state."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_swarm_headers(args, cfg, active_agent=args.agent)
+    task_id = args.task_id
+
+    status, node_data = fetch_graph_node(connect_url, headers, task_id)
+    if status != 200 or not node_data:
+        print(f"Error: Task '{task_id}' not found (HTTP {status})", file=sys.stderr)
+        return 1
+
+    metadata = extract_node_metadata(node_data)
+    lease = metadata.get("lease") or {}
+    holder = lease.get("holder")
+    expires_at = lease.get("expires_at") or 0
+    now = time.time()
+
+    if holder and holder != args.agent and expires_at > now:
+        print(f"[BLOCKED] Cannot release lease: Task {task_id} is leased by different agent '{holder}'", file=sys.stderr)
+        return 1
+
+    metadata["status"] = "READY"
+    metadata["lease"] = {
+        "holder": None,
+        "expires_at": 0
+    }
+
+    ok, err = commit_graph_node(connect_url, headers, "task", task_id, metadata)
+    if not ok:
+        print(f"Error releasing lease: {err}", file=sys.stderr)
+        return 1
+
+    print(f"Lease released for task {task_id} by agent {args.agent} (Status: READY)")
+    return 0
+
+
+def handle_swarm_review_submit(args, cfg: dict) -> int:
+    """Create solution atom, link via HAS_SOLUTION, and mark task REVIEW_PENDING."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_swarm_headers(args, cfg, active_agent=args.agent)
+    task_id = args.task_id
+    patch_summary = args.patch or "Solution patch submitted"
+
+    status, node_data = fetch_graph_node(connect_url, headers, task_id)
+    if status != 200 or not node_data:
+        print(f"Error: Task '{task_id}' not found (HTTP {status})", file=sys.stderr)
+        return 1
+
+    task_meta = extract_node_metadata(node_data)
+    context_id = task_meta.get("context_id", "")
+
+    # 1. Create solution atom
+    solution_id = f"sol-{task_id}-{secrets.token_hex(4)}"
+    sol_meta = {
+        "task_id": task_id,
+        "agent_id": args.agent,
+        "patch": patch_summary,
+        "summary": patch_summary,
+        "created_at": int(time.time()),
+        "context_id": context_id
+    }
+    ok, err = commit_graph_node(connect_url, headers, "solution", solution_id, sol_meta)
+    if not ok:
+        print(f"Error creating solution atom: {err}", file=sys.stderr)
+        return 1
+
+    # 2. Link task -> solution via HAS_SOLUTION
+    create_graph_link(connect_url, headers, task_id, solution_id, "HAS_SOLUTION")
+
+    # 3. Update task status = REVIEW_PENDING
+    task_meta["status"] = "REVIEW_PENDING"
+    ok, err = commit_graph_node(connect_url, headers, "task", task_id, task_meta)
+    if not ok:
+        print(f"Error updating task status: {err}", file=sys.stderr)
+        return 1
+
+    print(f"Review submitted for task {task_id} by agent {args.agent} (Solution: {solution_id}, Status: REVIEW_PENDING)")
+    return 0
+
+
+def handle_swarm_review_verdict(args, cfg: dict) -> int:
+    """Record verification proof or counterexample trace, linking VALIDATED_BY or REFUTES."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_swarm_headers(args, cfg, active_agent=args.verifier)
+    task_id = args.task_id
+    verdict = args.verdict.upper()
+
+    status, node_data = fetch_graph_node(connect_url, headers, task_id)
+    if status != 200 or not node_data:
+        print(f"Error: Task '{task_id}' not found (HTTP {status})", file=sys.stderr)
+        return 1
+
+    details = args.details
+    details_val = {}
+    if details:
+        try:
+            details_val = json.loads(details)
+        except Exception:
+            details_val = {"raw": details}
+
+    task_meta = extract_node_metadata(node_data)
+    context_id = task_meta.get("context_id", "")
+
+    if verdict == "PASS":
+        proof_id = f"proof-{task_id}-{secrets.token_hex(4)}"
+        proof_meta = {
+            "task_id": task_id,
+            "verifier_agent": args.verifier,
+            "verdict": "PASS",
+            "details": details_val,
+            "context_id": context_id,
+            "created_at": int(time.time())
+        }
+        ok, err = commit_graph_node(connect_url, headers, "verification_proof", proof_id, proof_meta)
+        if not ok:
+            print(f"Error creating verification proof atom: {err}", file=sys.stderr)
+            return 1
+
+        create_graph_link(connect_url, headers, task_id, proof_id, "VALIDATED_BY")
+
+        task_meta["status"] = "VALIDATED"
+        ok, err = commit_graph_node(connect_url, headers, "task", task_id, task_meta)
+        if not ok:
+            print(f"Error updating task status: {err}", file=sys.stderr)
+            return 1
+
+        print(f"Verdict recorded for task {task_id}: PASS by {args.verifier} (Proof: {proof_id}, Status: VALIDATED)")
+        return 0
+
+    elif verdict == "FAIL":
+        counter_id = f"counter-{task_id}-{secrets.token_hex(4)}"
+        counter_meta = {
+            "task_id": task_id,
+            "verifier_agent": args.verifier,
+            "verdict": "FAIL",
+            "details": details_val,
+            "context_id": context_id,
+            "created_at": int(time.time())
+        }
+        ok, err = commit_graph_node(connect_url, headers, "counterexample_trace", counter_id, counter_meta)
+        if not ok:
+            print(f"Error creating counterexample trace atom: {err}", file=sys.stderr)
+            return 1
+
+        create_graph_link(connect_url, headers, task_id, counter_id, "REFUTES")
+
+        task_meta["status"] = "READY"
+        if "lease" in task_meta and isinstance(task_meta["lease"], dict):
+            task_meta["lease"]["holder"] = None
+            task_meta["lease"]["expires_at"] = 0
+        else:
+            task_meta["lease"] = {"holder": None, "expires_at": 0}
+
+        ok, err = commit_graph_node(connect_url, headers, "task", task_id, task_meta)
+        if not ok:
+            print(f"Error updating task status: {err}", file=sys.stderr)
+            return 1
+
+        print(f"Verdict recorded for task {task_id}: FAIL by {args.verifier} (Refutation: {counter_id}, Status: READY)")
+        return 0
+
+    else:
+        print(f"Error: Invalid verdict '{args.verdict}'. Must be PASS or FAIL.", file=sys.stderr)
+        return 1
+
+
+def handle_swarm_accept(args, cfg: dict) -> int:
+    """Record stakeholder acceptance and mark task COMPLETED."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_swarm_headers(args, cfg, active_user=args.stakeholder)
+    task_id = args.task_id
+
+    status, node_data = fetch_graph_node(connect_url, headers, task_id)
+    if status != 200 or not node_data:
+        print(f"Error: Task '{task_id}' not found (HTTP {status})", file=sys.stderr)
+        return 1
+
+    task_meta = extract_node_metadata(node_data)
+    context_id = task_meta.get("context_id", "")
+
+    acc_id = f"acc-{task_id}-{secrets.token_hex(4)}"
+    acc_meta = {
+        "task_id": task_id,
+        "stakeholder": args.stakeholder,
+        "notes": args.notes or "Accepted by stakeholder",
+        "context_id": context_id,
+        "created_at": int(time.time())
+    }
+    ok, err = commit_graph_node(connect_url, headers, "acceptance", acc_id, acc_meta)
+    if not ok:
+        print(f"Error creating acceptance record: {err}", file=sys.stderr)
+        return 1
+
+    create_graph_link(connect_url, headers, task_id, acc_id, "ACCEPTS")
+
+    task_meta["status"] = "COMPLETED"
+    ok, err = commit_graph_node(connect_url, headers, "task", task_id, task_meta)
+    if not ok:
+        print(f"Error updating task status: {err}", file=sys.stderr)
+        return 1
+
+    print(f"Task {task_id} accepted by {args.stakeholder} (Acceptance: {acc_id}, Status: COMPLETED)")
+    return 0
+
+
+def handle_swarm(args, cfg: dict) -> int:
+    """Dispatcher for swarm subcommands."""
+    action = getattr(args, "swarm_action", None)
+    if action == "init":
+        return handle_swarm_init(args, cfg)
+    elif action == "task":
+        task_action = getattr(args, "task_action", None)
+        if task_action == "create":
+            return handle_swarm_task_create(args, cfg)
+        elif task_action == "list":
+            return handle_swarm_task_list(args, cfg)
+    elif action == "lease":
+        lease_action = getattr(args, "lease_action", None)
+        if lease_action == "claim":
+            return handle_swarm_lease_claim(args, cfg)
+        elif lease_action == "release":
+            return handle_swarm_lease_release(args, cfg)
+    elif action == "review":
+        review_action = getattr(args, "review_action", None)
+        if review_action == "submit":
+            return handle_swarm_review_submit(args, cfg)
+        elif review_action == "verdict":
+            return handle_swarm_review_verdict(args, cfg)
+    elif action == "accept":
+        return handle_swarm_accept(args, cfg)
+
+    print(f"Unknown swarm action: {action}", file=sys.stderr)
+    return 1
 
 
 # ----------------------------------------------------------------------
@@ -1004,6 +1691,87 @@ def main():
     mcp_run.add_argument("--token", help="Bearer authorization token")
     mcp_run.add_argument("--smoke-test", action="store_true", help="Run self-test of MCP tools and exit 0")
 
+    def add_net_args(p: argparse.ArgumentParser):
+        p.add_argument("--connect", help="Daemon connect URL")
+        p.add_argument("--token", help="Bearer authorization token")
+        p.add_argument("--active-user", help="X-Active-User header identity")
+        p.add_argument("--active-agent", help="X-Active-Agent header identity")
+
+    # 8. swarm
+    swarm_p = subparsers.add_parser("swarm", help="Swarm coordination, task DAG, and lease management")
+    swarm_sub = swarm_p.add_subparsers(dest="swarm_action", required=True)
+
+    # 8a. swarm init
+    init_swarm_p = swarm_sub.add_parser("init", help="Initialize swarm workspace context and requirement atom")
+    init_swarm_p.add_argument("--context", required=True, help="Workspace context ID")
+    init_swarm_p.add_argument("--name", required=True, help="Swarm / initiative name")
+    init_swarm_p.add_argument("--requirement", help="Initial requirement statement or description")
+    add_net_args(init_swarm_p)
+
+    # 8b. swarm task
+    task_p = swarm_sub.add_parser("task", help="Swarm task lifecycle management")
+    task_sub = task_p.add_subparsers(dest="task_action", required=True)
+
+    # task create
+    task_create_p = task_sub.add_parser("create", help="Create a new task in the swarm DAG")
+    task_create_p.add_argument("--context", required=True, help="Workspace context ID")
+    task_create_p.add_argument("--name", required=True, help="Task name")
+    task_create_p.add_argument("--id", help="Optional explicit task identifier (defaults to name or generated ID)")
+    task_create_p.add_argument("--workflow", default="feature", help="Workflow type (feature, bugfix, refactoring)")
+    task_create_p.add_argument("--symbols", default="", help="Comma-separated target symbols")
+    task_create_p.add_argument("--depends-on", default="", help="Comma-separated prerequisite task IDs")
+    task_create_p.add_argument("--agent", default="cpg-architect", help="Author agent ID (default: cpg-architect)")
+    add_net_args(task_create_p)
+
+    # task list
+    task_list_p = task_sub.add_parser("list", help="List tasks for a swarm context")
+    task_list_p.add_argument("--context", required=True, help="Workspace context ID")
+    task_list_p.add_argument("--format", choices=["table", "json"], default="table", help="Output format (table or json)")
+    add_net_args(task_list_p)
+
+    # 8c. swarm lease
+    lease_p = swarm_sub.add_parser("lease", help="Task exclusive lease operations")
+    lease_sub = lease_p.add_subparsers(dest="lease_action", required=True)
+
+    # lease claim
+    lease_claim_p = lease_sub.add_parser("claim", help="Claim an exclusive lease on a task")
+    lease_claim_p.add_argument("task_id", help="Task ID to claim")
+    lease_claim_p.add_argument("--agent", required=True, help="Agent claiming the lease")
+    lease_claim_p.add_argument("--ttl", type=int, default=600, help="Lease time-to-live in seconds (default: 600)")
+    add_net_args(lease_claim_p)
+
+    # lease release
+    lease_release_p = lease_sub.add_parser("release", help="Release lease on a task")
+    lease_release_p.add_argument("task_id", help="Task ID to release")
+    lease_release_p.add_argument("--agent", required=True, help="Agent releasing the lease")
+    add_net_args(lease_release_p)
+
+    # 8d. swarm review
+    review_p = swarm_sub.add_parser("review", help="Dialectic review and verification operations")
+    review_sub = review_p.add_subparsers(dest="review_action", required=True)
+
+    # review submit
+    review_submit_p = review_sub.add_parser("submit", help="Submit task solution for review")
+    review_submit_p.add_argument("task_id", help="Task ID to submit")
+    review_submit_p.add_argument("--agent", required=True, help="Agent submitting the review")
+    review_submit_p.add_argument("--patch", help="Summary or description of the patch/solution")
+    add_net_args(review_submit_p)
+
+    # review verdict
+    review_verdict_p = review_sub.add_parser("verdict", help="Record verification verdict on a task")
+    review_verdict_p.add_argument("task_id", help="Task ID under review")
+    review_verdict_p.add_argument("--verifier", required=True, help="Verifier agent ID")
+    review_verdict_p.add_argument("--verdict", required=True, choices=["PASS", "FAIL", "pass", "fail"], help="Verdict: PASS or FAIL")
+    review_verdict_p.add_argument("--details", help="Optional JSON or text details of proof/refutation")
+    add_net_args(review_verdict_p)
+
+    # 8e. swarm accept
+    accept_p = swarm_sub.add_parser("accept", help="Stakeholder acceptance of a validated task")
+    accept_p.add_argument("task_id", help="Task ID to accept")
+    accept_p.add_argument("--stakeholder", required=True, help="Stakeholder user or agent ID")
+    accept_p.add_argument("--notes", help="Optional acceptance notes or comments")
+    add_net_args(accept_p)
+
     parsed_args = parser.parse_args()
     config = load_config(parsed_args.config)
 
@@ -1022,6 +1790,8 @@ def main():
         sys.exit(handle_context(parsed_args, config))
     elif parsed_args.subcommand == "mcp":
         sys.exit(handle_mcp(parsed_args, config))
+    elif parsed_args.subcommand == "swarm":
+        sys.exit(handle_swarm(parsed_args, config))
     else:
         parser.print_help()
         sys.exit(1)
