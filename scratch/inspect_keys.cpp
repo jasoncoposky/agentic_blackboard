@@ -1,9 +1,9 @@
 #include <iostream>
-#include "asos/Blackboard.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
 #include "engine/store.hpp"
 
 int main() {
-    asos::Blackboard bb("asos_db", 1);
+    ab::Blackboard bb("ab_db", 1);
     auto* store = bb.get_engine()->get_store();
     
     std::cout << "[DEBUG] Listing ALL keys in substrate:" << std::endl;

@@ -1,14 +1,14 @@
 #include <iostream>
-#include "asos/Blackboard.hpp"
-#include "asos/schema.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
+#include <agentic_blackboard/schema.hpp>
 
 int main() {
     try {
         std::cout << "[TEST] Running Orphan Rejection Verification..." << std::endl;
-        asos::Blackboard bb("test_asos_db", 99);
+        ab::Blackboard bb("test_ab_db", 99);
         
         // 1. Valid Atom (Both Anchors)
-        asos::CpbEntry valid_atom;
+        ab::CpbEntry valid_atom;
         valid_atom.header.uuid = "valid-1";
         valid_atom.header.origin.agent_id = "test-agent";
         valid_atom.header.origin.project_id = "test-project";
@@ -21,7 +21,7 @@ int main() {
         }
 
         // 2. Orphan Atom (Missing Project)
-        asos::CpbEntry orphan_1;
+        ab::CpbEntry orphan_1;
         orphan_1.header.uuid = "orphan-1";
         orphan_1.header.origin.agent_id = "test-agent";
         orphan_1.header.origin.project_id = ""; // Missing
@@ -33,7 +33,7 @@ int main() {
         }
 
         // 3. Orphan Atom (Missing Agent)
-        asos::CpbEntry orphan_2;
+        ab::CpbEntry orphan_2;
         orphan_2.header.uuid = "orphan-2";
         orphan_2.header.origin.agent_id = ""; // Missing
         orphan_2.header.origin.project_id = "test-project";

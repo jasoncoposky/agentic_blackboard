@@ -68,25 +68,25 @@ std::string make_identity_iri(const std::string& id) {
     std::string clean = id;
     if (clean.starts_with("identity:")) clean = clean.substr(9);
     if (clean.starts_with("urn:")) return "<" + sanitize_iri(clean) + ">";
-    return "<urn:asos:identity:" + sanitize_iri(clean) + ">";
+    return "<urn:ab:identity:" + sanitize_iri(clean) + ">";
 }
 
 std::string make_project_iri(const std::string& id) {
     std::string clean = id;
     if (clean.starts_with("project:")) clean = clean.substr(8);
     if (clean.starts_with("urn:")) return "<" + sanitize_iri(clean) + ">";
-    return "<urn:asos:project:" + sanitize_iri(clean) + ">";
+    return "<urn:ab:project:" + sanitize_iri(clean) + ">";
 }
 
 std::string make_atom_iri(const std::string& id) {
     std::string clean = id;
     if (clean.starts_with("atom:")) clean = clean.substr(5);
     if (clean.starts_with("urn:")) return "<" + sanitize_iri(clean) + ">";
-    return "<urn:asos:atom:" + sanitize_iri(clean) + ">";
+    return "<urn:ab:atom:" + sanitize_iri(clean) + ">";
 }
 
 std::string format_target_uri(const std::string& target) {
-    if (target.empty()) return "<urn:asos:atom:unknown>";
+    if (target.empty()) return "<urn:ab:atom:unknown>";
     if (target.starts_with("urn:")) return "<" + sanitize_iri(target) + ">";
     if (target.starts_with("identity:")) return make_identity_iri(target.substr(9));
     if (target.starts_with("project:")) return make_project_iri(target.substr(8));
@@ -101,53 +101,53 @@ std::string predicate_for_relation(const std::string& rel) {
     if (rel == rel::CITES || rel == "CITES" || rel == "cites" || rel == "schema:citation") {
         return "schema:citation";
     }
-    if (rel == rel::SUPPORTS || rel == "SUPPORTS" || rel == "supports" || rel == "asos:supports") {
-        return "asos:supports";
+    if (rel == rel::SUPPORTS || rel == "SUPPORTS" || rel == "supports" || rel == "ab:supports") {
+        return "ab:supports";
     }
-    if (rel == rel::REFUTES || rel == "REFUTES" || rel == "refutes" || rel == "asos:refutes") {
-        return "asos:refutes";
+    if (rel == rel::REFUTES || rel == "REFUTES" || rel == "refutes" || rel == "ab:refutes") {
+        return "ab:refutes";
     }
-    if (rel == rel::EXTENDS || rel == "EXTENDS" || rel == "extends" || rel == "asos:extends") {
-        return "asos:extends";
+    if (rel == rel::EXTENDS || rel == "EXTENDS" || rel == "extends" || rel == "ab:extends") {
+        return "ab:extends";
     }
-    if (rel == rel::PAIRS_WITH || rel == "PAIRS_WITH" || rel == "pairsWith" || rel == "asos:pairsWith") {
-        return "asos:pairsWith";
+    if (rel == rel::PAIRS_WITH || rel == "PAIRS_WITH" || rel == "pairsWith" || rel == "ab:pairsWith") {
+        return "ab:pairsWith";
     }
-    if (rel == rel::VARIATION_OF || rel == "VARIATION_OF" || rel == "variationOf" || rel == "asos:variationOf") {
-        return "asos:variationOf";
+    if (rel == rel::VARIATION_OF || rel == "VARIATION_OF" || rel == "variationOf" || rel == "ab:variationOf") {
+        return "ab:variationOf";
     }
-    if (rel == rel::USES_INGREDIENT || rel == "USES_INGREDIENT" || rel == "usesIngredient" || rel == "asos:usesIngredient") {
-        return "asos:usesIngredient";
+    if (rel == rel::USES_INGREDIENT || rel == "USES_INGREDIENT" || rel == "usesIngredient" || rel == "ab:usesIngredient") {
+        return "ab:usesIngredient";
     }
-    if (rel == rel::DEPENDS_ON || rel == "DEPENDS_ON" || rel == "dependsOn") {
-        return "asos:dependsOn";
+    if (rel == rel::DEPENDS_ON || rel == "DEPENDS_ON" || rel == "dependsOn" || rel == "ab:dependsOn") {
+        return "ab:dependsOn";
     }
-    if (rel == rel::BLOCKS || rel == "BLOCKS" || rel == "blocks") {
-        return "asos:blocks";
+    if (rel == rel::BLOCKS || rel == "BLOCKS" || rel == "blocks" || rel == "ab:blocks") {
+        return "ab:blocks";
     }
-    if (rel == rel::SUBTASK_OF || rel == "SUBTASK_OF" || rel == "subtaskOf") {
-        return "asos:subtaskOf";
+    if (rel == rel::SUBTASK_OF || rel == "SUBTASK_OF" || rel == "subtaskOf" || rel == "ab:subtaskOf") {
+        return "ab:subtaskOf";
     }
-    if (rel == rel::VALIDATED_BY || rel == "VALIDATED_BY" || rel == "validatedBy") {
-        return "asos:validatedBy";
+    if (rel == rel::VALIDATED_BY || rel == "VALIDATED_BY" || rel == "validatedBy" || rel == "ab:validatedBy") {
+        return "ab:validatedBy";
     }
-    if (rel == rel::CONTRIBUTES_TO || rel == "CONTRIBUTES_TO" || rel == "contributesTo") {
-        return "asos:contributesTo";
+    if (rel == rel::CONTRIBUTES_TO || rel == "CONTRIBUTES_TO" || rel == "contributesTo" || rel == "ab:contributesTo") {
+        return "ab:contributesTo";
     }
-    if (rel == rel::SYNTHESIS_OF || rel == "SYNTHESIS_OF" || rel == "synthesisOf") {
-        return "asos:synthesisOf";
+    if (rel == rel::SYNTHESIS_OF || rel == "SYNTHESIS_OF" || rel == "synthesisOf" || rel == "ab:synthesisOf") {
+        return "ab:synthesisOf";
     }
-    if (rel == rel::QUESTION_RAISED_BY || rel == "QUESTION_RAISED_BY" || rel == "questionRaisedBy") {
-        return "asos:questionRaisedBy";
+    if (rel == rel::QUESTION_RAISED_BY || rel == "QUESTION_RAISED_BY" || rel == "questionRaisedBy" || rel == "ab:questionRaisedBy") {
+        return "ab:questionRaisedBy";
     }
-    if (rel == rel::ANALOGY_TO || rel == "ANALOGY_TO" || rel == "analogyTo") {
-        return "asos:analogyTo";
+    if (rel == rel::ANALOGY_TO || rel == "ANALOGY_TO" || rel == "analogyTo" || rel == "ab:analogyTo") {
+        return "ab:analogyTo";
     }
 
-    if (rel.starts_with("asos:") || rel.starts_with("rdfs:") || rel.starts_with("schema:") || rel.starts_with("prov:") || rel.starts_with("dc:") || rel.starts_with("geo:")) {
+    if (rel.starts_with("ab:") || rel.starts_with("rdfs:") || rel.starts_with("schema:") || rel.starts_with("prov:") || rel.starts_with("dc:") || rel.starts_with("geo:")) {
         return rel;
     }
-    return "asos:" + rel;
+    return "ab:" + rel;
 }
 
 } // anonymous namespace
@@ -160,7 +160,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
     if (!store) return "";
 
     std::ostringstream ss;
-    ss << "@prefix asos: <http://asos.substrate.ai/schema#> .\n";
+    ss << "@prefix ab: <http://agenticblackboard.ai/schema#> .\n";
     ss << "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n";
     ss << "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n";
     ss << "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n";
@@ -209,7 +209,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
             props.push_back({"rdfs:label", "\"" + sanitize_str(label) + "\""});
             props.push_back({"dc:title", "\"" + sanitize_str(label) + "\""});
             if (!id_node.role.empty()) {
-                props.push_back({"asos:role", "\"" + sanitize_str(id_node.role) + "\""});
+                props.push_back({"ab:role", "\"" + sanitize_str(id_node.role) + "\""});
             }
 
             auto outbound = blackboard->get_outbound_links(id_str, principal_id);
@@ -219,7 +219,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 props.push_back({pred, target_uri});
             }
 
-            ss << subject_uri << " a asos:Identity";
+            ss << subject_uri << " a ab:Identity";
             for (const auto& [pred, val] : props) {
                 ss << " ;\n    " << pred << " " << val;
             }
@@ -235,7 +235,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 props.push_back({"dc:description", "\"" + sanitize_str(p_node.description) + "\""});
             }
             if (!p_node.lifecycle_status.empty()) {
-                props.push_back({"asos:lifecycleStatus", "\"" + sanitize_str(p_node.lifecycle_status) + "\""});
+                props.push_back({"ab:lifecycleStatus", "\"" + sanitize_str(p_node.lifecycle_status) + "\""});
             }
 
             auto outbound = blackboard->get_outbound_links(proj_str, principal_id);
@@ -245,7 +245,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 props.push_back({pred, target_uri});
             }
 
-            ss << subject_uri << " a asos:Project";
+            ss << subject_uri << " a ab:Project";
             for (const auto& [pred, val] : props) {
                 ss << " ;\n    " << pred << " " << val;
             }
@@ -263,7 +263,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                                          entry.taxonomy.knowledge_area == KnowledgeArea::LITERATURE_READING ||
                                          (!is_recipe && !entry.payload.note_links.empty()));
 
-                std::vector<std::string> types = {"asos:KnowledgeAtom"};
+                std::vector<std::string> types = {"ab:KnowledgeAtom"};
                 if (is_recipe) {
                     types.push_back("schema:Recipe");
                 }
@@ -280,7 +280,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 std::vector<std::pair<std::string, std::string>> props;
 
                 if (!entry.payload.statement.empty()) {
-                    props.push_back({"asos:statement", "\"" + sanitize_str(entry.payload.statement) + "\""});
+                    props.push_back({"ab:statement", "\"" + sanitize_str(entry.payload.statement) + "\""});
                     props.push_back({"schema:headline", "\"" + sanitize_str(entry.payload.statement) + "\""});
                     props.push_back({"dc:title", "\"" + sanitize_str(entry.payload.statement) + "\""});
                     if (is_recipe) {
@@ -303,14 +303,14 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 }
                 if (!entry.header.origin.project_id.empty()) {
                     std::string proj_iri = make_project_iri(entry.header.origin.project_id);
-                    props.push_back({"asos:belongsTo", proj_iri});
+                    props.push_back({"ab:belongsTo", proj_iri});
                 }
 
                 if (entry.header.timestamp > 0) {
                     props.push_back({"prov:generatedAtTime", std::to_string(entry.header.timestamp)});
                 }
                 if (entry.header.event_timestamp > 0) {
-                    props.push_back({"asos:eventTimestamp", std::to_string(entry.header.event_timestamp)});
+                    props.push_back({"ab:eventTimestamp", std::to_string(entry.header.event_timestamp)});
                 }
 
                 // Citations
@@ -372,13 +372,13 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 // Metrics
                 for (const auto& metric : entry.metrics) {
                     std::ostringstream bnode;
-                    bnode << "[\n        asos:metricKey \"" << sanitize_str(metric.key) << "\" ;\n";
-                    bnode << "        asos:metricValue " << format_quantity(metric.value);
+                    bnode << "[\n        ab:metricKey \"" << sanitize_str(metric.key) << "\" ;\n";
+                    bnode << "        ab:metricValue " << format_quantity(metric.value);
                     if (!metric.unit.empty()) {
-                        bnode << " ;\n        asos:metricUnit \"" << sanitize_str(metric.unit) << "\"";
+                        bnode << " ;\n        ab:metricUnit \"" << sanitize_str(metric.unit) << "\"";
                     }
                     bnode << "\n    ]";
-                    props.push_back({"asos:metric", bnode.str()});
+                    props.push_back({"ab:metric", bnode.str()});
                 }
 
                 // Attributes
@@ -389,7 +389,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                         std::ostringstream bnode;
                         bnode << "[\n        rdfs:label \"" << sanitize_str(k) << "\" ;\n";
                         bnode << "        rdf:value \"" << sanitize_str(v) << "\"\n    ]";
-                        props.push_back({"asos:attribute", bnode.str()});
+                        props.push_back({"ab:attribute", bnode.str()});
                     }
                 }
 

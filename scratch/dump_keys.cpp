@@ -1,11 +1,11 @@
 #include <iostream>
-#include "asos/Blackboard.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
 #include "engine/store.hpp"
 
 int main() {
     try {
-        std::cout << "[DEBUG] Dumping all keys in asos_db..." << std::endl;
-        asos::Blackboard bb("asos_db", 1);
+        std::cout << "[DEBUG] Dumping all keys in ab_db..." << std::endl;
+        ab::Blackboard bb("ab_db", 1);
         auto* store = bb.get_engine()->get_store();
         
         auto keys = store->get_prefix_keys_all_shards("", "", 5000);

@@ -1,11 +1,19 @@
-#include "asos/Blackboard.hpp"
-#include "asos/Orchestrator.hpp"
-#include "asos/Librarian.hpp"
-#include "asos/Validator.hpp"
-#include "asos/DeltaEngine.hpp"
-#include "asos/Monitor.hpp"
-#include "asos/RdfExporter.hpp"
-#include "asos/ApiServer.hpp"
+#include <agentic_blackboard/Blackboard.hpp>
+#include <ab/Blackboard.hpp>
+#include <agentic_blackboard/Orchestrator.hpp>
+#include <ab/Orchestrator.hpp>
+#include <agentic_blackboard/Librarian.hpp>
+#include <ab/Librarian.hpp>
+#include <agentic_blackboard/Validator.hpp>
+#include <ab/Validator.hpp>
+#include <agentic_blackboard/DeltaEngine.hpp>
+#include <ab/DeltaEngine.hpp>
+#include <agentic_blackboard/Monitor.hpp>
+#include <ab/Monitor.hpp>
+#include <agentic_blackboard/RdfExporter.hpp>
+#include <ab/RdfExporter.hpp>
+#include <agentic_blackboard/ApiServer.hpp>
+#include <ab/ApiServer.hpp>
 #include "httplib.h"
 #include <nlohmann/json.hpp>
 #include "engine/store.hpp"
@@ -17,7 +25,7 @@
 #include <cassert>
 #include <filesystem>
 
-using namespace asos;
+using namespace agentic_blackboard;
 
 void test_identity_integrity() {
     std::cout << "[Test] Starting Identity Integrity Verification..." << std::endl;
@@ -805,17 +813,23 @@ void test_rdf_export_notes_and_recipes() {
         std::string ttl = RdfExporter::export_turtle(&bb);
 
         std::vector<std::string> required_strings = {
+            "@prefix ab: <http://agenticblackboard.ai/schema#>",
             "@prefix schema: <http://schema.org/>",
             "@prefix dc: <http://purl.org/dc/terms/>",
+            "<urn:ab:identity:doug>",
+            "<urn:ab:project:commonplace>",
+            "<urn:ab:atom:note-ref-1>",
+            "<urn:ab:atom:recipe-tiramisu>",
+            "ab:KnowledgeAtom",
             "schema:CreativeWork",
             "schema:citation",
             "schema:recipeIngredient",
             "schema:recipeInstructions",
-            "asos:extends",
+            "ab:extends",
             "dc:title",
             "schema:Recipe",
-            "asos:metric",
-            "asos:attribute"
+            "ab:metric",
+            "ab:attribute"
         };
 
         for (const auto& req : required_strings) {
@@ -835,7 +849,7 @@ void test_api_search_and_links() {
     std::string db_dir = "test_api_search_db";
     std::filesystem::remove_all(db_dir);
 
-#define ASOS_CHECK(cond) do { if (!(cond)) { std::cerr << "[Test] FAILED: " #cond " at line " << __LINE__ << std::endl; exit(1); } } while(0)
+#define AB_CHECK(cond) do { if (!(cond)) { std::cerr << "[Test] FAILED: " #cond " at line " << __LINE__ << std::endl; exit(1); } } while(0)
 
     {
         Blackboard bb(db_dir, 12);
@@ -853,7 +867,7 @@ void test_api_search_and_links() {
         ref1.title = "Gödel, Escher, Bach";
         ref1.creator = "Douglas Hofstadter";
         note1.payload.references.push_back(ref1);
-        ASOS_CHECK(bb.commit_cpb_entry(note1));
+        AB_CHECK(bb.commit_cpb_entry(note1));
 
         CpbEntry note2;
         note2.header.uuid = "note-search-2";
@@ -867,23 +881,23 @@ void test_api_search_and_links() {
         link.relation = rel::EXTENDS;
         link.context = "Builds upon strange loop cognitive architectures";
         note2.payload.note_links.push_back(link);
-        ASOS_CHECK(bb.commit_cpb_entry(note2));
+        AB_CHECK(bb.commit_cpb_entry(note2));
 
         store->wait_all_shards();
 
         // Verify Blackboard backlinks & outbound
         auto backlinks = bb.get_backlinks("note-search-1");
-        ASOS_CHECK(backlinks.size() == 1);
-        ASOS_CHECK(backlinks[0].first == "note-search-2");
-        ASOS_CHECK(backlinks[0].second == rel::EXTENDS);
+        AB_CHECK(backlinks.size() == 1);
+        AB_CHECK(backlinks[0].first == "note-search-2");
+        AB_CHECK(backlinks[0].second == rel::EXTENDS);
 
         auto outbound = bb.get_outbound_links("note-search-2");
-        ASOS_CHECK(outbound.size() >= 1);
+        AB_CHECK(outbound.size() >= 1);
         bool found_outbound = false;
         for (auto& [dst, r] : outbound) {
             if (dst == "note-search-1" && r == rel::EXTENDS) found_outbound = true;
         }
-        ASOS_CHECK(found_outbound);
+        AB_CHECK(found_outbound);
 
         // Start ApiServer
         int test_port = 18085;
@@ -894,41 +908,41 @@ void test_api_search_and_links() {
 
         // 1. GET /api/v1/schema
         auto res_schema = cli.Get("/api/v1/schema");
-        ASOS_CHECK(res_schema && res_schema->status == 200);
+        AB_CHECK(res_schema && res_schema->status == 200);
         auto schema_json = nlohmann::json::parse(res_schema->body);
-        ASOS_CHECK(schema_json.contains("knowledge_areas"));
-        ASOS_CHECK(schema_json.contains("relationships"));
-        ASOS_CHECK(schema_json.contains("types"));
-        ASOS_CHECK(schema_json["types"].contains("CPB_ENTRY"));
-        ASOS_CHECK(schema_json["types"].contains("REFERENCE"));
-        ASOS_CHECK(schema_json["types"].contains("NOTE_LINK"));
-        ASOS_CHECK(schema_json["types"].contains("CATALOG_ITEM"));
-        ASOS_CHECK(schema_json["types"].contains("CATALOG_STEP"));
-        ASOS_CHECK(schema_json["types"].contains("CATALOG_METRIC"));
+        AB_CHECK(schema_json.contains("knowledge_areas"));
+        AB_CHECK(schema_json.contains("relationships"));
+        AB_CHECK(schema_json.contains("types"));
+        AB_CHECK(schema_json["types"].contains("CPB_ENTRY"));
+        AB_CHECK(schema_json["types"].contains("REFERENCE"));
+        AB_CHECK(schema_json["types"].contains("NOTE_LINK"));
+        AB_CHECK(schema_json["types"].contains("CATALOG_ITEM"));
+        AB_CHECK(schema_json["types"].contains("CATALOG_STEP"));
+        AB_CHECK(schema_json["types"].contains("CATALOG_METRIC"));
 
         // 2. GET /api/v1/search
         auto res_search = cli.Get("/api/v1/search?q=Strange");
-        ASOS_CHECK(res_search && res_search->status == 200);
+        AB_CHECK(res_search && res_search->status == 200);
         auto search_json = nlohmann::json::parse(res_search->body);
-        ASOS_CHECK(search_json["count"].get<int>() >= 1);
-        ASOS_CHECK(search_json["matches"][0]["uuid"] == "note-search-1");
+        AB_CHECK(search_json["count"].get<int>() >= 1);
+        AB_CHECK(search_json["matches"][0]["uuid"] == "note-search-1");
 
         // Search by tag
         auto res_tag_search = cli.Get("/api/v1/search?q=&tags=NEURAL");
-        ASOS_CHECK(res_tag_search && res_tag_search->status == 200);
+        AB_CHECK(res_tag_search && res_tag_search->status == 200);
         auto tag_json = nlohmann::json::parse(res_tag_search->body);
-        ASOS_CHECK(tag_json["count"].get<int>() >= 1);
-        ASOS_CHECK(tag_json["matches"][0]["uuid"] == "note-search-2");
+        AB_CHECK(tag_json["count"].get<int>() >= 1);
+        AB_CHECK(tag_json["matches"][0]["uuid"] == "note-search-2");
 
         // 3. GET /api/v1/node/:id/links
         auto res_links = cli.Get("/api/v1/node/note-search-1/links?direction=both");
-        ASOS_CHECK(res_links && res_links->status == 200);
+        AB_CHECK(res_links && res_links->status == 200);
         auto links_json = nlohmann::json::parse(res_links->body);
-        ASOS_CHECK(links_json["uuid"] == "note-search-1");
-        ASOS_CHECK(links_json["inbound"].size() == 1);
-        ASOS_CHECK(links_json["inbound"][0]["source"] == "note-search-2");
-        ASOS_CHECK(links_json["inbound"][0]["relation"] == rel::EXTENDS);
-        ASOS_CHECK(links_json["inbound"][0]["statement"] == "Recursion in Neural Computation");
+        AB_CHECK(links_json["uuid"] == "note-search-1");
+        AB_CHECK(links_json["inbound"].size() == 1);
+        AB_CHECK(links_json["inbound"][0]["source"] == "note-search-2");
+        AB_CHECK(links_json["inbound"][0]["relation"] == rel::EXTENDS);
+        AB_CHECK(links_json["inbound"][0]["statement"] == "Recursion in Neural Computation");
 
         // 4. POST /api/v1/graph/bundle (rich deserialization)
         nlohmann::json bundle = {
@@ -986,23 +1000,23 @@ void test_api_search_and_links() {
         };
 
         auto res_bundle = cli.Post("/api/v1/graph/bundle", bundle.dump(), "application/json");
-        ASOS_CHECK(res_bundle && res_bundle->status == 200);
+        AB_CHECK(res_bundle && res_bundle->status == 200);
 
         store->wait_all_shards();
 
         // Verify bundle created the rich atom
         auto res_get_node = cli.Get("/api/v1/node/recipe-bundle-1");
-        ASOS_CHECK(res_get_node && res_get_node->status == 200);
+        AB_CHECK(res_get_node && res_get_node->status == 200);
         auto node_json = nlohmann::json::parse(res_get_node->body);
-        ASOS_CHECK(node_json["uuid"] == "recipe-bundle-1");
-        ASOS_CHECK(node_json["statement"] == "Rich Bundled Espresso Torta");
-        ASOS_CHECK(node_json["items"].size() == 1);
-        ASOS_CHECK(node_json["items"][0]["name"] == "Dark Chocolate");
-        ASOS_CHECK(node_json["steps"].size() == 1);
-        ASOS_CHECK(node_json["steps"][0]["step_number"] == 1);
-        ASOS_CHECK(node_json["metrics"].size() == 1);
-        ASOS_CHECK(node_json["metrics"][0]["name"] == "baking_temp");
-        ASOS_CHECK(node_json["attributes"]["difficulty"] == "Easy");
+        AB_CHECK(node_json["uuid"] == "recipe-bundle-1");
+        AB_CHECK(node_json["statement"] == "Rich Bundled Espresso Torta");
+        AB_CHECK(node_json["items"].size() == 1);
+        AB_CHECK(node_json["items"][0]["name"] == "Dark Chocolate");
+        AB_CHECK(node_json["steps"].size() == 1);
+        AB_CHECK(node_json["steps"][0]["step_number"] == 1);
+        AB_CHECK(node_json["metrics"].size() == 1);
+        AB_CHECK(node_json["metrics"][0]["name"] == "baking_temp");
+        AB_CHECK(node_json["attributes"]["difficulty"] == "Easy");
 
         // 4b. Test POST /api/v1/graph/bundle error handling (missing/invalid atoms array)
         nlohmann::json bad_bundle = {
@@ -1010,8 +1024,8 @@ void test_api_search_and_links() {
             {"agent_id", "agent-bundle"}
         };
         auto res_bad_bundle = cli.Post("/api/v1/graph/bundle", bad_bundle.dump(), "application/json");
-        ASOS_CHECK(res_bad_bundle && res_bad_bundle->status == 400);
-        ASOS_CHECK(res_bad_bundle->body == "Error: Missing atoms array");
+        AB_CHECK(res_bad_bundle && res_bad_bundle->status == 400);
+        AB_CHECK(res_bad_bundle->body == "Error: Missing atoms array");
 
         // 5. Multi-Tenancy ACL Verification
         // Commit a tenant-isolated note with X-Active-User: tenant-alice
@@ -1029,34 +1043,34 @@ void test_api_search_and_links() {
         };
         httplib::Headers alice_headers = {{"X-Active-User", "tenant-alice"}};
         auto res_alice = cli.Post("/api/v1/graph/bundle", alice_headers, alice_bundle.dump(), "application/json");
-        ASOS_CHECK(res_alice && res_alice->status == 200);
+        AB_CHECK(res_alice && res_alice->status == 200);
 
         store->wait_all_shards();
 
         // Bob queries GET /api/v1/search with X-Active-User: tenant-bob
         httplib::Headers bob_headers = {{"X-Active-User", "tenant-bob"}};
         auto res_bob_search = cli.Get("/api/v1/search?q=Confidential", bob_headers);
-        ASOS_CHECK(res_bob_search && res_bob_search->status == 200);
+        AB_CHECK(res_bob_search && res_bob_search->status == 200);
         auto bob_search_json = nlohmann::json::parse(res_bob_search->body);
         for (const auto& match : bob_search_json["matches"]) {
-            ASOS_CHECK(match["uuid"] != "note-alice-secret-1");
+            AB_CHECK(match["uuid"] != "note-alice-secret-1");
         }
 
         // Bob queries GET /api/v1/node/:id/links for Alice's note - assert 404 / access denied
         auto res_bob_links = cli.Get("/api/v1/node/note-alice-secret-1/links", bob_headers);
-        ASOS_CHECK(res_bob_links && res_bob_links->status == 404);
+        AB_CHECK(res_bob_links && res_bob_links->status == 404);
 
         // Non-existent node query should also return 404 Not Found
         auto res_missing_links = cli.Get("/api/v1/node/nonexistent-node-12345/links");
-        ASOS_CHECK(res_missing_links && res_missing_links->status == 404);
+        AB_CHECK(res_missing_links && res_missing_links->status == 404);
 
         // Alice queries GET /api/v1/node/:id/links for her note - should succeed (200)
         auto res_alice_links = cli.Get("/api/v1/node/note-alice-secret-1/links", alice_headers);
-        ASOS_CHECK(res_alice_links && res_alice_links->status == 200);
+        AB_CHECK(res_alice_links && res_alice_links->status == 200);
 
         ApiServer::instance().stop();
     }
-#undef ASOS_CHECK
+#undef AB_CHECK
     std::filesystem::remove_all(db_dir);
     std::cout << "[Test] API Search and Node Links Verification PASSED" << std::endl;
 }
@@ -1260,12 +1274,12 @@ void test_multi_surface_provenance(Blackboard& bb) {
     std::cout << "[Test] Multi-Surface Origin Provenance Verification PASSED" << std::endl;
 }
 
-void test_token_auth_and_roles(asos::Blackboard& bb) {
+void test_token_auth_and_roles(ab::Blackboard& bb) {
     std::cout << "\n[Test] Starting Token Authentication & RBAC Verification..." << std::endl;
     
     // Check default auth mode
     {
-        asos::Blackboard bb_default("test_default_auth_db", 99);
+        ab::Blackboard bb_default("test_default_auth_db", 99);
         assert(bb_default.get_auth_mode() == "trusted_network");
     }
     std::filesystem::remove_all("test_default_auth_db");
@@ -1355,7 +1369,7 @@ void test_review_fixes() {
 
     // 1. UID Hash Collision Guard (Task 5)
     {
-        asos::Blackboard bb("test_collision_db", 20);
+        ab::Blackboard bb("test_collision_db", 20);
         // Ensure get_user_uid never returns 0 or 0xFFFFFFFF
         assert(bb.get_user_uid("") != 0 && bb.get_user_uid("") != 0xFFFFFFFF);
         assert(bb.get_user_uid("test") != 0 && bb.get_user_uid("test") != 0xFFFFFFFF);
@@ -1367,15 +1381,15 @@ void test_review_fixes() {
     std::string test_db = "test_persistence_registry_db";
     std::filesystem::remove_all(test_db);
     {
-        asos::Blackboard bb1(test_db, 21);
-        assert(bb1.register_token("tok_alice_123", "alice", "curator"));
-        assert(bb1.register_token("tok_bob_456", "bob", "developer"));
+        ab::Blackboard bb1(test_db, 21);
+        assert(bb1.register_token("ab_tok_alice_123", "alice", "curator"));
+        assert(bb1.register_token("ab_tok_bob_456", "bob", "developer"));
         auto users = bb1.get_registered_users();
         assert(users.size() == 2);
     }
     // Reopen Blackboard on same db_path (simulating daemon restart)
     {
-        asos::Blackboard bb2(test_db, 21);
+        ab::Blackboard bb2(test_db, 21);
         auto users = bb2.get_registered_users();
         assert(users.size() == 2);
         bool found_alice = false, found_bob = false;
@@ -1390,9 +1404,9 @@ void test_review_fixes() {
     {
         uint32_t alice_uid = 0;
         {
-            asos::Blackboard bb_acl1(test_db, 21);
+            ab::Blackboard bb_acl1(test_db, 21);
             alice_uid = bb_acl1.get_user_uid("alice");
-            asos::CpbEntry atom;
+            ab::CpbEntry atom;
             atom.header.uuid = "atom-alice-persistent-1";
             atom.header.origin.user_id = "alice";
             atom.header.origin.project_id = "proj-alice";
@@ -1401,8 +1415,8 @@ void test_review_fixes() {
         }
         // Restart daemon: in-memory ACLs wiped in CredentialManager
         {
-            asos::Blackboard bb_acl2(test_db, 21);
-            asos::CpbEntry atom_update;
+            ab::Blackboard bb_acl2(test_db, 21);
+            ab::CpbEntry atom_update;
             atom_update.header.uuid = "atom-alice-persistent-1";
             atom_update.header.origin.user_id = "alice";
             atom_update.header.origin.project_id = "proj-alice";
@@ -1418,6 +1432,7 @@ void test_review_fixes() {
 
 int main() {
     try {
+        std::cout << "[Test] Starting Agentic Blackboard Verification..." << std::endl;
         test_identity_integrity();
         test_semantic_merge();
         test_sre_metrics();
@@ -1444,7 +1459,7 @@ int main() {
         }
         std::filesystem::remove_all("test_token_db");
         test_review_fixes();
-        std::cout << "\n[SUCCESS] All ASOS Verification Tests Passed!" << std::endl;
+        std::cout << "\n[SUCCESS] All Agentic Blackboard Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "[Test] ERROR: Catch-all exception: " << e.what() << std::endl;
