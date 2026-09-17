@@ -97,10 +97,10 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     CpbEntry adjusted = entry;
     std::cout << "[Blackboard] commit_cpb_entry called for statement: " << adjusted.payload.statement << std::endl;
 
-    // ORPHAN PREVENTION: Every atom must be anchored to both an Agent and a Project
-    if (adjusted.header.origin.agent_id.empty() || adjusted.header.origin.project_id.empty()) {
+    // ORPHAN PREVENTION: Every atom must be anchored to at least (user_id or agent_id) AND a Project
+    if ((adjusted.header.origin.user_id.empty() && adjusted.header.origin.agent_id.empty()) || adjusted.header.origin.project_id.empty()) {
         std::cerr << "[Blackboard] Rejecting Atom " << (adjusted.header.uuid.empty() ? "UNNAMED" : adjusted.header.uuid)
-                  << ": Missing mandatory anchors (Agent AND Project required)." << std::endl;
+                  << ": Missing mandatory anchors (User/Agent AND Project required)." << std::endl;
         return false;
     }
 
@@ -118,14 +118,44 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     std::string author_name = author_agent;
     if (author_agent.starts_with("identity:")) {
         author_name = author_agent.substr(9);
+    } else if (author_agent.starts_with("agent:")) {
+        author_name = author_agent.substr(6);
+    } else if (author_agent.starts_with("user:")) {
+        author_name = author_agent.substr(5);
+    }
+
+    std::string user_id = adjusted.header.origin.user_id;
+    std::string user_name = user_id;
+    if (user_id.starts_with("identity:")) {
+        user_name = user_id.substr(9);
+    } else if (user_id.starts_with("user:")) {
+        user_name = user_id.substr(5);
+    } else if (user_id.starts_with("agent:")) {
+        user_name = user_id.substr(6);
     }
 
     // Security check 1: Ensure user is not impersonating someone else
-    if (principal_id != 0 && get_user_uid(author_name) != principal_id) {
-        std::cerr << "[Blackboard] Rejecting Atom " << adjusted.header.uuid 
-                  << ": Access Denied (Principal ID " << principal_id 
-                  << " cannot write on behalf of agent " << author_name << ")" << std::endl;
-        return false;
+    if (principal_id != 0) {
+        bool authorized = false;
+        if (!author_name.empty() && get_user_uid(author_name) == principal_id) {
+            authorized = true;
+        }
+        if (!author_agent.empty() && author_agent != author_name && get_user_uid(author_agent) == principal_id) {
+            authorized = true;
+        }
+        if (!user_name.empty() && get_user_uid(user_name) == principal_id) {
+            authorized = true;
+        }
+        if (!user_id.empty() && user_id != user_name && get_user_uid(user_id) == principal_id) {
+            authorized = true;
+        }
+        if (!authorized) {
+            std::cerr << "[Blackboard] Rejecting Atom " << adjusted.header.uuid 
+                      << ": Access Denied (Principal ID " << principal_id 
+                      << " cannot write on behalf of agent " << author_name 
+                      << " or user " << user_id << ")" << std::endl;
+            return false;
+        }
     }
 
     auto key_uuid = engine_->get_resolver().parse_uuid(adjusted.header.uuid);
@@ -179,6 +209,9 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     
     // IDENTITY-CENTRIC ENFORCEMENT: Ensure Links (No Orphans)
     auto author_id = adjusted.header.origin.agent_id;
+    if (author_id.empty()) {
+        author_id = adjusted.header.origin.user_id;
+    }
     auto project_id = adjusted.header.origin.project_id;
 
     // 1. Link Author (Identity)

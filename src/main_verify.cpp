@@ -1061,6 +1061,49 @@ void test_api_search_and_links() {
     std::cout << "[Test] API Search and Node Links Verification PASSED" << std::endl;
 }
 
+void test_multi_surface_provenance(Blackboard& bb) {
+    std::cout << "[Test] Starting Multi-Surface Origin Provenance Verification..." << std::endl;
+    auto* store = bb.get_engine()->get_store();
+
+    CpbEntry atom;
+    atom.header.uuid = "atom-provenance-1";
+    atom.header.origin.user_id = "user:jason";
+    atom.header.origin.agent_id = "agent:spatial-librarian";
+    atom.header.origin.surface_id = "surface:multitouch-table-01";
+    atom.header.origin.surface_type = "tabletop";
+    atom.header.origin.project_id = "proj-quantum-optics";
+    atom.header.origin.context_id = "ctx:lab-session-42";
+    atom.header.origin.session_id = "sess-alpha-99";
+    atom.payload.statement = "Multi-surface provenance test atom";
+
+    bool committed = bb.commit_cpb_entry(atom);
+    if (!committed) {
+        std::cerr << "[Test] FAILED: Could not commit multi-surface provenance atom" << std::endl;
+        exit(1);
+    }
+    store->wait_all_shards();
+
+    auto key = std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("atom-provenance-1")));
+    auto raw_buf = store->get(key);
+    if (raw_buf.size() == 0) {
+        std::cerr << "[Test] FAILED: Could not retrieve atom-provenance-1 from store" << std::endl;
+        exit(1);
+    }
+
+    CpbEntry fetched = CpbEntry::deserialize(raw_buf);
+    if (fetched.header.origin.user_id != "user:jason" ||
+        fetched.header.origin.agent_id != "agent:spatial-librarian" ||
+        fetched.header.origin.surface_id != "surface:multitouch-table-01" ||
+        fetched.header.origin.surface_type != "tabletop" ||
+        fetched.header.origin.project_id != "proj-quantum-optics" ||
+        fetched.header.origin.context_id != "ctx:lab-session-42" ||
+        fetched.header.origin.session_id != "sess-alpha-99") {
+        std::cerr << "[Test] FAILED: Origin fields mismatch in multi-surface provenance test" << std::endl;
+        exit(1);
+    }
+    std::cout << "[Test] Multi-Surface Origin Provenance Verification PASSED" << std::endl;
+}
+
 int main() {
     try {
         test_identity_integrity();
@@ -1076,6 +1119,12 @@ int main() {
         test_universal_catalog_recipe();
         test_rdf_export_notes_and_recipes();
         test_api_search_and_links();
+        std::filesystem::remove_all("test_provenance_db");
+        {
+            Blackboard bb("test_provenance_db", 13);
+            test_multi_surface_provenance(bb);
+        }
+        std::filesystem::remove_all("test_provenance_db");
         std::cout << "\n[SUCCESS] All ASOS Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {
