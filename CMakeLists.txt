@@ -12,6 +12,7 @@ set(L3KVG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../l3kvg)
 add_subdirectory(${L3KVG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/l3kvg)
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # Include directories
 include_directories(
@@ -43,6 +44,7 @@ target_link_libraries(asos_engine PUBLIC
     lite3client
     libzmq
     cppzmq
+    OpenSSL::Crypto
 )
 
 # ASOS Daemon

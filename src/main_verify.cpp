@@ -1252,6 +1252,80 @@ void test_multi_surface_provenance(Blackboard& bb) {
     std::cout << "[Test] Multi-Surface Origin Provenance Verification PASSED" << std::endl;
 }
 
+void test_token_auth_and_roles(asos::Blackboard& bb) {
+    std::cout << "\n[Test] Starting Token Authentication & RBAC Verification..." << std::endl;
+    
+    // Check default auth mode
+    {
+        asos::Blackboard bb_default("test_default_auth_db", 99);
+        assert(bb_default.get_auth_mode() == "trusted_network");
+    }
+    std::filesystem::remove_all("test_default_auth_db");
+
+    bb.set_auth_mode("token");
+    assert(bb.get_auth_mode() == "token");
+    
+    // Register admin, curator, and agent tokens
+    std::string admin_tok = "ab_adm_0123456789abcdef0123456789abcdef";
+    std::string curator_tok = "ab_usr_fedcba9876543210fedcba9876543210";
+    
+    assert(bb.register_token(admin_tok, "jason", "admin"));
+    assert(bb.register_token(curator_tok, "alice", "curator"));
+    
+    std::string user, role;
+    assert(bb.validate_token(admin_tok, user, role));
+    assert(user == "jason" && role == "admin");
+    
+    assert(bb.validate_token(curator_tok, user, role));
+    assert(user == "alice" && role == "curator");
+    
+    // Invalid token must fail
+    assert(!bb.validate_token("ab_usr_invalid_token", user, role));
+
+    // ApiServer HTTP 401 rejection on unauthenticated / invalid token requests
+    int test_port = 18086;
+    ApiServer::instance().start(&bb, test_port);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    httplib::Client cli("127.0.0.1", test_port);
+
+    // 1. Unauthenticated request must return 401 Unauthorized
+    auto res_unauth = cli.Post("/api/v1/query", "{}", "application/json");
+    assert(res_unauth && res_unauth->status == 401);
+    auto unauth_json = nlohmann::json::parse(res_unauth->body);
+    assert(unauth_json["error"] == "Unauthorized");
+    assert(unauth_json["message"] == "Valid Bearer token required");
+
+    // 2. Invalid Bearer token must return 401
+    httplib::Headers bad_bearer = {{"Authorization", "Bearer ab_usr_invalid_token"}};
+    auto res_bad_bearer = cli.Post("/api/v1/query", bad_bearer, "{}", "application/json");
+    assert(res_bad_bearer && res_bad_bearer->status == 401);
+
+    // 3. Invalid X-AB-Key must return 401
+    httplib::Headers bad_key = {{"X-AB-Key", "ab_usr_invalid_token"}};
+    auto res_bad_key = cli.Post("/api/v1/query", bad_key, "{}", "application/json");
+    assert(res_bad_key && res_bad_key->status == 401);
+
+    // 4. Fallback attempt with only X-Active-User in token mode must return 401
+    httplib::Headers user_only = {{"X-Active-User", "jason"}};
+    auto res_user_only = cli.Post("/api/v1/query", user_only, "{}", "application/json");
+    assert(res_user_only && res_user_only->status == 401);
+
+    // 5. Valid Bearer token request must succeed (200)
+    httplib::Headers valid_bearer = {{"Authorization", "Bearer " + admin_tok}};
+    auto res_valid_bearer = cli.Post("/api/v1/query", valid_bearer, "{}", "application/json");
+    assert(res_valid_bearer && res_valid_bearer->status == 200);
+
+    // 6. Valid X-AB-Key request must succeed (200)
+    httplib::Headers valid_key = {{"X-AB-Key", curator_tok}};
+    auto res_valid_key = cli.Post("/api/v1/query", valid_key, "{}", "application/json");
+    assert(res_valid_key && res_valid_key->status == 200);
+
+    ApiServer::instance().stop();
+    
+    std::cout << "[Test] Token Authentication & RBAC Verification PASSED" << std::endl;
+}
+
 int main() {
     try {
         test_identity_integrity();
@@ -1273,6 +1347,12 @@ int main() {
             test_multi_surface_provenance(bb);
         }
         std::filesystem::remove_all("test_provenance_db");
+        std::filesystem::remove_all("test_token_db");
+        {
+            Blackboard bb("test_token_db", 14);
+            test_token_auth_and_roles(bb);
+        }
+        std::filesystem::remove_all("test_token_db");
         std::cout << "\n[SUCCESS] All ASOS Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {

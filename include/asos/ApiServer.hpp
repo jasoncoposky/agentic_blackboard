@@ -6,6 +6,11 @@
 #include <atomic>
 #include <thread>
 
+namespace httplib {
+class Request;
+class Response;
+}
+
 namespace asos {
 
 /**
@@ -34,6 +39,9 @@ private:
     ~ApiServer();
 
     void listen_loop();
+    bool authenticate_request(const httplib::Request& req, httplib::Response& res,
+                              uint32_t& principal_id, std::string& authenticated_user,
+                              std::string& authenticated_role);
 
     std::atomic<bool> running_;
     std::thread thread_;

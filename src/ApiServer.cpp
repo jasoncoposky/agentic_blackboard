@@ -16,6 +16,44 @@
 
 using json = nlohmann::json;
 
+namespace {
+
+std::string extract_token(const httplib::Request& req) {
+    if (req.has_header("Authorization")) {
+        std::string auth = req.get_header_value("Authorization");
+        if (auth.size() >= 7) {
+            std::string prefix = auth.substr(0, 7);
+            std::string lower_prefix = prefix;
+            std::transform(lower_prefix.begin(), lower_prefix.end(), lower_prefix.begin(), ::tolower);
+            if (lower_prefix == "bearer ") {
+                std::string tok = auth.substr(7);
+                size_t start = tok.find_first_not_of(" \t\r\n");
+                size_t end = tok.find_last_not_of(" \t\r\n");
+                if (start != std::string::npos && end != std::string::npos) {
+                    return tok.substr(start, end - start + 1);
+                }
+                return "";
+            }
+        }
+        size_t start = auth.find_first_not_of(" \t\r\n");
+        size_t end = auth.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos) {
+            return auth.substr(start, end - start + 1);
+        }
+    }
+    if (req.has_header("X-AB-Key")) {
+        std::string key = req.get_header_value("X-AB-Key");
+        size_t start = key.find_first_not_of(" \t\r\n");
+        size_t end = key.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos) {
+            return key.substr(start, end - start + 1);
+        }
+    }
+    return "";
+}
+
+} // anonymous namespace
+
 namespace asos {
 
 static std::atomic<httplib::Server*> s_server{nullptr};
@@ -43,6 +81,53 @@ void ApiServer::stop() {
     s_server.store(nullptr);
 }
 
+bool ApiServer::authenticate_request(const httplib::Request& req, httplib::Response& res,
+                                     uint32_t& principal_id, std::string& authenticated_user,
+                                     std::string& authenticated_role) {
+    std::string auth_mode = blackboard_ ? blackboard_->get_auth_mode() : "trusted_network";
+    if (auth_mode == "token") {
+        std::string token = extract_token(req);
+        if (token.empty() || !blackboard_->validate_token(token, authenticated_user, authenticated_role)) {
+            res.status = 401;
+            json err = {
+                {"error", "Unauthorized"},
+                {"message", "Valid Bearer token required"}
+            };
+            res.set_content(err.dump(), "application/json");
+            return false;
+        }
+        blackboard_->register_user_credentials(authenticated_user, authenticated_user + "-key");
+        if (authenticated_user == "admin" || authenticated_role == "admin") {
+            principal_id = 0;
+        } else {
+            principal_id = blackboard_->get_user_uid(authenticated_user);
+        }
+        return true;
+    } else {
+        // trusted_network mode (fallback)
+        std::string token = extract_token(req);
+        if (!token.empty() && blackboard_->validate_token(token, authenticated_user, authenticated_role)) {
+            blackboard_->register_user_credentials(authenticated_user, authenticated_user + "-key");
+            if (authenticated_user == "admin" || authenticated_role == "admin") {
+                principal_id = 0;
+            } else {
+                principal_id = blackboard_->get_user_uid(authenticated_user);
+            }
+            return true;
+        }
+
+        std::string active_user = req.get_header_value("X-Active-User");
+        authenticated_user = active_user;
+        authenticated_role = (active_user == "admin") ? "admin" : "user";
+        principal_id = 0;
+        if (!active_user.empty() && active_user != "admin") {
+            blackboard_->register_user_credentials(active_user, active_user + "-key");
+            principal_id = blackboard_->get_user_uid(active_user);
+        }
+        return true;
+    }
+}
+
 void ApiServer::listen_loop() {
     httplib::Server svr;
     s_server.store(&svr);
@@ -51,7 +136,7 @@ void ApiServer::listen_loop() {
     svr.set_default_headers({
         {"Access-Control-Allow-Origin", "*"},
         {"Access-Control-Allow-Methods", "GET, POST, OPTIONS"},
-        {"Access-Control-Allow-Headers", "Content-Type, X-Active-User"}
+        {"Access-Control-Allow-Headers", "Content-Type, Authorization, X-Active-User, X-AB-Key"}
     });
 
     svr.Options(R"(/.*)", [](const httplib::Request&, httplib::Response& res) {
@@ -136,11 +221,11 @@ void ApiServer::listen_loop() {
                 return;
             }
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
 
             int count = 0;
@@ -330,11 +415,11 @@ void ApiServer::listen_loop() {
             auto j = json::parse(req.body);
             auto engine = blackboard_->get_engine();
             
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
 
             auto q = engine->query();
@@ -394,11 +479,11 @@ void ApiServer::listen_loop() {
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
             
             auto key_uuid = engine->get_resolver().parse_uuid(uuid);
@@ -481,11 +566,11 @@ void ApiServer::listen_loop() {
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
 
             std::string q = req.get_param_value("q");
@@ -628,11 +713,11 @@ void ApiServer::listen_loop() {
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
             
             json response;
@@ -799,11 +884,11 @@ void ApiServer::listen_loop() {
             std::transform(format_lower.begin(), format_lower.end(), format_lower.begin(),
                            [](unsigned char c) { return std::tolower(c); });
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
 
             if (format_lower.empty() || format_lower == "turtle" || format_lower == "ttl" || format_lower == "text/turtle") {
@@ -830,11 +915,11 @@ void ApiServer::listen_loop() {
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
 
             std::string key = std::string(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(id)));
@@ -882,11 +967,11 @@ void ApiServer::listen_loop() {
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
 
             std::string db_key = std::string(l3kvg::KeyBuilder::node_key(engine->get_resolver().parse_uuid(uuid)));
@@ -968,11 +1053,11 @@ void ApiServer::listen_loop() {
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
 
-            std::string active_user = req.get_header_value("X-Active-User");
+            std::string active_user;
+            std::string auth_role;
             uint32_t principal_id = 0;
-            if (!active_user.empty() && active_user != "admin") {
-                blackboard_->register_user_credentials(active_user, active_user + "-key");
-                principal_id = blackboard_->get_user_uid(active_user);
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
             }
 
             std::string key = std::string(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(uuid)));

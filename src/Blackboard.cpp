@@ -3,13 +3,39 @@
 #include "asos/DeltaEngine.hpp"
 #include "asos/Monitor.hpp"
 #include "buffer.hpp"
+#include "json.hpp"
 #include "L3KVG/KeyBuilder.hpp"
 #include "L3KVG/Node.hpp"
 #include "engine/store.hpp"
 #include "engine/credential_manager.hpp"
 #include <algorithm>
+#include <openssl/evp.h>
+#include <iomanip>
+#include <sstream>
+#include <chrono>
+#include <nlohmann/json.hpp>
 
 namespace {
+
+std::string hash_token_sha256(const std::string& token) {
+    const std::string salt = "asos_salt_token_v1:";
+    std::string salted = salt + token;
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int len = 0;
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return "";
+    EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
+    EVP_DigestUpdate(ctx, salted.data(), salted.size());
+    EVP_DigestFinal_ex(ctx, hash, &len);
+    EVP_MD_CTX_free(ctx);
+
+    std::ostringstream oss;
+    for (unsigned int i = 0; i < len; ++i) {
+        oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+    }
+    return oss.str();
+}
 
 std::string extract_uuid_from_buf(const lite3cpp::Buffer& buf) {
     if (buf.size() == 0) return "";
@@ -72,6 +98,78 @@ Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) {
 }
 
 Blackboard::~Blackboard() = default;
+
+void Blackboard::set_auth_mode(const std::string& mode) {
+    auth_mode_ = mode;
+}
+
+std::string Blackboard::get_auth_mode() const {
+    return auth_mode_;
+}
+
+bool Blackboard::register_token(const std::string& token, const std::string& user, const std::string& role) {
+    if (token.empty() || user.empty()) return false;
+
+    // Ensure user credentials exist in L3KV credential manager so get_user_uid(user) works
+    register_user_credentials(user, user + "-key");
+    uint32_t uid = get_user_uid(user);
+    auto* store = engine_->get_store();
+    if (role == "admin" || user == "admin") {
+        store->credentials().set_acl(uid, "*", l3kv::Permission::READ | l3kv::Permission::WRITE | l3kv::Permission::ADMIN);
+    } else {
+        store->credentials().set_acl(uid, "*", l3kv::Permission::READ | l3kv::Permission::WRITE);
+    }
+
+    // Salted SHA-256 token hashing
+    std::string token_hash = hash_token_sha256(token);
+    std::string db_key = "auth:token:" + token_hash;
+
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    nlohmann::json meta = {
+        {"username", user},
+        {"role", role},
+        {"created_at", now}
+    };
+
+    store->put(db_key, meta.dump());
+    store->wait_all_shards();
+    return true;
+}
+
+bool Blackboard::validate_token(const std::string& token, std::string& out_user, std::string& out_role) {
+    if (token.empty()) return false;
+
+    std::string token_hash = hash_token_sha256(token);
+    std::string db_key = "auth:token:" + token_hash;
+
+    auto* store = engine_->get_store();
+    lite3cpp::Buffer buf = store->get(db_key);
+    if (buf.size() == 0) return false;
+
+    std::string u;
+    std::string r;
+    try {
+        u = std::string(buf.get_str(0, "username"));
+        r = std::string(buf.get_str(0, "role"));
+    } catch (...) {}
+
+    if (u.empty()) {
+        try {
+            std::string js = lite3cpp::lite3_json::to_json_string(buf, 0);
+            auto j = nlohmann::json::parse(js);
+            u = j.value("username", "");
+            r = j.value("role", "");
+        } catch (...) {}
+    }
+
+    if (u.empty()) return false;
+
+    out_user = u;
+    out_role = r;
+    return true;
+}
 
 bool Blackboard::register_user_credentials(const std::string& username, const std::string& public_key) {
     uint32_t uid = get_user_uid(username);
