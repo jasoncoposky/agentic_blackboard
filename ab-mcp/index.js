@@ -603,7 +603,7 @@ Follow this workflow strictly:
 
 const server = new Server(
   {
-    name: "ab-mcp",
+    name: "agentic-blackboard",
     version: "0.4.0",
   },
   {

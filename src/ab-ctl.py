@@ -867,6 +867,7 @@ def build_mcp_server(connect_url: str, token: str | None):
             repo_root = Path(__file__).resolve().parent.parent
             skills_dir = (repo_root / "skills").resolve()
             skill_path = (skills_dir / clean_name / "SKILL.md").resolve()
+            skill_path.relative_to(skills_dir)
             if skill_path.is_file():
                 return skill_path.read_text(encoding="utf-8")
             system_path = Path(f"/usr/share/agentic-blackboard/skills/{clean_name}/SKILL.md")
