@@ -1,0 +1,19 @@
+[Unit]
+Description=Agentic Blackboard Substrate Daemon
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blackboard
+Group=blackboard
+ExecStart=/usr/bin/agentic-blackboardd --config=/etc/agentic-blackboard/blackboard.conf
+Restart=always
+RestartSec=5s
+LimitNOFILE=65536
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/agentic-blackboard /var/log/agentic-blackboard
+
+[Install]
+WantedBy=multi-user.target

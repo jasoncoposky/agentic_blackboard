@@ -1,4 +1,6 @@
 #include <iostream>
+#include <fstream>
+#include <filesystem>
 #include <csignal>
 #include <atomic>
 #include <thread>
@@ -37,6 +39,61 @@ int main(int argc, char* argv[]) {
             else if (arg.find("--auth-mode=") == 0) auth_mode = arg.substr(12);
             else if (arg.find("--admin-token=") == 0) admin_token = arg.substr(14);
             else if (arg.find("--port=") == 0) port = std::stoi(arg.substr(7));
+            else if (arg.find("--config=") == 0) {
+                std::string conf_file = arg.substr(9);
+                std::ifstream cf(conf_file);
+                if (cf.is_open()) {
+                    std::string line;
+                    while (std::getline(cf, line)) {
+                        size_t start = line.find_first_not_of(" \t\r\n");
+                        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
+                        size_t end = line.find_last_not_of(" \t\r\n");
+                        std::string trimmed = line.substr(start, end - start + 1);
+                        if (trimmed.front() == '[' && trimmed.back() == ']') continue;
+                        auto eq = trimmed.find('=');
+                        if (eq != std::string::npos) {
+                            std::string k = trimmed.substr(0, eq);
+                            std::string v = trimmed.substr(eq + 1);
+                            size_t ks = k.find_first_not_of(" \t");
+                            size_t ke = k.find_last_not_of(" \t");
+                            if (ks != std::string::npos) k = k.substr(ks, ke - ks + 1);
+                            size_t vs = v.find_first_not_of(" \t");
+                            size_t ve = v.find_last_not_of(" \t");
+                            if (vs != std::string::npos) v = v.substr(vs, ve - vs + 1);
+
+                            if (k == "port") port = std::stoi(v);
+                            else if (k == "mode" || k == "auth_mode") auth_mode = v;
+                            else if (k == "data_dir") {
+                                db_path = v + "/asos_db";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Auto-discover admin token if not passed directly
+    if (admin_token.empty()) {
+        std::string parent_dir = "asos_db";
+        auto pos = db_path.find_last_of("/\\");
+        if (pos != std::string::npos) {
+            parent_dir = db_path.substr(0, pos);
+        }
+        std::vector<std::string> token_candidates = {
+            parent_dir + "/admin.token",
+            "/var/lib/agentic-blackboard/admin.token",
+            "/etc/agentic-blackboard/admin.token"
+        };
+        for (const auto& tc : token_candidates) {
+            std::ifstream tf(tc);
+            if (tf.is_open()) {
+                std::string tok;
+                if (tf >> tok && !tok.empty()) {
+                    admin_token = tok;
+                    break;
+                }
+            }
         }
     }
 

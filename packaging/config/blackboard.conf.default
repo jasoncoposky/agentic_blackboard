@@ -1,0 +1,14 @@
+# Agentic Blackboard Configuration (Reference / Default)
+# Stock configuration template for ASOS ambient substrate daemon
+
+[server]
+port = 8085
+host = 0.0.0.0
+
+[auth]
+# Authentication mode: 'token' (default, production) or 'trusted_network' (isolated subnets)
+mode = token
+
+[storage]
+# Persistent graph database and credential storage directory
+data_dir = /var/lib/agentic-blackboard
