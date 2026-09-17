@@ -9,12 +9,12 @@ Validates the complete end-to-end cycle for Project Nucleus Atmosphere agent too
   4. Creates catalog recipe entry (create_catalog_entry) with items, steps, metrics
   5. Inspects backlinks (get_node_links) and verifies inbound and outbound synapses
   6. Exports W3C RDF Turtle (export_graph_rdf) and asserts schema:Recipe, schema:citation, and rel predicates
-  7. Reads skill resources via MCP (asos://skills/commonplace-curation, asos://skills/procedural-catalog)
+  7. Reads skill resources via MCP (ab://skills/commonplace-curation, ab://skills/procedural-catalog)
   8. Verifies multi-tenancy ACL enforcement across search, links, and export
   9. Verifies both Python FastMCP and Node.js MCP tools against the live daemon!
 
 Lifecycle:
-  - Connects to existing ASOS daemon or starts build/asos_daemon on port 8085
+  - Connects to existing Agentic Blackboard daemon or starts build/agentic-blackboardd on port 8085
   - Cleans up child processes upon exit
   - Exits with 0 on total success
 """
@@ -32,7 +32,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 # Import MCP tools and FastMCP instance
-from asos_mcp_server import (
+from ab_mcp_server import (
     mcp,
     ensure_node,
     commit_knowledge_bundle,
@@ -46,7 +46,7 @@ from asos_mcp_server import (
     get_skill,
     curate_note,
     author_catalog,
-    ASOS_API_URL,
+    AB_API_URL,
     DEFAULT_TIMEOUT,
     RDF_TIMEOUT,
 )
@@ -55,22 +55,22 @@ started_process = None
 
 
 async def ensure_backend():
-    """Ensure the ASOS daemon is running and reachable."""
+    """Ensure the Agentic Blackboard daemon is running and reachable."""
     global started_process
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{ASOS_API_URL}/schema", timeout=2.0)
+            resp = await client.get(f"{AB_API_URL}/schema", timeout=2.0)
             if resp.status_code == 200:
-                print(f"[DAEMON] Connected to running ASOS daemon at {ASOS_API_URL}")
+                print(f"[DAEMON] Connected to running Agentic Blackboard daemon at {AB_API_URL}")
                 return
     except Exception:
         pass
 
-    daemon_bin = REPO_ROOT / "build" / "asos_daemon"
+    daemon_bin = REPO_ROOT / "build" / "agentic-blackboardd"
     if not daemon_bin.exists():
         raise RuntimeError(f"Daemon binary not found at {daemon_bin}. Run cmake build first!")
 
-    print(f"[DAEMON] Starting ASOS daemon: {daemon_bin}")
+    print(f"[DAEMON] Starting Agentic Blackboard daemon: {daemon_bin}")
     started_process = subprocess.Popen(
         [str(daemon_bin)],
         cwd=str(REPO_ROOT),
@@ -81,18 +81,18 @@ async def ensure_backend():
     # Wait up to 30 seconds for daemon to initialize
     for _ in range(150):
         if started_process and started_process.poll() is not None:
-            raise RuntimeError(f"ASOS daemon exited prematurely with code {started_process.returncode}")
+            raise RuntimeError(f"Agentic Blackboard daemon exited prematurely with code {started_process.returncode}")
         await asyncio.sleep(0.2)
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{ASOS_API_URL}/schema", timeout=1.0)
+                resp = await client.get(f"{AB_API_URL}/schema", timeout=1.0)
                 if resp.status_code == 200:
-                    print(f"[DAEMON] ASOS daemon initialized and responsive at {ASOS_API_URL}")
+                    print(f"[DAEMON] Agentic Blackboard daemon initialized and responsive at {AB_API_URL}")
                     return
         except Exception:
             pass
 
-    raise RuntimeError("Timed out waiting for ASOS daemon to start on port 8085.")
+    raise RuntimeError("Timed out waiting for Agentic Blackboard daemon to start on port 8085.")
 
 
 async def run_full_cycle():
@@ -330,47 +330,47 @@ async def run_full_cycle():
     print("-" * 70)
     rdf_text = await export_graph_rdf()
     assert "@prefix schema: <http://schema.org/>" in rdf_text, "Missing @prefix schema in RDF"
-    assert "@prefix asos: <http://asos.substrate.ai/schema#>" in rdf_text, "Missing @prefix asos in RDF"
+    assert "@prefix ab: <http://agenticblackboard.ai/schema#>" in rdf_text, "Missing @prefix ab in RDF"
     assert "schema:Recipe" in rdf_text, "Missing schema:Recipe in RDF export"
     assert "schema:citation" in rdf_text, "Missing schema:citation in RDF export"
     assert "schema:recipeIngredient" in rdf_text, "Missing schema:recipeIngredient in RDF export"
     assert "schema:recipeInstructions" in rdf_text, "Missing schema:recipeInstructions in RDF export"
 
     # Verify rel predicate mapping
-    assert "asos:pairsWith" in rdf_text, "Missing asos:pairsWith in RDF export"
+    assert "ab:pairsWith" in rdf_text, "Missing ab:pairsWith in RDF export"
     print(f"RDF Turtle export validated ({len(rdf_text)} bytes). Verified schema:Recipe, schema:citation, and rel predicates.")
     print("✓ Checkpoint 6 PASSED: W3C RDF Turtle ontology export fully asserted.")
 
     # =========================================================================
-    # Checkpoint 7: Reads skill resources via MCP (asos://skills/commonplace-curation, asos://skills/procedural-catalog)
+    # Checkpoint 7: Reads skill resources via MCP (ab://skills/commonplace-curation, ab://skills/procedural-catalog)
     # =========================================================================
     print("\n" + "-" * 70)
     print("CHECKPOINT 7: Reads skill resources via MCP (commonplace-curation, procedural-catalog)")
     print("-" * 70)
-    curation_res = await mcp.read_resource("asos://skills/commonplace-curation")
-    assert len(curation_res) > 0, "No content for asos://skills/commonplace-curation"
+    curation_res = await mcp.read_resource("ab://skills/commonplace-curation")
+    assert len(curation_res) > 0, "No content for ab://skills/commonplace-curation"
     curation_text = curation_res[0].content
     assert "# Commonplace Curation Skill" in curation_text, "Missing title in commonplace-curation skill"
     assert "commonplace-curation" in curation_text, "Missing name in commonplace-curation skill"
     assert "Atomic Notes" in curation_text, "Missing Atomic Notes section in commonplace-curation"
     assert "Reference" in curation_text, "Missing Reference section in commonplace-curation"
     assert "NoteLink" in curation_text, "Missing NoteLink section in commonplace-curation"
-    print(f"Read resource asos://skills/commonplace-curation: {len(curation_text)} bytes.")
+    print(f"Read resource ab://skills/commonplace-curation: {len(curation_text)} bytes.")
 
-    catalog_res = await mcp.read_resource("asos://skills/procedural-catalog")
-    assert len(catalog_res) > 0, "No content for asos://skills/procedural-catalog"
+    catalog_res = await mcp.read_resource("ab://skills/procedural-catalog")
+    assert len(catalog_res) > 0, "No content for ab://skills/procedural-catalog"
     catalog_text = catalog_res[0].content
     assert "# Procedural Catalog Skill" in catalog_text, "Missing title in procedural-catalog skill"
     assert "procedural-catalog" in catalog_text, "Missing name in procedural-catalog skill"
     assert "CatalogItem" in catalog_text, "Missing CatalogItem section in procedural-catalog"
     assert "CatalogStep" in catalog_text, "Missing CatalogStep section in procedural-catalog"
     assert "CatalogMetric" in catalog_text, "Missing CatalogMetric section in procedural-catalog"
-    print(f"Read resource asos://skills/procedural-catalog: {len(catalog_text)} bytes.")
+    print(f"Read resource ab://skills/procedural-catalog: {len(catalog_text)} bytes.")
 
     # Also verify knowledge-capture and schema resources
-    kc_res = await mcp.read_resource("asos://skills/knowledge-capture")
+    kc_res = await mcp.read_resource("ab://skills/knowledge-capture")
     assert len(kc_res) > 0 and "# Knowledge Capture Skill" in kc_res[0].content
-    schema_res = await mcp.read_resource("asos://schema")
+    schema_res = await mcp.read_resource("ab://schema")
     assert len(schema_res) > 0 and "knowledge_areas" in schema_res[0].content
 
     # Path traversal protection
@@ -472,7 +472,7 @@ async def run_full_cycle():
         print("Node.js stderr:\n", err_str)
         raise RuntimeError(f"Node.js MCP verification failed with returncode {proc.returncode}")
 
-    assert "ALL ASOS NODE.JS MCP VERIFICATION TESTS PASSED!" in out_str, "Node.js suite did not report full pass"
+    assert "ALL AGENTIC BLACKBOARD NODE.JS MCP VERIFICATION TESTS PASSED!" in out_str, "Node.js suite did not report full pass"
     print("✓ Checkpoint 9 PASSED: Dual Python FastMCP and Node.js MCP verified against the live daemon.")
 
     print("\n" + "=" * 70)
@@ -486,7 +486,7 @@ async def main():
         await run_full_cycle()
     finally:
         if started_process:
-            print("[CLEANUP] Stopping ASOS daemon process...")
+            print("[CLEANUP] Stopping Agentic Blackboard daemon process...")
             started_process.terminate()
             try:
                 started_process.wait(timeout=10)

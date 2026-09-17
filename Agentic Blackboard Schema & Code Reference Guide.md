@@ -1,4 +1,4 @@
-# **ASOS Schema Reference & Implementation Guide**
+# **Agentic Blackboard Schema Reference & Implementation Guide**
 
 ## **1\. Core Graph Schemas**
 

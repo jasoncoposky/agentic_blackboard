@@ -1,4 +1,4 @@
-# Design Spec: ASOS Atmosphere Agent Usage & MCP Commonplace Tooling
+# Design Spec: Agentic Blackboard Atmosphere Agent Usage & MCP Commonplace Tooling
 
 **Date**: 2026-09-16  
 **Status**: APPROVED  
@@ -8,15 +8,15 @@
 
 ## 1. Executive Summary & Vision
 
-The **Agentic Sovereign Orchestration Substrate (ASOS)** serves as the high-performance distributed blackboard and collective memory for agentic swarm intelligence and human life-long knowledge management. In earlier milestones, the **Universal Librarian Architecture** was implemented in C++ ([`include/asos/schema.hpp`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp) and [`src/Blackboard.cpp`](file:///home/darkfell/dev/agentic_blackboard/src/Blackboard.cpp)), establishing primitives for bibliographic citations ([`Reference`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp#L346)), dialectic inter-note synapses ([`NoteLink`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp#L394)), procedural catalog items and steps ([`CatalogItem`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp#L422), [`CatalogStep`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp#L456), [`CatalogMetric`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp#L490)), automatic graph edge projections, and W3C RDF Turtle serialization.
+The **Agentic Blackboard** serves as the high-performance distributed blackboard and collective memory for agentic swarm intelligence and human life-long knowledge management. In earlier milestones, the **Universal Librarian Architecture** was implemented in C++ ([`include/agentic_blackboard/schema.hpp`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp) and [`src/Blackboard.cpp`](file:///home/darkfell/dev/agentic_blackboard/src/Blackboard.cpp)), establishing primitives for bibliographic citations ([`Reference`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp#L346)), dialectic inter-note synapses ([`NoteLink`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp#L394)), procedural catalog items and steps ([`CatalogItem`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp#L422), [`CatalogStep`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp#L456), [`CatalogMetric`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp#L490)), automatic graph edge projections, and W3C RDF Turtle serialization.
 
 However, a rich substrate is only as effective as the agents' ability to discover it, navigate it, and contribute to it without causing graph entropy or duplicate node proliferation. Within the **Project Nucleus Atmosphere**, agents require:
 1. **Seamless Discovery**: Fast search across concepts, tags, and knowledge areas so agents find existing knowledge before authoring.
 2. **Duplicate Prevention**: Automated substrate-level idempotency and disciplined pre-flight search protocols preventing redundant clones.
 3. **Dialectic Graph Traversal**: High-level tools to inspect incoming backlinks and outgoing citations.
-4. **Self-Documenting Schema & Skills Delivery**: Dynamic runtime delivery of the ASOS schema and operational Markdown skills directly into agent context windows via Model Context Protocol (MCP) resources.
+4. **Self-Documenting Schema & Skills Delivery**: Dynamic runtime delivery of the Agentic Blackboard schema and operational Markdown skills directly into agent context windows via Model Context Protocol (MCP) resources.
 
-This specification details the end-to-end architecture bridging the C++ ASOS substrate to autonomous agents operating across the Atmosphere mesh via dual Python FastMCP and Node.js MCP server facades.
+This specification details the end-to-end architecture bridging the C++ Agentic Blackboard substrate to autonomous agents operating across the Atmosphere mesh via dual Python FastMCP and Node.js MCP server facades.
 
 ```mermaid
 flowchart TD
@@ -27,12 +27,12 @@ flowchart TD
     end
 
     subgraph McpLayer ["Model Context Protocol (MCP) Facade"]
-        FastMCP["asos_mcp_server.py (FastMCP)"]
-        NodeMCP["asos-mcp/index.js (@modelcontextprotocol/sdk)"]
-        McpResources["MCP Resources (asos://schema, asos://skills/{name})"]
+        FastMCP["ab_mcp_server.py (FastMCP)"]
+        NodeMCP["ab-mcp/index.js (@modelcontextprotocol/sdk)"]
+        McpResources["MCP Resources (ab://schema, ab://skills/{name})"]
     end
 
-    subgraph RestSubstrate ["ASOS Blackboard Substrate (C++20)"]
+    subgraph RestSubstrate ["Agentic Blackboard Substrate (C++20)"]
         ApiServer["ApiServer (Port 8085)"]
         Blackboard["Blackboard Engine"]
         L3KVG["l3kvg Graph Database"]
@@ -59,11 +59,11 @@ flowchart TD
 To ensure agent swarms reliably interact with the blackboard, we establish three distinct operational layers:
 
 ### Layer 1: Schema Discovery (Communicating WHAT)
-- **Live Schema Resource (`asos://schema`)**: Backed by `GET /api/v1/schema`, returning machine-readable JSON that enumerates all 32 `KnowledgeArea` indices, all relational predicates (`rel::SEE_ALSO`, `rel::SUPPORTS`, `rel::REFUTES`, `rel::EXTENDS`, `rel::CITES`, `rel::PAIRS_WITH`, `rel::USES_INGREDIENT`, etc.), and structural field schemas for `Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, and `CatalogMetric`.
+- **Live Schema Resource (`ab://schema`)**: Backed by `GET /api/v1/schema`, returning machine-readable JSON that enumerates all 32 `KnowledgeArea` indices, all relational predicates (`rel::SEE_ALSO`, `rel::SUPPORTS`, `rel::REFUTES`, `rel::EXTENDS`, `rel::CITES`, `rel::PAIRS_WITH`, `rel::USES_INGREDIENT`, etc.), and structural field schemas for `Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, and `CatalogMetric`.
 - **Typed Tool Docstrings & Enums**: MCP tool inputs enforce strict Pydantic/JSON-schema typing with allowed relationship and role enums.
 
 ### Layer 2: Skills Delivery (Communicating HOW and WHEN)
-- **On-Demand Skill Resources (`asos://skills/{name}`)**: Agents dynamically fetch Markdown guides from [`skills/`](file:///home/darkfell/dev/agentic_blackboard/skills) via MCP resource reads:
+- **On-Demand Skill Resources (`ab://skills/{name}`)**: Agents dynamically fetch Markdown guides from [`skills/`](file:///home/darkfell/dev/agentic_blackboard/skills) via MCP resource reads:
   - `knowledge-capture`: Quick insight capture with mandatory pre-flight deduplication.
   - `commonplace-curation`: Dialectic note structuring and Zettelkasten linking.
   - `procedural-catalog`: Recipe, workout, and laboratory SOP authoring.
@@ -85,7 +85,7 @@ To support the MCP tools, [`src/ApiServer.cpp`](file:///home/darkfell/dev/agenti
 Outputs full metadata for taxonomy, predicates, and universal primitives:
 ```json
 {
-  "system": "ASOS v0.4-α",
+  "system": "Agentic Blackboard v0.4-α",
   "knowledge_areas": {
     "1": "REQUIREMENTS",
     "2": "DESIGN",
@@ -167,7 +167,7 @@ Update JSON deserialization loop to unpack:
 
 ## 4. MCP Server Tool Specifications
 
-Identical tool suites implemented in both [`asos_mcp_server.py`](file:///home/darkfell/dev/agentic_blackboard/asos_mcp_server.py) and [`asos-mcp/index.js`](file:///home/darkfell/dev/agentic_blackboard/asos-mcp/index.js):
+Identical tool suites implemented in both [`ab_mcp_server.py`](file:///home/darkfell/dev/agentic_blackboard/ab_mcp_server.py) and [`ab-mcp/index.js`](file:///home/darkfell/dev/agentic_blackboard/ab-mcp/index.js):
 
 ### 4.1 Discovery & Navigation
 1. **`search_commonplace`**:
@@ -268,7 +268,7 @@ The Markdown skills in [`skills/`](file:///home/darkfell/dev/agentic_blackboard/
    - Test duplicate prevention: re-submitting an identical statement returns `EXISTS` or updates without creating duplicates.
    - Test `create_catalog_entry` with ingredients, steps, and metrics.
    - Test `get_node_links` returning both inbound backlinks and outbound citations.
-   - Test reading `asos://schema` and `asos://skills/commonplace-curation`.
+   - Test reading `ab://schema` and `ab://skills/commonplace-curation`.
 3. **Node.js MCP Suite**:
    - Verify tool list and schema compliance via `@modelcontextprotocol/sdk`.
 

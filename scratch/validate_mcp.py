@@ -1,9 +1,9 @@
 import asyncio
 import json
-from asos_mcp_server import mcp
+from ab_mcp_server import mcp
 
 async def main():
-    print("--- ASOS MCP Integration Test ---")
+    print("--- Agentic Blackboard MCP Integration Test ---")
     
     try:
         # 1. Test ensure_node
@@ -20,7 +20,7 @@ async def main():
         print("\n[Tool] Calling commit_knowledge_bundle...")
         atoms = [
             {
-                "statement": "ASOS MCP Integration verified successfully.", 
+                "statement": "Agentic Blackboard MCP Integration verified successfully.", 
                 "tags": ["MCP", "VERIFIED"],
                 "content": "This atom was pushed through the MCP bridge layer."
             }
@@ -33,8 +33,8 @@ async def main():
         print(f"Response: {res}")
 
         # 3. Test get_resource
-        print("\n[Resource] Reading asos://schema...")
-        res = await mcp.read_resource("asos://schema")
+        print("\n[Resource] Reading ab://schema...")
+        res = await mcp.read_resource("ab://schema")
         # Resource returns content objects, we want the text
         print(f"Response (truncated): {res[:200]}...")
 

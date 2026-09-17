@@ -32,7 +32,7 @@ This skill enables agents to "Manifest" knowledge in the user's physical/virtual
    - Call `bind_anchor_to_atom(marker_id, atom_id)` to lock the widget to a physical point.
 
 5. **Interlock Sync**:
-   - Verify that the `NUCLEUS_WIDGET` node is created in ASOS with the correct `fragment_id`.
+   - Verify that the `NUCLEUS_WIDGET` node is created in Agentic Blackboard with the correct `fragment_id`.
 
 ## Rationalizations
 | Excuse | Rebuttal |

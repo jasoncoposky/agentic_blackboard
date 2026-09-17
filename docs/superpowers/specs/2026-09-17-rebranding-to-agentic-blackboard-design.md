@@ -1,21 +1,21 @@
-# Rebranding from ASOS to Agentic Blackboard (AB) Design Specification
+# Rebranding to Agentic Blackboard (AB) Design Specification
 
 **Date:** 2026-09-17  
 **Status:** Approved  
-**Topic:** Rebranding ASOS to `agentic_blackboard` / `ab`  
+**Topic:** Rebranding to `agentic_blackboard` / `ab`  
 
 ---
 
 ## 1. Overview & Objective
 
-The project is officially branded as **Agentic Blackboard** (abbreviated **AB** or `ab`). All previous references to `asos` across the codebase, build system, directories, packaging, tools, tests, documentation, and skills are to be comprehensively eradicated and replaced with `agentic_blackboard` or `ab`.
+The project is officially branded as **Agentic Blackboard** (abbreviated **AB** or `ab`). All previous references across the codebase, build system, directories, packaging, tools, tests, documentation, and skills are to be comprehensively eradicated and replaced with `agentic_blackboard` or `ab`.
 
 ---
 
 ## 2. Core Architecture & C++ Restructuring
 
 ### 2.1 Header Directory Structure
-The header directory is moved from `include/asos/` to `include/agentic_blackboard/`, with a companion convenience alias directory `include/ab/`:
+The header directory is moved to `include/agentic_blackboard/`, with a companion convenience alias directory `include/ab/`:
 
 ```
 include/
@@ -52,12 +52,12 @@ namespace agentic_blackboard {
 namespace ab = agentic_blackboard;
 ```
 
-All source implementations (`src/*.cpp`) and test harnesses will migrate from `namespace asos` to `namespace agentic_blackboard` / `namespace ab`.
+All source implementations (`src/*.cpp`) and test harnesses will migrate to `namespace agentic_blackboard` / `namespace ab`.
 
 ### 2.3 Header Guards & Logging Prefixes
 - Header guards updated to `AGENTIC_BLACKBOARD_<NAME>_HPP`.
-- Runtime logging identifiers updated from `[ASOS]`, `[ASOS Server]` to `[AgenticBlackboard]` and `[AB]`.
-- Salt token prefix updated from `asos_salt_token_v1:` to `ab_salt_token_v1:` in both `src/Blackboard.cpp` and `src/ab-ctl.py`.
+- Runtime logging identifiers updated to `[AgenticBlackboard]` and `[AB]`.
+- Salt token prefix updated to `ab_salt_token_v1:` in both `src/Blackboard.cpp` and `src/ab-ctl.py`.
 
 ---
 
@@ -65,39 +65,39 @@ All source implementations (`src/*.cpp`) and test harnesses will migrate from `n
 
 ### 3.1 CMake Configuration (`CMakeLists.txt`)
 - **Core Library Target:**
-  - Rename target `asos_engine` to `ab_engine`.
+  - Target `ab_engine`.
   - Provide CMake alias `agentic_blackboard::engine`.
   - Produce static library `libab_engine.a`.
 - **Daemon Executables:**
   - Canonical binary remains `agentic-blackboardd` (installed to `/usr/bin/agentic-blackboardd`).
   - Provide developer alias target `ab_daemon` linking to the same entrypoint.
 - **Verification Target:**
-  - Rename test executable target `asos_verify` to `ab_verify` (produces `build/ab_verify`).
+  - Verification executable target `ab_verify` (produces `build/ab_verify`).
 - **Include Paths:**
   - `${CMAKE_CURRENT_SOURCE_DIR}/include` exposing both `agentic_blackboard/` and `ab/`.
 
 ### 3.2 Packaging, Limits & Systemd
 - **RPM Spec (`packaging/rpm/agentic-blackboard.spec`):**
-  - Scrub any remaining references to `asos` in comments, descriptions, and scriptlets.
+  - Scrub any remaining legacy references in comments, descriptions, and scriptlets.
   - Maintain canonical package `agentic-blackboard-0.4.0-1.el9.x86_64.rpm`.
 - **Systemd Unit (`packaging/systemd/agentic-blackboard.service`):**
   - Description: `Agentic Blackboard Daemon (ab)`.
 - **Configuration Templates:**
   - Clean comments in `packaging/config/blackboard.conf` and `blackboard.conf.default`.
 - **Git Ignore (`.gitignore`):**
-  - Replace `asos_db` and `test_asos_db` with `ab_db`, `ab_db-*`, and `blackboard_db`.
+  - Use `ab_db`, `ab_db-*`, and `blackboard_db`.
 
 ---
 
 ## 4. Tooling, MCP, Dashboard & Asset Migrations
 
 ### 4.1 Relocated Directories and Files
-- `asos-dashboard/` $\rightarrow$ `ab-dashboard/`
-- `asos-mcp/` $\rightarrow$ `ab-mcp/`
-- `asos_mcp_server.py` $\rightarrow$ `ab_mcp_server.py`
-- `asos_logo.png` $\rightarrow$ `ab_logo.png`
-- `asos_screenshot.png` $\rightarrow$ `ab_screenshot.png`
-- `scratch/populate_asos_project.py` $\rightarrow$ `scratch/populate_ab_project.py`
+- `ab-dashboard/`
+- `ab-mcp/`
+- `ab_mcp_server.py`
+- `ab_logo.png`
+- `ab_screenshot.png`
+- `scratch/populate_ab_project.py`
 
 ### 4.2 Dashboard & Node MCP Updates
 - `ab-dashboard/package.json`: package name `"ab-dashboard"`.
@@ -115,12 +115,12 @@ All source implementations (`src/*.cpp`) and test harnesses will migrate from `n
 ## 5. Documentation & Skills Rebranding
 
 ### 5.1 Root Guides & Documentation
-- Rename `ASOS Schema & Code Reference Guide.md` $\rightarrow$ `Agentic Blackboard Schema & Code Reference Guide.md`.
-- Rename `ASOS Architecture & Master Schema TRD v0.2.md` $\rightarrow$ `Agentic Blackboard Architecture & Master Schema TRD v0.2.md`.
+- Rename reference guide $\rightarrow$ `Agentic Blackboard Schema & Code Reference Guide.md`.
+- Rename architecture TRD $\rightarrow$ `Agentic Blackboard Architecture & Master Schema TRD v0.2.md`.
 - In `README.md`, thoroughly update project branding, architecture diagrams, build targets (`ab_verify`, `agentic-blackboardd`), and CLI instructions (`ab-ctl`).
 
 ### 5.2 Built-in Skills (`skills/`)
-Update references to ASOS in:
+Update references to legacy branding in:
 - `skills/commonplace-curation/SKILL.md`
 - `skills/graph-integrity-audit/SKILL.md`
 - `skills/knowledge-capture/SKILL.md`
@@ -146,4 +146,4 @@ Update historical design specifications and implementation plans across `docs/su
    - `python3 scratch/test_rpm_build.py` produces and validates the canonical RPM package.
    - `python3 scratch/test_e2e_central_deployment.py` completes clean container build, startup, volume auto-bootstrap, and CLI interaction.
 5. **No Lingering References:**
-   - Case-insensitive search `git grep -i "asos"` returns 0 results across the repository.
+   - Case-insensitive search for legacy product name returns 0 results across the repository.

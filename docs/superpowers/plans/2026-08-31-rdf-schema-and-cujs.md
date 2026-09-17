@@ -1,20 +1,20 @@
-# Implementation Plan: ASOS RDF Schema Enhancements & Critical User Journeys (CUJs)
+# Implementation Plan: Agentic Blackboard RDF Schema Enhancements & Critical User Journeys (CUJs)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Implement first-class semantic graph predicates (`DEPENDS_ON`, `BLOCKS`, `SUBTASK_OF`, `VALIDATED_BY`, `CONTRIBUTES_TO`), bitemporal timestamps (`event_timestamp`), structured `GoalNode` support, and a W3C RDF Turtle export engine (`RdfExporter`) with comprehensive automated tests verifying the 5 core Swarm CUJs.
 
-**Architecture:** Extend the C++ `schema.hpp` with new relationship types, bitemporal serialization, and `GoalNode` models. Implement an `RdfExporter` that traverses the `l3kvg` graph substrate and produces valid W3C Turtle triples (`text/turtle`), integrated into the REST `ApiServer`. Validate all end-to-end multi-agent workflows through automated test suites in `asos_verify`.
+**Architecture:** Extend the C++ `schema.hpp` with new relationship types, bitemporal serialization, and `GoalNode` models. Implement an `RdfExporter` that traverses the `l3kvg` graph substrate and produces valid W3C Turtle triples (`text/turtle`), integrated into the REST `ApiServer`. Validate all end-to-end multi-agent workflows through automated test suites in `ab_verify`.
 
 **Architecture Diagram:**
 
 ```mermaid
 graph TD
-    subgraph "ASOS Substrate Core"
-        Schema["asos::schema (CpbEntry, GoalNode, Identity, Project)"]
-        Blackboard["asos::Blackboard & l3kvg::Engine"]
-        RdfExport["asos::RdfExporter (Turtle Serialization)"]
-        Api["asos::ApiServer (/api/v1/graph/export)"]
+    subgraph "Agentic Blackboard Substrate Core"
+        Schema["ab::schema (CpbEntry, GoalNode, Identity, Project)"]
+        Blackboard["ab::Blackboard & l3kvg::Engine"]
+        RdfExport["ab::RdfExporter (Turtle Serialization)"]
+        Api["ab::ApiServer (/api/v1/graph/export)"]
     end
 
     subgraph "Swarm Critical User Journeys"
@@ -47,8 +47,8 @@ graph TD
 ### Task 1: Semantic Predicates, Bitemporal Header & GoalNode Schemas
 
 **Files:**
-- Modify: `include/asos/schema.hpp`
-- Modify: `include/asos/Blackboard.hpp`
+- Modify: `include/agentic_blackboard/schema.hpp`
+- Modify: `include/agentic_blackboard/Blackboard.hpp`
 - Modify: `src/Blackboard.cpp`
 
 **Interfaces:**
@@ -59,9 +59,9 @@ graph TD
   - `struct GoalNode` with `serialize` and `deserialize`
   - `Blackboard::commit_goal_node(const GoalNode& goal, uint32_t principal_id = 0)`
 
-- [ ] **Step 1: Update `include/asos/schema.hpp` with new predicates, bitemporal header, and `GoalNode`**
+- [ ] **Step 1: Update `include/agentic_blackboard/schema.hpp` with new predicates, bitemporal header, and `GoalNode`**
 
-Add constants to `asos::rel`:
+Add constants to `ab::rel`:
 ```cpp
 namespace rel {
     const std::string CREATED_BY = "CREATED_BY";
@@ -153,7 +153,7 @@ struct GoalNode {
 
 - [ ] **Step 2: Add `commit_goal_node` to `Blackboard.hpp` and `Blackboard.cpp`**
 
-In `include/asos/Blackboard.hpp`:
+In `include/agentic_blackboard/Blackboard.hpp`:
 ```cpp
 bool commit_goal_node(const GoalNode& goal, uint32_t principal_id = 0);
 ```
@@ -187,13 +187,13 @@ bool Blackboard::commit_goal_node(const GoalNode& goal, uint32_t principal_id) {
 
 - [ ] **Step 3: Compile core library to verify no compilation issues**
 
-Run: `cmake --build build --target asos_engine`
+Run: `cmake --build build --target ab_engine`
 Expected: Build succeeds with 0 errors.
 
 - [ ] **Step 4: Commit changes**
 
 ```bash
-git add include/asos/schema.hpp include/asos/Blackboard.hpp src/Blackboard.cpp
+git add include/agentic_blackboard/schema.hpp include/agentic_blackboard/Blackboard.hpp src/Blackboard.cpp
 git commit -m "feat(schema): add RDF task predicates, bitemporal timestamp, and GoalNode"
 ```
 
@@ -202,26 +202,26 @@ git commit -m "feat(schema): add RDF task predicates, bitemporal timestamp, and 
 ### Task 2: W3C RDF Turtle Serializer (`RdfExporter`) & REST API Endpoint
 
 **Files:**
-- Create: `include/asos/RdfExporter.hpp`
+- Create: `include/agentic_blackboard/RdfExporter.hpp`
 - Create: `src/RdfExporter.cpp`
 - Modify: `CMakeLists.txt`
-- Modify: `include/asos/ApiServer.hpp`
+- Modify: `include/agentic_blackboard/ApiServer.hpp`
 - Modify: `src/ApiServer.cpp`
 
 **Interfaces:**
-- Consumes: `l3kvg::Engine`, `asos::Blackboard`, `asos::CpbEntry`, `asos::GoalNode`, `asos::IdentityNode`, `asos::ProjectNode`
+- Consumes: `l3kvg::Engine`, `ab::Blackboard`, `ab::CpbEntry`, `ab::GoalNode`, `ab::IdentityNode`, `ab::ProjectNode`
 - Produces: `std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principal_id = 0)`
 - Endpoint: `GET /api/v1/graph/export?format=turtle`
 
-- [ ] **Step 1: Create `include/asos/RdfExporter.hpp`**
+- [ ] **Step 1: Create `include/agentic_blackboard/RdfExporter.hpp`**
 
 ```cpp
 #pragma once
 
-#include "asos/Blackboard.hpp"
+#include "agentic_blackboard/Blackboard.hpp"
 #include <string>
 
-namespace asos {
+namespace agentic_blackboard {
 
 class RdfExporter {
 public:
@@ -231,22 +231,22 @@ public:
     static std::string export_turtle(Blackboard* blackboard, uint32_t principal_id = 0);
 };
 
-} // namespace asos
+} // namespace agentic_blackboard
 ```
 
 - [ ] **Step 2: Create `src/RdfExporter.cpp`**
 
 Implement Turtle triple generator emitting standard prefixes:
 ```cpp
-#include "asos/RdfExporter.hpp"
-#include "asos/schema.hpp"
+#include "agentic_blackboard/RdfExporter.hpp"
+#include "agentic_blackboard/schema.hpp"
 #include "engine/store.hpp"
 #include "L3KVG/KeyBuilder.hpp"
 #include "L3KVG/Node.hpp"
 #include <sstream>
 #include <iomanip>
 
-namespace asos {
+namespace agentic_blackboard {
 
 static std::string sanitize_str(const std::string& str) {
     std::string res;
@@ -267,7 +267,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
     auto store = engine->get_store();
 
     std::ostringstream ss;
-    ss << "@prefix asos: <http://asos.substrate.ai/schema#> .\n";
+    ss << "@prefix ab: <http://agenticblackboard.ai/schema#> .\n";
     ss << "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n";
     ss << "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n";
     ss << "@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n";
@@ -298,62 +298,62 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 }
             } catch (...) {}
 
-            std::string node_uri = "<urn:asos:node:" + hex_id + ">";
+            std::string node_uri = "<urn:ab:node:" + hex_id + ">";
 
             if (type == "IDENTITY") {
                 IdentityNode id_node = IdentityNode::deserialize(buf);
-                ss << "<urn:asos:identity:" << sanitize_str(id_node.id) << "> a asos:Identity ;\n";
+                ss << "<urn:ab:identity:" << sanitize_str(id_node.id) << "> a ab:Identity ;\n";
                 ss << "    rdfs:label \"" << sanitize_str(id_node.display_name) << "\" ;\n";
-                ss << "    asos:role \"" << sanitize_str(id_node.role) << "\" .\n\n";
+                ss << "    ab:role \"" << sanitize_str(id_node.role) << "\" .\n\n";
             } else if (type == "PROJECT") {
                 ProjectNode p_node = ProjectNode::deserialize(buf);
-                ss << "<urn:asos:project:" << sanitize_str(p_node.project_id) << "> a asos:Project ;\n";
+                ss << "<urn:ab:project:" << sanitize_str(p_node.project_id) << "> a ab:Project ;\n";
                 ss << "    rdfs:comment \"" << sanitize_str(p_node.description) << "\" ;\n";
-                ss << "    asos:lifecycleStatus \"" << sanitize_str(p_node.lifecycle_status) << "\" .\n\n";
+                ss << "    ab:lifecycleStatus \"" << sanitize_str(p_node.lifecycle_status) << "\" .\n\n";
             } else if (type == "GOAL") {
                 GoalNode g_node = GoalNode::deserialize(buf);
-                ss << "<urn:asos:goal:" << sanitize_str(g_node.goal_id) << "> a asos:Goal ;\n";
+                ss << "<urn:ab:goal:" << sanitize_str(g_node.goal_id) << "> a ab:Goal ;\n";
                 ss << "    rdfs:label \"" << sanitize_str(g_node.title) << "\" ;\n";
                 ss << "    rdfs:comment \"" << sanitize_str(g_node.description) << "\" ;\n";
-                ss << "    asos:category \"" << sanitize_str(g_node.category) << "\" ;\n";
-                ss << "    asos:targetMetric " << g_node.target_metric << " ;\n";
-                ss << "    asos:currentProgress " << g_node.current_progress << " ;\n";
-                ss << "    asos:status \"" << sanitize_str(g_node.status) << "\" .\n\n";
+                ss << "    ab:category \"" << sanitize_str(g_node.category) << "\" ;\n";
+                ss << "    ab:targetMetric " << g_node.target_metric << " ;\n";
+                ss << "    ab:currentProgress " << g_node.current_progress << " ;\n";
+                ss << "    ab:status \"" << sanitize_str(g_node.status) << "\" .\n\n";
             } else {
                 // Default to CPB_ENTRY / KnowledgeAtom
                 try {
                     CpbEntry atom = CpbEntry::deserialize(buf);
                     std::string atom_id = atom.header.uuid.empty() ? hex_id : atom.header.uuid;
-                    ss << "<urn:asos:atom:" << sanitize_str(atom_id) << "> a asos:KnowledgeAtom ;\n";
-                    ss << "    asos:statement \"" << sanitize_str(atom.payload.statement) << "\" ;\n";
-                    ss << "    asos:knowledgeArea " << static_cast<int>(atom.taxonomy.knowledge_area) << " ;\n";
-                    ss << "    asos:applicability " << atom.taxonomy.applicability << " ;\n";
-                    ss << "    asos:isPrinciple " << (atom.taxonomy.is_principle ? "true" : "false") << " ;\n";
-                    ss << "    asos:uncertainty " << (atom.taxonomy.uncertainty ? "true" : "false") << " ;\n";
+                    ss << "<urn:ab:atom:" << sanitize_str(atom_id) << "> a ab:KnowledgeAtom ;\n";
+                    ss << "    ab:statement \"" << sanitize_str(atom.payload.statement) << "\" ;\n";
+                    ss << "    ab:knowledgeArea " << static_cast<int>(atom.taxonomy.knowledge_area) << " ;\n";
+                    ss << "    ab:applicability " << atom.taxonomy.applicability << " ;\n";
+                    ss << "    ab:isPrinciple " << (atom.taxonomy.is_principle ? "true" : "false") << " ;\n";
+                    ss << "    ab:uncertainty " << (atom.taxonomy.uncertainty ? "true" : "false") << " ;\n";
                     if (!atom.header.origin.agent_id.empty()) {
-                        ss << "    prov:wasGeneratedBy <urn:asos:identity:" << sanitize_str(atom.header.origin.agent_id) << "> ;\n";
+                        ss << "    prov:wasGeneratedBy <urn:ab:identity:" << sanitize_str(atom.header.origin.agent_id) << "> ;\n";
                     }
                     if (!atom.header.origin.project_id.empty()) {
-                        ss << "    asos:belongsTo <urn:asos:project:" << sanitize_str(atom.header.origin.project_id) << "> ;\n";
+                        ss << "    ab:belongsTo <urn:ab:project:" << sanitize_str(atom.header.origin.project_id) << "> ;\n";
                     }
                     if (atom.header.timestamp > 0) {
                         ss << "    prov:generatedAtTime " << atom.header.timestamp << " ;\n";
                     }
                     if (atom.header.event_timestamp > 0) {
-                        ss << "    asos:eventTimestamp " << atom.header.event_timestamp << " ;\n";
+                        ss << "    ab:eventTimestamp " << atom.header.event_timestamp << " ;\n";
                     }
                     if (atom.wellness) {
-                        ss << "    asos:moodSentiment " << atom.wellness->mood_sentiment << " ;\n";
-                        ss << "    asos:energyLevel " << atom.wellness->energy_level << " ;\n";
-                        ss << "    asos:sleepHours " << atom.wellness->sleep_hours << " ;\n";
-                        ss << "    asos:stepCount " << atom.wellness->step_count << " ;\n";
+                        ss << "    ab:moodSentiment " << atom.wellness->mood_sentiment << " ;\n";
+                        ss << "    ab:energyLevel " << atom.wellness->energy_level << " ;\n";
+                        ss << "    ab:sleepHours " << atom.wellness->sleep_hours << " ;\n";
+                        ss << "    ab:stepCount " << atom.wellness->step_count << " ;\n";
                         if (!atom.wellness->activity_type.empty()) {
-                            ss << "    asos:activityType \"" << sanitize_str(atom.wellness->activity_type) << "\" ;\n";
+                            ss << "    ab:activityType \"" << sanitize_str(atom.wellness->activity_type) << "\" ;\n";
                         }
                     }
                     if (atom.education) {
-                        ss << "    asos:institutionPlatform \"" << sanitize_str(atom.education->institution_platform) << "\" ;\n";
-                        ss << "    asos:progressPercent " << atom.education->progress_percent << " ;\n";
+                        ss << "    ab:institutionPlatform \"" << sanitize_str(atom.education->institution_platform) << "\" ;\n";
+                        ss << "    ab:progressPercent " << atom.education->progress_percent << " ;\n";
                     }
                     ss << "    rdfs:isDefinedBy " << node_uri << " .\n\n";
                 } catch (...) {}
@@ -372,7 +372,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                     for (const auto& edge : edges) {
                         char dst_hex[17];
                         sprintf(dst_hex, "%016llx", (unsigned long long)edge->get_dst());
-                        ss << "<urn:asos:node:" << hex_id << "> asos:" << rel_label << " <urn:asos:node:" << dst_hex << "> .\n";
+                        ss << "<urn:ab:node:" << hex_id << "> ab:" << rel_label << " <urn:ab:node:" << dst_hex << "> .\n";
                     }
                 }
             }
@@ -382,15 +382,15 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
     return ss.str();
 }
 
-} // namespace asos
+} // namespace agentic_blackboard
 ```
 
 - [ ] **Step 3: Update `CMakeLists.txt` and `ApiServer.cpp`**
 
-In `CMakeLists.txt`, add `src/RdfExporter.cpp` to `asos_engine` sources.
+In `CMakeLists.txt`, add `src/RdfExporter.cpp` to `ab_engine` sources.
 In `src/ApiServer.cpp`, register `GET /api/v1/graph/export`:
 ```cpp
-#include "asos/RdfExporter.hpp"
+#include "agentic_blackboard/RdfExporter.hpp"
 
 // Inside listen_loop():
 svr.Get("/api/v1/graph/export", [this](const httplib::Request& req, httplib::Response& res) {
@@ -416,15 +416,15 @@ svr.Get("/api/v1/graph/export", [this](const httplib::Request& req, httplib::Res
 });
 ```
 
-- [ ] **Step 4: Build target `asos_engine` and verify compilation**
+- [ ] **Step 4: Build target `ab_engine` and verify compilation**
 
-Run: `cmake --build build --target asos_engine`
+Run: `cmake --build build --target ab_engine`
 Expected: Build succeeds.
 
 - [ ] **Step 5: Commit changes**
 
 ```bash
-git add include/asos/RdfExporter.hpp src/RdfExporter.cpp CMakeLists.txt src/ApiServer.cpp
+git add include/agentic_blackboard/RdfExporter.hpp src/RdfExporter.cpp CMakeLists.txt src/ApiServer.cpp
 git commit -m "feat(rdf): add W3C RDF Turtle serializer and export endpoint"
 ```
 
@@ -436,7 +436,7 @@ git commit -m "feat(rdf): add W3C RDF Turtle serializer and export endpoint"
 - Modify: `src/main_verify.cpp`
 
 **Interfaces:**
-- Consumes: `asos::Blackboard`, `asos::rel::*`, `asos::GoalNode`, `asos::CpbEntry`
+- Consumes: `ab::Blackboard`, `ab::rel::*`, `ab::GoalNode`, `ab::CpbEntry`
 - Produces: `test_cuj_wbs_dag_validation()`, `test_cuj_retrospective_journaling_and_goals()`
 
 - [ ] **Step 1: Add `test_cuj_wbs_dag_validation` to `src/main_verify.cpp`**
@@ -464,9 +464,9 @@ Implement test for CUJ 2:
 
 Include `<filesystem>` and invoke `std::filesystem::remove_all(db_path)` in all test functions.
 
-- [ ] **Step 4: Build and run `asos_verify`**
+- [ ] **Step 4: Build and run `ab_verify`**
 
-Run: `cmake --build build --target asos_verify && ./build/asos_verify`
+Run: `cmake --build build --target ab_verify && ./build/ab_verify`
 Expected: Tests pass.
 
 - [ ] **Step 5: Commit changes**
@@ -484,7 +484,7 @@ git commit -m "test(cuj): add automated verifications for CUJ 1 (WBS DAG) and CU
 - Modify: `src/main_verify.cpp`
 
 **Interfaces:**
-- Consumes: `asos::RdfExporter`, `asos::Blackboard`
+- Consumes: `ab::RdfExporter`, `ab::Blackboard`
 - Produces: `test_cuj_rdf_turtle_export()`
 
 - [ ] **Step 1: Implement `test_cuj_rdf_turtle_export` in `src/main_verify.cpp`**
@@ -494,18 +494,18 @@ git commit -m "test(cuj): add automated verifications for CUJ 1 (WBS DAG) and CU
 3. Link nodes with `CREATED_BY`, `BELONGS_TO`, `CONTRIBUTES_TO`, and `DEPENDS_ON`.
 4. Call `RdfExporter::export_turtle(&bb)`.
 5. Assert output contains:
-   - `@prefix asos: <http://asos.substrate.ai/schema#>`
-   - `a asos:KnowledgeAtom`
-   - `a asos:Goal`
-   - `a asos:Identity`
-   - `a asos:Project`
-   - `asos:CONTRIBUTES_TO`
-   - `asos:DEPENDS_ON`
+   - `@prefix ab: <http://agenticblackboard.ai/schema#>`
+   - `a ab:KnowledgeAtom`
+   - `a ab:Goal`
+   - `a ab:Identity`
+   - `a ab:Project`
+   - `ab:CONTRIBUTES_TO`
+   - `ab:DEPENDS_ON`
 
 - [ ] **Step 2: Build and run all verification suites**
 
-Run: `cmake --build build --target asos_verify && ./build/asos_verify`
-Expected: Output `[SUCCESS] All ASOS Verification Tests Passed!` with 0 errors.
+Run: `cmake --build build --target ab_verify && ./build/ab_verify`
+Expected: Output `[SUCCESS] All Agentic Blackboard Verification Tests Passed!` with 0 errors.
 
 - [ ] **Step 3: Commit all changes**
 

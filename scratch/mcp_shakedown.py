@@ -2,7 +2,7 @@ import httpx
 import json
 import time
 
-ASOS_API_URL = "http://localhost:8085/api/v1"
+AB_API_URL = "http://localhost:8085/api/v1"
 
 def shakedown():
     print("[SHAKEDOWN] Starting MARS_ROVER project initialization...")
@@ -14,7 +14,7 @@ def shakedown():
         "id": "MARS_ROVER",
         "metadata": {"description": "Autonomous Mars Exploration Swarm"}
     }
-    httpx.post(f"{ASOS_API_URL}/graph/node", json=p_payload).raise_for_status()
+    httpx.post(f"{AB_API_URL}/graph/node", json=p_payload).raise_for_status()
 
     # 2. Commit WBS Atoms
     print("[SHAKEDOWN] Committing Knowledge Bundle (WBS)")
@@ -27,7 +27,7 @@ def shakedown():
             {"statement": "WBS 1.3: Collaborative Pathfinding", "ka": 0}
         ]
     }
-    res = httpx.post(f"{ASOS_API_URL}/graph/bundle", json=b_payload)
+    res = httpx.post(f"{AB_API_URL}/graph/bundle", json=b_payload)
     res.raise_for_status()
     print(res.text)
 
@@ -38,7 +38,7 @@ def shakedown():
     # Since they are generated, let's just query all atoms for MARS_ROVER.
     
     q_payload = {"match": "n", "where_eq": {"project_id": "MARS_ROVER"}}
-    nodes = httpx.post(f"{ASOS_API_URL}/query", json=q_payload).json()
+    nodes = httpx.post(f"{AB_API_URL}/query", json=q_payload).json()
     
     atom_ids = [n["id"] for n in nodes if n.get("type") == "ATOM" or "statement" in n]
     
@@ -49,7 +49,7 @@ def shakedown():
             "label": "RELATED_TO",
             "weight": 0.8
         }
-        httpx.post(f"{ASOS_API_URL}/link", json=l_payload).raise_for_status()
+        httpx.post(f"{AB_API_URL}/link", json=l_payload).raise_for_status()
         print(f"[SHAKEDOWN] Linked {atom_ids[0]} -> {atom_ids[1]}")
 
     print("[SHAKEDOWN] Complete. Check dashboard.")

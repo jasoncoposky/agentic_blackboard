@@ -6,7 +6,7 @@ import random
 
 BASE_URL = "http://localhost:8085/api/v1"
 
-def create_atom(atom_id, ka, statement, project="asos-v0.5", agent="librarian-alpha"):
+def create_atom(atom_id, ka, statement, project="ab-v0.5", agent="librarian-alpha"):
     return {
         "header": {
             "uuid": atom_id,
@@ -68,7 +68,7 @@ def main():
     
     # 1. Commit Atoms as a Bundle (Substrate requires anchors)
     bundle = {
-        "project_id": "asos-v0.5",
+        "project_id": "ab-v0.5",
         "agent_id": "librarian-alpha",
         "atoms": atoms
     }

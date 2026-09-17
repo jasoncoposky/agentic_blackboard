@@ -4,7 +4,7 @@ import threading
 import random
 import hashlib
 
-ASOS_API_URL = "http://localhost:8085/api/v1"
+AB_API_URL = "http://localhost:8085/api/v1"
 
 def commit_atom(agent_id, project_id, statement, timestamp=None):
     payload = {
@@ -21,7 +21,7 @@ def commit_atom(agent_id, project_id, statement, timestamp=None):
         ]
     }
     try:
-        r = httpx.post(f"{ASOS_API_URL}/graph/bundle", json=payload, timeout=5.0)
+        r = httpx.post(f"{AB_API_URL}/graph/bundle", json=payload, timeout=5.0)
         return r.status_code == 200
     except Exception as e:
         print(f"Error: {e}")
@@ -49,7 +49,7 @@ def monitor_health():
     for _ in range(10):
         try:
             # We fetch via query to see if it shows up in snapshots
-            r = httpx.get(f"{ASOS_API_URL}/graph/snapshot")
+            r = httpx.get(f"{AB_API_URL}/graph/snapshot")
             data = r.json()
             
             # Find the health node in the snapshot
@@ -68,7 +68,7 @@ def monitor_health():
         time.sleep(2)
 
 def main():
-    print("Starting ASOS Sync Stress Test...")
+    print("Starting Agentic Blackboard Sync Stress Test...")
     stop_event = threading.Event()
     threads = []
     

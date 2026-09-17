@@ -1,10 +1,10 @@
-# Implementation Plan: ASOS Life-Long Digital Commonplace Book Schema Expansion
+# Implementation Plan: Agentic Blackboard Life-Long Digital Commonplace Book Schema Expansion
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement universal librarian catalog primitives (`Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, `CatalogMetric`), first-class note-to-note and citation graph projection, backlink queries, and W3C RDF Turtle export in the ASOS substrate with automated verification tests.
+**Goal:** Implement universal librarian catalog primitives (`Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, `CatalogMetric`), first-class note-to-note and citation graph projection, backlink queries, and W3C RDF Turtle export in the Agentic Blackboard substrate with automated verification tests.
 
-**Architecture:** Extend `include/asos/schema.hpp` with universal catalog structs and rich relational predicates. Update `Blackboard::commit_entry` to automatically project `NoteLink` and `Reference` synapses into `l3kvg` graph edges with multi-tenant ACLs. Implement `get_backlinks` and `get_outbound_links` in `Blackboard`, enhance `RdfExporter` with Dublin Core and Schema.org mappings, and validate all functionality in `src/main_verify.cpp`.
+**Architecture:** Extend `include/agentic_blackboard/schema.hpp` with universal catalog structs and rich relational predicates. Update `Blackboard::commit_entry` to automatically project `NoteLink` and `Reference` synapses into `l3kvg` graph edges with multi-tenant ACLs. Implement `get_backlinks` and `get_outbound_links` in `Blackboard`, enhance `RdfExporter` with Dublin Core and Schema.org mappings, and validate all functionality in `src/main_verify.cpp`.
 
 **Architecture Diagram:**
 
@@ -61,7 +61,7 @@ graph TD
 ### Task 1: Universal Librarian Schema Primitives in `schema.hpp`
 
 **Files:**
-- Modify: `include/asos/schema.hpp`
+- Modify: `include/agentic_blackboard/schema.hpp`
 
 **Interfaces:**
 - Consumes: `lite3cpp::Buffer`
@@ -76,7 +76,7 @@ graph TD
   - New `KnowledgeArea` enums: `LITERATURE_READING = 26`, `CULINARY_RECIPES = 27`, `CREATIVE_ARTS = 28`, `PERSONAL_FINANCE = 29`, `HOME_LOGISTICS = 30`, `GENERAL_COMMONPLACE = 31`
   - New `namespace rel` predicates: `SEE_ALSO`, `REFERENCES`, `CITES`, `SUPPORTS`, `REFUTES`, `EXTENDS`, `SYNTHESIS_OF`, `QUESTION_RAISED_BY`, `ANALOGY_TO`, `PAIRS_WITH`, `VARIATION_OF`, `USES_INGREDIENT`
 
-- [x] **Step 1: Add new relationship constants to `namespace rel` in `include/asos/schema.hpp`**
+- [x] **Step 1: Add new relationship constants to `namespace rel` in `include/agentic_blackboard/schema.hpp`**
 
 ```cpp
 namespace rel {
@@ -116,7 +116,7 @@ namespace rel {
 }
 ```
 
-- [x] **Step 2: Add new `KnowledgeArea` entries in `include/asos/schema.hpp`**
+- [x] **Step 2: Add new `KnowledgeArea` entries in `include/agentic_blackboard/schema.hpp`**
 
 ```cpp
     // Life-Long Commonplace Book Domains
@@ -128,7 +128,7 @@ namespace rel {
     GENERAL_COMMONPLACE = 31,
 ```
 
-- [x] **Step 3: Define `Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, and `CatalogMetric` in `include/asos/schema.hpp`**
+- [x] **Step 3: Define `Reference`, `NoteLink`, `CatalogItem`, `CatalogStep`, and `CatalogMetric` in `include/agentic_blackboard/schema.hpp`**
 
 Implement full structs with `serialize(lite3cpp::Buffer& buf, size_t parent)` and `deserialize(const lite3cpp::Buffer& buf, size_t parent)`.
 
@@ -141,13 +141,13 @@ Update `deserialize()` to read them safely with `try / catch`.
 
 - [x] **Step 5: Verify compilation**
 
-Run: `cmake --build build --target asos_engine`
+Run: `cmake --build build --target ab_engine`
 Expected: Build succeeds with 0 errors.
 
 - [x] **Step 6: Commit changes**
 
 ```bash
-git add include/asos/schema.hpp
+git add include/agentic_blackboard/schema.hpp
 git commit -m "feat(schema): add universal librarian primitives, note references, and catalog structures"
 ```
 
@@ -156,17 +156,17 @@ git commit -m "feat(schema): add universal librarian primitives, note references
 ### Task 2: Substrate Automatic Edge Projection & Backlink Queries
 
 **Files:**
-- Modify: `include/asos/Blackboard.hpp`
+- Modify: `include/agentic_blackboard/Blackboard.hpp`
 - Modify: `src/Blackboard.cpp`
 
 **Interfaces:**
-- Consumes: `asos::CpbEntry`, `l3kvg::Engine`
+- Consumes: `ab::CpbEntry`, `l3kvg::Engine`
 - Produces:
   - `Blackboard::commit_entry`: Auto-projects `NoteLink` edges and `Reference` citation edges.
   - `Blackboard::get_backlinks(const std::string& note_uuid, uint32_t principal_id = 0)`
   - `Blackboard::get_outbound_links(const std::string& note_uuid, uint32_t principal_id = 0)`
 
-- [x] **Step 1: Declare methods in `include/asos/Blackboard.hpp`**
+- [x] **Step 1: Declare methods in `include/agentic_blackboard/Blackboard.hpp`**
 
 ```cpp
 std::vector<std::pair<std::string, std::string>> get_backlinks(const std::string& note_uuid, uint32_t principal_id = 0);
@@ -204,13 +204,13 @@ Use `engine_->get_node()` and `node->get_edges()` or store scanning to collect i
 
 - [x] **Step 4: Verify compilation**
 
-Run: `cmake --build build --target asos_engine`
+Run: `cmake --build build --target ab_engine`
 Expected: Build succeeds.
 
 - [x] **Step 5: Commit changes**
 
 ```bash
-git add include/asos/Blackboard.hpp src/Blackboard.cpp
+git add include/agentic_blackboard/Blackboard.hpp src/Blackboard.cpp
 git commit -m "feat(blackboard): add automatic edge projection and backlink queries for notes"
 ```
 
@@ -219,11 +219,11 @@ git commit -m "feat(blackboard): add automatic edge projection and backlink quer
 ### Task 3: W3C RDF Turtle Serializer Support for Commonplace Notes & Catalogs
 
 **Files:**
-- Modify: `include/asos/RdfExporter.hpp`
+- Modify: `include/agentic_blackboard/RdfExporter.hpp`
 - Modify: `src/RdfExporter.cpp`
 
 **Interfaces:**
-- Consumes: `asos::CpbEntry`
+- Consumes: `ab::CpbEntry`
 - Produces: Enhanced `RdfExporter::export_turtle` formatting notes, citations, recipes, items, and steps.
 
 - [x] **Step 1: Update `src/RdfExporter.cpp` to emit Schema.org & Dublin Core properties**
@@ -233,11 +233,11 @@ If `entry.payload.references` is non-empty, emit `schema:citation` sub-nodes wit
 If `entry.items` is non-empty, emit `schema:recipeIngredient` or `schema:itemListElement`.
 If `entry.steps` is non-empty, emit `schema:recipeInstructions` or `schema:step`.
 If `entry.metrics` is non-empty, emit metric triples.
-Emit note link predicates (`asos:supports`, `asos:refutes`, `asos:extends`, `rdfs:seeAlso`).
+Emit note link predicates (`ab:supports`, `ab:refutes`, `ab:extends`, `rdfs:seeAlso`).
 
 - [x] **Step 2: Verify compilation**
 
-Run: `cmake --build build --target asos_engine`
+Run: `cmake --build build --target ab_engine`
 Expected: Build succeeds.
 
 - [x] **Step 3: Commit changes**
@@ -279,8 +279,8 @@ Call `RdfExporter::export_turtle` and assert presence of citations, ingredients,
 
 - [x] **Step 5: Run verification suite**
 
-Run: `cmake --build build --target asos_verify && ./build/asos_verify`
-Expected: Output `[SUCCESS] All ASOS Verification Tests Passed!` with 0 errors.
+Run: `cmake --build build --target ab_verify && ./build/ab_verify`
+Expected: Output `[SUCCESS] All Agentic Blackboard Verification Tests Passed!` with 0 errors.
 
 - [x] **Step 6: Commit and push**
 

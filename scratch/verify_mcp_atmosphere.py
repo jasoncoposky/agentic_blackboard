@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Standalone verification script for ASOS FastMCP Atmosphere & Commonplace Server upgrades.
+Standalone verification script for Agentic Blackboard FastMCP Atmosphere & Commonplace Server upgrades.
 Verifies:
-1. HTTP Client Timeouts & Resource security (asos://schema, asos://skills/knowledge-capture, path traversal prevention)
+1. HTTP Client Timeouts & Resource security (ab://schema, ab://skills/knowledge-capture, path traversal prevention)
 2. Prompts (curate_note, author_catalog)
 3. Anchor node creation (ensure_node)
 4. create_note (structured JSON response, auto-generated UUID, duplicate detection, deduplication limit)
@@ -27,8 +27,8 @@ import httpx
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-# Import from asos_mcp_server
-from asos_mcp_server import (
+# Import from ab_mcp_server
+from ab_mcp_server import (
     mcp,
     ensure_node,
     commit_knowledge_bundle,
@@ -42,7 +42,7 @@ from asos_mcp_server import (
     get_skill,
     curate_note,
     author_catalog,
-    ASOS_API_URL,
+    AB_API_URL,
     DEFAULT_TIMEOUT,
     RDF_TIMEOUT,
 )
@@ -50,22 +50,22 @@ from asos_mcp_server import (
 started_process = None
 
 async def ensure_backend():
-    """Ensure the ASOS backend server is reachable at ASOS_API_URL."""
+    """Ensure the Agentic Blackboard backend server is reachable at AB_API_URL."""
     global started_process
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{ASOS_API_URL}/schema", timeout=2.0)
+            resp = await client.get(f"{AB_API_URL}/schema", timeout=2.0)
             if resp.status_code == 200:
-                print("[VERIFY] Connected to running ASOS daemon at", ASOS_API_URL)
+                print("[VERIFY] Connected to running Agentic Blackboard daemon at", AB_API_URL)
                 return
     except Exception:
         pass
 
-    daemon_bin = REPO_ROOT / "build" / "asos_daemon"
+    daemon_bin = REPO_ROOT / "build" / "agentic-blackboardd"
     if not daemon_bin.exists():
         raise RuntimeError(f"Backend daemon binary not found at {daemon_bin}")
 
-    print(f"[VERIFY] Starting ASOS daemon: {daemon_bin}")
+    print(f"[VERIFY] Starting Agentic Blackboard daemon: {daemon_bin}")
     started_process = subprocess.Popen(
         [str(daemon_bin)],
         cwd=str(REPO_ROOT),
@@ -77,19 +77,19 @@ async def ensure_backend():
         await asyncio.sleep(0.2)
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{ASOS_API_URL}/schema", timeout=1.0)
+                resp = await client.get(f"{AB_API_URL}/schema", timeout=1.0)
                 if resp.status_code == 200:
-                    print("[VERIFY] ASOS daemon started and ready.")
+                    print("[VERIFY] Agentic Blackboard daemon started and ready.")
                     return
         except Exception:
             pass
 
-    raise RuntimeError("Failed to connect to ASOS daemon after starting it.")
+    raise RuntimeError("Failed to connect to Agentic Blackboard daemon after starting it.")
 
 
 async def run_tests():
     print("\n" + "=" * 60)
-    print("RUNNING ASOS FASTMCP ATMOSPHERE VERIFICATION SUITE")
+    print("RUNNING AGENTIC BLACKBOARD FASTMCP ATMOSPHERE VERIFICATION SUITE")
     print("=" * 60)
 
     # 0. Test Timeout Configurations
@@ -101,19 +101,19 @@ async def run_tests():
 
     # 1. Test Resources & Security
     print("\n--- 1. Testing Resources & Security ---")
-    schema_res = await mcp.read_resource("asos://schema")
-    assert len(schema_res) > 0, "No content returned from asos://schema"
+    schema_res = await mcp.read_resource("ab://schema")
+    assert len(schema_res) > 0, "No content returned from ab://schema"
     schema_text = schema_res[0].content
-    assert "knowledge_areas" in schema_text, "asos://schema missing knowledge_areas"
-    assert "types" in schema_text, "asos://schema missing types"
-    print("✓ asos://schema resource verified.")
+    assert "knowledge_areas" in schema_text, "ab://schema missing knowledge_areas"
+    assert "types" in schema_text, "ab://schema missing types"
+    print("✓ ab://schema resource verified.")
 
-    skill_res = await mcp.read_resource("asos://skills/knowledge-capture")
-    assert len(skill_res) > 0, "No content returned from asos://skills/knowledge-capture"
+    skill_res = await mcp.read_resource("ab://skills/knowledge-capture")
+    assert len(skill_res) > 0, "No content returned from ab://skills/knowledge-capture"
     skill_text = skill_res[0].content
     assert "# Knowledge Capture Skill" in skill_text, "Skill title missing"
     assert "knowledge-capture" in skill_text, "Skill name missing"
-    print("✓ asos://skills/knowledge-capture resource verified.")
+    print("✓ ab://skills/knowledge-capture resource verified.")
 
     # Test get_skill directly with non-existent skill
     err_skill = await get_skill("nonexistent-skill-xyz")
@@ -367,7 +367,7 @@ async def run_tests():
     print("\n--- 9. Testing export_graph_rdf ---")
     rdf_text = await export_graph_rdf()
     assert "@prefix" in rdf_text, "RDF Turtle missing @prefix"
-    assert "schema:" in rdf_text or "asos:" in rdf_text, "RDF Turtle missing expected ontology prefixes"
+    assert "schema:" in rdf_text or "ab:" in rdf_text, "RDF Turtle missing expected ontology prefixes"
     print(f"✓ export_graph_rdf verified ({len(rdf_text)} bytes received).")
 
     # 10. Test via FastMCP call_tool interface
@@ -436,7 +436,7 @@ async def run_tests():
     print("✓ Backend HTTPStatusError propagation verified.")
 
     print("\n" + "=" * 60)
-    print("ALL ASOS FASTMCP ATMOSPHERE VERIFICATION TESTS PASSED!")
+    print("ALL AGENTIC BLACKBOARD FASTMCP ATMOSPHERE VERIFICATION TESTS PASSED!")
     print("=" * 60 + "\n")
 
 

@@ -1,12 +1,12 @@
 # Knowledge Capture Skill
 
 ## name: knowledge-capture
-## description: Strategically ingest technical insights, "gotchas", and architectural decisions into the ASOS Blackboard with pre-flight discovery, citations, and dialectic links.
+## description: Strategically ingest technical insights, "gotchas", and architectural decisions into the Agentic Blackboard with pre-flight discovery, citations, and dialectic links.
 
 ---
 
 ## Overview
-This skill ensures that as an agent performs research, debugging, or architectural analysis, valuable insights are systematically captured rather than lost. It enforces the **"Discover Before You Create"** discipline, guiding agents to query existing knowledge via `search_commonplace`, synthesize atomic statements, ground claims with bibliographic citations (`Reference`), connect ideas with dialectic inter-note synapses (`NoteLink`), and commit nodes to the ASOS Substrate using `create_note`.
+This skill ensures that as an agent performs research, debugging, or architectural analysis, valuable insights are systematically captured rather than lost. It enforces the **"Discover Before You Create"** discipline, guiding agents to query existing knowledge via `search_commonplace`, synthesize atomic statements, ground claims with bibliographic citations (`Reference`), connect ideas with dialectic inter-note synapses (`NoteLink`), and commit nodes to the Agentic Blackboard Substrate using `create_note`.
 
 ## When to Use
 - After completing research or code analysis yielding a non-trivial conclusion.
@@ -129,7 +129,7 @@ Submit the atom using the `create_note` MCP tool with automated duplicate checki
 | "Adding references and links takes too much time." | Unanchored assertions without citations or links become isolated noise. Dialectic synapses create compounding swarm intelligence. |
 | "It's just a minor implementation detail." | Small undocumented quirks cause compounding hours of debugging toil for other agents. Capture it immediately. |
 | "I'll batch all my notes at the end of the session." | Context and nuances degrade rapidly. Commit atoms synchronously upon discovery. |
-| "The user already knows this from chat." | Chat history is transient. The ASOS Blackboard persists collective memory across swarms, sessions, and lifetimes. |
+| "The user already knows this from chat." | Chat history is transient. The Agentic Blackboard persists collective memory across swarms, sessions, and lifetimes. |
 
 ---
 

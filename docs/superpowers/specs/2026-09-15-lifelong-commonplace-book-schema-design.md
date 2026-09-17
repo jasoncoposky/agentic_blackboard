@@ -1,4 +1,4 @@
-# Design Spec: ASOS Life-Long Digital Commonplace Book Schema Expansion
+# Design Spec: Agentic Blackboard Life-Long Digital Commonplace Book Schema Expansion
 **Date**: 2026-09-15  
 **Status**: APPROVED  
 **Author**: Jason Coposky & Antigravity Pair  
@@ -7,11 +7,11 @@
 
 ## 1. Executive Summary & Vision
 
-The **Agentic Sovereign Orchestration Substrate (ASOS)** serves as the high-performance distributed blackboard for agentic swarm intelligence, spatial computing (Project Nucleus), and human life-long personal knowledge management. 
+The **Agentic Blackboard** serves as the high-performance distributed blackboard for agentic swarm intelligence, spatial computing (Project Nucleus), and human life-long personal knowledge management. 
 
 Historically, digital note-taking and personal knowledge tools either fragment data across disparate domain-specific applications (recipe apps, literature tools, fitness trackers, task managers) or degrade into unstructured freeform text that lacks machine-computable semantic rigor.
 
-This specification establishes a **Universal Librarian Architecture** for ASOS. Rather than hardcoding bespoke C++ structs for each emerging life activity, the substrate adopts universal cataloging, bibliographic, and procedural primitives. A single universal atom (`CpbEntry`) seamlessly services deep literature notes, culinary recipes, scientific experiments, physical workouts, and software engineering principles without schema bloat or recompilation cycles.
+This specification establishes a **Universal Librarian Architecture** for Agentic Blackboard. Rather than hardcoding bespoke C++ structs for each emerging life activity, the substrate adopts universal cataloging, bibliographic, and procedural primitives. A single universal atom (`CpbEntry`) seamlessly services deep literature notes, culinary recipes, scientific experiments, physical workouts, and software engineering principles without schema bloat or recompilation cycles.
 
 ```mermaid
 graph TD
@@ -128,7 +128,7 @@ struct CatalogMetric {
 
 ## 3. The Universal Atom Schema (`CpbEntry`)
 
-All commonplace notes, recipes, and reflections integrate cleanly into [`CpbEntry`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp#L315-L442):
+All commonplace notes, recipes, and reflections integrate cleanly into [`CpbEntry`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp#L315-L442):
 
 ```cpp
 struct CpbEntry {
@@ -180,7 +180,7 @@ struct CpbEntry {
 
 ---
 
-## 4. Semantic Graph Predicates (`asos::rel`)
+## 4. Semantic Graph Predicates (`ab::rel`)
 
 The predicate namespace is expanded to govern note dialectics, citations, and compositional recipes:
 
@@ -301,16 +301,16 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(
 
 ## 7. W3C RDF Turtle Serialization (`RdfExporter`)
 
-[`RdfExporter`](file:///home/darkfell/dev/agentic_blackboard/include/asos/RdfExporter.hpp) serializes notes, references, items, and steps into standard W3C Semantic Web representations:
+[`RdfExporter`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/RdfExporter.hpp) serializes notes, references, items, and steps into standard W3C Semantic Web representations:
 
 ```turtle
-@prefix asos: <http://asos.substrate.ai/schema#> .
+@prefix ab: <http://agenticblackboard.ai/schema#> .
 @prefix schema: <http://schema.org/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-<urn:asos:atom:note-recursion> a asos:KnowledgeAtom, schema:CreativeWork ;
+<urn:ab:atom:note-recursion> a ab:KnowledgeAtom, schema:CreativeWork ;
     schema:headline "Recursion as Cognitive Scaffolding" ;
     schema:text "Detailed commentary and personal reflection..." ;
     schema:citation [
@@ -321,17 +321,17 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(
         schema:keywords "epistemology", "recursion" ;
         schema:text "Strange loops occur whenever..."
     ] ;
-    rdfs:seeAlso <urn:asos:atom:note-heuristics> ;
-    asos:extends <urn:asos:atom:note-problem-solving> .
+    rdfs:seeAlso <urn:ab:atom:note-heuristics> ;
+    ab:extends <urn:ab:atom:note-problem-solving> .
 
-<urn:asos:atom:recipe-tiramisu> a asos:KnowledgeAtom, schema:Recipe ;
+<urn:ab:atom:recipe-tiramisu> a ab:KnowledgeAtom, schema:Recipe ;
     schema:name "Classic Tiramisu" ;
     schema:description "Traditional Treviso method." ;
     schema:recipeIngredient "Mascarpone (500 g)", "Ladyfingers (30 pcs)", "Espresso (250 ml)" ;
     schema:recipeInstructions "1. Brew espresso...", "2. Whip yolks with sugar..." ;
     schema:prepTime "PT30M" ;
     schema:recipeYield "8 servings" ;
-    asos:pairsWith <urn:asos:atom:recipe-espresso-roast> .
+    ab:pairsWith <urn:ab:atom:recipe-espresso-roast> .
 ```
 
 ---
@@ -357,7 +357,7 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(
 
 4. **`test_rdf_export_notes_and_recipes`**:
    - Export graph containing notes and recipes via `RdfExporter::export_turtle`.
-   - Assert RDF output includes `schema:citation`, `schema:recipeIngredient`, `rdfs:seeAlso`, and `asos:extends`.
+   - Assert RDF output includes `schema:citation`, `schema:recipeIngredient`, `rdfs:seeAlso`, and `ab:extends`.
 
 5. **Regression Verification**:
-   - Run full test suite in `asos_verify` ensuring 100% backward compatibility with existing tests.
+   - Run full test suite in `ab_verify` ensuring 100% backward compatibility with existing tests.

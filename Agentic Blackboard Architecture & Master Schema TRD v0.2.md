@@ -1,4 +1,4 @@
-# **ASOS TRD v0.2: Distributed Commonplace Book & Swarm OS**
+# **Agentic Blackboard TRD v0.2: Distributed Commonplace Book & Swarm OS**
 
 **System Substrate:** L3KV / L3KVG (Graph Database) / lite3-cpp (Zero-Copy BSON)  
 **Architecture Framework:** PMBOK, SWEBOK, Google SWE/SRE

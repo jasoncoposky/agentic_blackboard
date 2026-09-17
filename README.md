@@ -1,12 +1,12 @@
-# ASOS: Agentic Sovereign Orchestration Substrate
+# Agentic Blackboard: Sovereign Orchestration Substrate
 
 <p align="center">
-  <img src="asos_logo.png" width="250" alt="ASOS Logo">
+  <img src="ab_logo.png" width="250" alt="Agentic Blackboard Logo">
 </p>
 
-ASOS is a high-performance, distributed **Agentic Blackboard** designed for decentralized governance, multi-tenant memory, and coordination of AI swarm intelligence. It serves as the primary "shared brain" for agentic swarms, enabling real-time semantic consensus, dialectic note linkage, conflict resolution, and spatial materialization within the **Project Nucleus** ecosystem.
+Agentic Blackboard is a high-performance, distributed substrate designed for decentralized governance, multi-tenant memory, and coordination of AI swarm intelligence. It serves as the primary "shared brain" for agentic swarms, enabling real-time semantic consensus, dialectic note linkage, conflict resolution, and spatial materialization within the **Project Nucleus** ecosystem.
 
-![ASOS Dashboard](https://img.shields.io/badge/Substrate-v0.4--Alpha-cyan)
+![Agentic Blackboard Dashboard](https://img.shields.io/badge/Substrate-v0.4--Alpha-cyan)
 ![ZMQ](https://img.shields.io/badge/Network-ZeroMQ-purple)
 ![SWEBOK](https://img.shields.io/badge/Compliance-SWEBOK--15-blue)
 ![C++20](https://img.shields.io/badge/Language-C%2B%2B20-blue)
@@ -14,7 +14,7 @@ ASOS is a high-performance, distributed **Agentic Blackboard** designed for dece
 
 ## 🌌 Core Architecture
 
-ASOS is built on a "Substrate-First" philosophy, where knowledge is not just stored, but actively managed by a fleet of dedicated engines:
+Agentic Blackboard is built on a "Substrate-First" philosophy, where knowledge is not just stored, but actively managed by a fleet of dedicated engines:
 
 *   **Blackboard (The Core)**: A high-frequency, thread-safe knowledge hub that stores "Atoms" (`CpbEntry`). It implements **BetterThan** logic for semantic merge, ensuring that the most accurate and high-priority knowledge always prevails.
 *   **DeltaEngine**: A specialized graph processor that maintains relationships (Synapses) between Atoms, Identities, and Projects.
@@ -26,7 +26,7 @@ ASOS is built on a "Substrate-First" philosophy, where knowledge is not just sto
 
 ## 📚 Universal Librarian Architecture (Life-Long Commonplace Book)
 
-ASOS implements a **Universal Librarian Architecture** that avoids schema bloat and recompilation. Rather than defining bespoke types for every domain, a single universal atom (`CpbEntry`) represents literature notes, culinary recipes, physical workouts, and research procedures through universal primitives:
+Agentic Blackboard implements a **Universal Librarian Architecture** that avoids schema bloat and recompilation. Rather than defining bespoke types for every domain, a single universal atom (`CpbEntry`) represents literature notes, culinary recipes, physical workouts, and research procedures through universal primitives:
 
 *   **`Reference` (Bibliographic Citations)**: Structured source citations with titles, locators (page/timestamp), creator, tags, excerpts, and target atom UUIDs or external DOIs/ISBNs.
 *   **`NoteLink` (Inter-Note Synapses)**: Dialectic and associative relationships between notes (`SEE_ALSO`, `SUPPORTS`, `REFUTES`, `EXTENDS`, `CITES`, `SYNTHESIS_OF`, etc.) with contextual annotations.
@@ -45,7 +45,7 @@ When an atom is committed to the blackboard (`Blackboard::commit_entry`):
 
 ## 🌉 Project Nucleus Integration
 
-ASOS is deeply integrated with **Project Nucleus**, bridging semantic reasoning with spatial reality:
+Agentic Blackboard is deeply integrated with **Project Nucleus**, bridging semantic reasoning with spatial reality:
 
 *   **Spatial Anchors**: Atoms can be "anchored" to physical or virtual fiducials in the Nucleus environment.
 *   **Tactical Materialization**: The substrate can dispatch ZeroMQ commands to the **Nucleus Governor** to spawn widgets or HUD elements directly onto the Sovereign Desktop.
@@ -55,22 +55,22 @@ ASOS is deeply integrated with **Project Nucleus**, bridging semantic reasoning 
 
 ## 🛠️ Components
 
-### 1. ASOS Daemon (`asos_daemon`)
+### 1. Agentic Blackboard Daemon (`agentic-blackboardd`)
 The C++ high-performance storage and orchestration engine.
 *   **API Port**: `8085` (REST)
 *   **Mirror Port**: `8090` (ZMQ Pub/Sub)
 *   **Control Port**: `5556` (Nucleus MCP Bridge)
 
-### 2. ASOS Verification Suite (`asos_verify`)
+### 2. Agentic Blackboard Verification Suite (`ab_verify`)
 Automated test suite validating multi-shard storage, semantic merging, identity ACLs, note backlinks, universal recipes, and RDF export.
 
-### 3. Librarian Knowledge Studio (`asos-dashboard`)
+### 3. Librarian Knowledge Studio (`ab-dashboard`)
 A Next.js-based visualization and governance dashboard.
 *   **Map View**: Real-time force-directed graph of the substrate topology.
 *   **Studio View**: List view of Knowledge Atoms with "Promote" and "Materialize" actions.
 *   **Atmospheric Aesthetic**: A drifting nebular UI that reflects the real-time health of the swarm.
 
-![ASOS Librarian Knowledge Studio](asos_screenshot.png)
+![Agentic Blackboard Knowledge Studio](ab_screenshot.png)
 
 ### 4. Agent Skills Suite
 Standardized Markdown-based procedural guides that instruct agents on how to leverage the substrate:
@@ -80,18 +80,18 @@ Standardized Markdown-based procedural guides that instruct agents on how to lev
 *   `task-orchestration`: Goal decomposition and WBS mapping.
 *   `spatial-materialization`: Projecting knowledge into physical space.
 
-Agents can discover and fetch these skills dynamically at runtime via MCP resources: `asos://skills/{name}` and `asos://schema`.
+Agents can discover and fetch these skills dynamically at runtime via MCP resources: `ab://skills/{name}` and `ab://schema`.
 
 ### 5. Dual Model Context Protocol (MCP) Servers
-ASOS provides dual MCP server implementations with 100% feature parity for Python and Node.js/TypeScript agents:
-*   **Python FastMCP (`asos_mcp_server.py`)**: High-performance asynchronous FastMCP server.
-*   **Node.js MCP (`asos-mcp/index.js`)**: Official `@modelcontextprotocol/sdk` implementation.
+Agentic Blackboard provides dual MCP server implementations with 100% feature parity for Python and Node.js/TypeScript agents:
+*   **Python FastMCP (`ab_mcp_server.py`)**: High-performance asynchronous FastMCP server.
+*   **Node.js MCP (`ab-mcp/index.js`)**: Official `@modelcontextprotocol/sdk` implementation.
 
 Both servers expose:
 *   **Discovery & Querying**: `search_commonplace`, `get_node`, `get_node_links`, `query_knowledge`, `query_substrate`.
 *   **Authoring & Deduplication**: `create_note`, `create_catalog_entry`, `commit_knowledge_bundle`, `link_nodes`. Automatic pre-flight duplicate detection (`check_duplicates=True`) prevents duplicate atoms.
 *   **Semantic Export**: `export_graph_rdf` (W3C RDF Turtle).
-*   **Dynamic Resources**: `asos://schema`, `asos://skills/{name}`.
+*   **Dynamic Resources**: `ab://schema`, `ab://skills/{name}`.
 *   **Agent Prompts**: `curate_note`, `author_catalog`, `init_swarm`.
 
 ---
@@ -102,13 +102,13 @@ Both servers expose:
 ```bash
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . --target asos_daemon asos_verify
+cmake --build . --target agentic-blackboardd ab_verify
 
 # Run the automated verification test suite
-./asos_verify
+./ab_verify
 
 # Launch the daemon
-./asos_daemon
+./agentic-blackboardd
 ```
 
 ### Run End-to-End Integration Verification
@@ -118,7 +118,7 @@ python3 scratch/test_atmosphere_full_cycle.py
 
 ### Launch the Dashboard (Next.js)
 ```bash
-cd asos-dashboard
+cd ab-dashboard
 npm install
 npm run dev
 ```
@@ -127,12 +127,12 @@ npm run dev
 
 **Python FastMCP:**
 ```bash
-python3 asos_mcp_server.py
+python3 ab_mcp_server.py
 ```
 
 **Node.js MCP:**
 ```bash
-node asos-mcp/index.js
+node ab-mcp/index.js
 ```
 
 ---
@@ -141,7 +141,7 @@ node asos-mcp/index.js
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/api/v1/schema` | `GET` | Retrieve ASOS schema definition, 32 KnowledgeAreas, and 27 relationship predicates. |
+| `/api/v1/schema` | `GET` | Retrieve Agentic Blackboard schema definition, 32 KnowledgeAreas, and 27 relationship predicates. |
 | `/api/v1/health` | `GET` | Substrate health check and engine readiness. |
 | `/api/v1/search` | `GET` | Multi-tenant full-text and filtered search (`q`, `ka`, `tags`, `limit`). |
 | `/api/v1/node/:id/links` | `GET` | Retrieve inbound backlinks and outbound synapses with hydrated statements. |

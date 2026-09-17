@@ -5,7 +5,7 @@
 ---
 
 ## 1. Background & Objectives
-The Agentic Sovereign Orchestration Substrate (ASOS) Blackboard was originally optimized for software engineering workflows (anchored on SWEBOK Knowledge Areas and SDLC entities). However, to pivot the substrate to serve as a holistic life tracking and journaling engine, we must expand the underlying schema.
+The Agentic Blackboard was originally optimized for software engineering workflows (anchored on SWEBOK Knowledge Areas and SDLC entities). However, to pivot the substrate to serve as a holistic life tracking and journaling engine, we must expand the underlying schema.
 
 The objective is to introduce wellness metrics, physical and mental activities, learning/education logs, and geographical/physical coordinates into the C++ Zero-Copy BSON graph model, while keeping the database backward-compatible with software engineering entries.
 
@@ -78,7 +78,7 @@ To support multi-tenancy and prevent key collisions or unauthorized access betwe
 
 ## 5. Verification Plan
 1. **Compilation**: Compile the library and executables using `cmake`.
-2. **Unit Testing**: Extend the verification tool `asos_verify`:
+2. **Unit Testing**: Extend the verification tool `ab_verify`:
    - Verify that a journal entry containing a `Wellness` payload serializes, deserializes, and traverses edge lookups correctly.
    - Seed a root identity node, register its ACL credentials in the storage engine, and verify that reads/writes using its `principal_id` succeed for its own prefix and fail for another user's prefix.
 

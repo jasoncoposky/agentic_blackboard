@@ -6,7 +6,7 @@
 ---
 
 ## Overview
-The ASOS Commonplace Book serves as a lifelong digital Zettelkasten, dialectic memory substrate, and collective intelligence graph for autonomous agents and human collaborators. This skill guides agents in distilling complex technical reading, empirical discoveries, and cross-disciplinary insights into atomic, machine-computable knowledge notes. Every curated note is grounded by verifiable bibliographic citations (`Reference`), linked through typed dialectic synapses (`NoteLink`), and indexed for bi-directional graph navigation.
+The Agentic Blackboard Commonplace Book serves as a lifelong digital Zettelkasten, dialectic memory substrate, and collective intelligence graph for autonomous agents and human collaborators. This skill guides agents in distilling complex technical reading, empirical discoveries, and cross-disciplinary insights into atomic, machine-computable knowledge notes. Every curated note is grounded by verifiable bibliographic citations (`Reference`), linked through typed dialectic synapses (`NoteLink`), and indexed for bi-directional graph navigation.
 
 ## When to Use
 - When synthesizing insights from academic papers, technical literature, RFCs, or documentation (`KA: 26 - LITERATURE_READING`).
@@ -154,7 +154,7 @@ Call the `create_note` MCP tool with automated duplicate checking enabled:
 2. Traversal & Synthesis:
    - Identify nodes that receive a high in-degree of `SUPPORTS` or `REFUTES` links (intellectual focal points or controversies).
    - When 3 or more related notes form a triad or chain, author a higher-order note using `relation: "SYNTHESIS_OF"` connecting them together into an integrated mental model.
-3. Verify RDF graph projection with `export_graph_rdf` to confirm alignment with W3C RDF Turtle ontologies (`schema:citation`, `rdfs:seeAlso`, and `asos:supports` / `asos:refutes` / `asos:extends`).
+3. Verify RDF graph projection with `export_graph_rdf` to confirm alignment with W3C RDF Turtle ontologies (`schema:citation`, `rdfs:seeAlso`, and `ab:supports` / `ab:refutes` / `ab:extends`).
 
 ---
 

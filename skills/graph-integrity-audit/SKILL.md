@@ -1,7 +1,7 @@
 # Graph Integrity Audit Skill
 
 ## name: graph-integrity-audit
-## description: Perform periodic SWEBOK compliance and structural health checks on the ASOS Knowledge Graph.
+## description: Perform periodic SWEBOK compliance and structural health checks on the Agentic Blackboard Knowledge Graph.
 
 ---
 

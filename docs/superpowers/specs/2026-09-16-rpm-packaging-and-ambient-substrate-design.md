@@ -11,7 +11,7 @@
 
 The **Agentic Blackboard** (`agentic-blackboard`) is a high-performance, distributed knowledge substrate designed to maintain persistent cognitive and spatial state for human users across a constellation of computing surfaces, proxied by fleets of autonomous AI agents. 
 
-While the blackboard interacts with distributed orchestration systems, its product identity is distinct and self-contained: it is **not** branded as ASOS, but rather as the standalone **Agentic Blackboard**.
+While the blackboard interacts with distributed orchestration systems, its product identity is distinct and self-contained: it is branded as the standalone **Agentic Blackboard**.
 
 ### Core Tenets of Productization
 1. **Canonical Enterprise Packaging**: Packaged as a standard RPM (`agentic-blackboard-*.rpm`) for RHEL 9, Rocky Linux 9, and AlmaLinux 9, accompanied by an enterprise-grade systemd service (`agentic-blackboard.service`) and the unified management CLI (`ab-ctl`).
@@ -106,7 +106,7 @@ To maintain sub-15ms perceptual synchrony across surfaces:
 
 ## 3. Schema & Provenance Evolution
 
-The `CpbEntry::Header::Origin` structure in [`include/asos/schema.hpp`](file:///home/darkfell/dev/agentic_blackboard/include/asos/schema.hpp) is updated to capture full interaction provenance without assuming input modality:
+The `CpbEntry::Header::Origin` structure in [`include/agentic_blackboard/schema.hpp`](file:///home/darkfell/dev/agentic_blackboard/include/agentic_blackboard/schema.hpp) is updated to capture full interaction provenance without assuming input modality:
 
 ```cpp
 struct Origin {

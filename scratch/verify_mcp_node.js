@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Standalone verification script for ASOS Node.js MCP Server upgrades.
+ * Standalone verification script for Agentic Blackboard Node.js MCP Server upgrades.
  * Verifies:
- * 1. HTTP Client Timeouts & Resource security (asos://schema, asos://skills/knowledge-capture, path traversal prevention)
+ * 1. HTTP Client Timeouts & Resource security (ab://schema, ab://skills/knowledge-capture, path traversal prevention)
  * 2. Prompts (curate_note, author_catalog, init_swarm)
  * 3. Anchor node creation (ensure_node)
  * 4. create_note (structured JSON response, auto-generated UUID, duplicate detection, forced duplicate)
@@ -21,9 +21,9 @@ const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
 
-// Configure NODE_PATH to resolve packages from asos-mcp/node_modules
+// Configure NODE_PATH to resolve packages from ab-mcp/node_modules
 const REPO_ROOT = path.resolve(__dirname, "..");
-const modulePath = path.resolve(REPO_ROOT, "asos-mcp/node_modules");
+const modulePath = path.resolve(REPO_ROOT, "ab-mcp/node_modules");
 if (!process.env.NODE_PATH) {
   process.env.NODE_PATH = modulePath;
   require("module").Module._initPaths();
@@ -56,7 +56,7 @@ const {
   init_swarm,
   curate_note,
   author_catalog,
-} = require("../asos-mcp/index.js");
+} = require("../ab-mcp/index.js");
 
 let startedProcess = null;
 
@@ -64,19 +64,19 @@ async function ensureBackend() {
   try {
     const resp = await axios.get(`${API_BASE}/schema`, { timeout: 2000 });
     if (resp.status === 200) {
-      console.log("[VERIFY] Connected to running ASOS daemon at", API_BASE);
+      console.log("[VERIFY] Connected to running Agentic Blackboard daemon at", API_BASE);
       return;
     }
   } catch (e) {
     // Daemon not reachable, spawn it
   }
 
-  const daemonBin = path.resolve(REPO_ROOT, "build/asos_daemon");
+  const daemonBin = path.resolve(REPO_ROOT, "build/agentic-blackboardd");
   if (!fs.existsSync(daemonBin)) {
     throw new Error(`Backend daemon binary not found at ${daemonBin}`);
   }
 
-  console.log(`[VERIFY] Starting ASOS daemon: ${daemonBin}`);
+  console.log(`[VERIFY] Starting Agentic Blackboard daemon: ${daemonBin}`);
   startedProcess = spawn(daemonBin, [], {
     cwd: REPO_ROOT,
     stdio: "ignore",
@@ -88,7 +88,7 @@ async function ensureBackend() {
     try {
       const resp = await axios.get(`${API_BASE}/schema`, { timeout: 1000 });
       if (resp.status === 200) {
-        console.log("[VERIFY] ASOS daemon started and ready.");
+        console.log("[VERIFY] Agentic Blackboard daemon started and ready.");
         return;
       }
     } catch (e) {
@@ -96,12 +96,12 @@ async function ensureBackend() {
     }
   }
 
-  throw new Error("Failed to connect to ASOS daemon after starting it.");
+  throw new Error("Failed to connect to Agentic Blackboard daemon after starting it.");
 }
 
 async function runTests() {
   console.log("\n" + "=".repeat(60));
-  console.log("RUNNING ASOS NODE.JS MCP VERIFICATION SUITE");
+  console.log("RUNNING AGENTIC BLACKBOARD NODE.JS MCP VERIFICATION SUITE");
   console.log("=".repeat(60));
 
   // 0. Test Timeout Configurations
@@ -116,13 +116,13 @@ async function runTests() {
   if (!schemaText.includes("knowledge_areas") || !schemaText.includes("types")) {
     throw new Error("get_schema() missing knowledge_areas or types: " + schemaText);
   }
-  console.log("✓ asos://schema resource verified.");
+  console.log("✓ ab://schema resource verified.");
 
   const skillText = await get_skill("knowledge-capture");
   if (!skillText.includes("# Knowledge Capture Skill")) {
     throw new Error("Skill title missing in knowledge-capture: " + skillText);
   }
-  console.log("✓ asos://skills/knowledge-capture resource verified.");
+  console.log("✓ ab://skills/knowledge-capture resource verified.");
 
   const errSkill = await get_skill("nonexistent-skill-xyz");
   if (errSkill !== "Error: Skill 'nonexistent-skill-xyz' not found.") {
@@ -398,7 +398,7 @@ async function runTests() {
   console.log("\n--- 9. Testing export_graph_rdf ---");
   const rdfText = await export_graph_rdf();
   if (!rdfText.includes("@prefix")) throw new Error("RDF Turtle missing @prefix");
-  if (!rdfText.includes("schema:") && !rdfText.includes("asos:")) {
+  if (!rdfText.includes("schema:") && !rdfText.includes("ab:")) {
     throw new Error("RDF Turtle missing expected ontology prefixes");
   }
   console.log(`✓ export_graph_rdf verified (${rdfText.length} bytes received).`);
@@ -471,7 +471,7 @@ async function runTests() {
   // 12. Test Full MCP Client Protocol Interface via InMemoryTransport
   console.log("\n--- 12. Testing Full MCP Client Protocol Interface (InMemoryTransport) ---");
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const mcpClient = new Client({ name: "asos-test-client", version: "1.0.0" }, { capabilities: {} });
+  const mcpClient = new Client({ name: "ab-test-client", version: "1.0.0" }, { capabilities: {} });
 
   await server.connect(serverTransport);
   await mcpClient.connect(clientTransport);
@@ -510,22 +510,22 @@ async function runTests() {
   // 12c. List & Read Resources via MCP Client
   const resList = await mcpClient.listResources();
   const resUris = resList.resources.map((r) => r.uri);
-  if (!resUris.includes("asos://schema")) throw new Error("Missing asos://schema in listResources");
+  if (!resUris.includes("ab://schema")) throw new Error("Missing ab://schema in listResources");
   console.log(`✓ mcpClient.listResources() listed ${resList.resources.length} resources.`);
 
-  const schemaMcpRes = await mcpClient.readResource({ uri: "asos://schema" });
+  const schemaMcpRes = await mcpClient.readResource({ uri: "ab://schema" });
   if (!schemaMcpRes.contents || schemaMcpRes.contents.length === 0) throw new Error("readResource schema empty");
   if (!schemaMcpRes.contents[0].text.includes("knowledge_areas")) {
     throw new Error("readResource schema missing knowledge_areas");
   }
-  console.log("✓ mcpClient.readResource('asos://schema') verified via JSON-RPC.");
+  console.log("✓ mcpClient.readResource('ab://schema') verified via JSON-RPC.");
 
-  const skillMcpRes = await mcpClient.readResource({ uri: "asos://skills/knowledge-capture" });
+  const skillMcpRes = await mcpClient.readResource({ uri: "ab://skills/knowledge-capture" });
   if (!skillMcpRes.contents || skillMcpRes.contents.length === 0) throw new Error("readResource skill empty");
   if (!skillMcpRes.contents[0].text.includes("# Knowledge Capture Skill")) {
     throw new Error("readResource skill content missing title");
   }
-  console.log("✓ mcpClient.readResource('asos://skills/knowledge-capture') verified via JSON-RPC.");
+  console.log("✓ mcpClient.readResource('ab://skills/knowledge-capture') verified via JSON-RPC.");
 
   // 12d. List & Get Prompts via MCP Client
   const promptsList = await mcpClient.listPrompts();
@@ -649,7 +649,7 @@ async function runTests() {
   console.log("✓ mcpClient.callTool('query_substrate') verified via JSON-RPC.");
 
   console.log("\n" + "=".repeat(60));
-  console.log("ALL ASOS NODE.JS MCP VERIFICATION TESTS PASSED!");
+  console.log("ALL AGENTIC BLACKBOARD NODE.JS MCP VERIFICATION TESTS PASSED!");
   console.log("=".repeat(60) + "\n");
 }
 

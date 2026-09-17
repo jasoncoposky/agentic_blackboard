@@ -44,7 +44,7 @@ graph TD
 **Tech Stack:** C++20, CMake / CPack, RPM spec / rpmbuild, Red Hat UBI 9 Minimal, Python 3 / httpx / FastMCP, ZeroMQ, Server-Sent Events (SSE).
 
 ## Global Constraints
-- Product name is `agentic-blackboard` (not branded as ASOS).
+- Product name is `agentic-blackboard` (branded as Agentic Blackboard).
 - Binary names: daemon is `agentic-blackboardd`, management CLI is `ab-ctl`.
 - Service name: `agentic-blackboard.service`.
 - FHS directories: `/etc/agentic-blackboard`, `/var/lib/agentic-blackboard`, `/usr/share/agentic-blackboard`.
@@ -57,21 +57,21 @@ graph TD
 ### Task 1: Schema & Origin Provenance Evolution
 
 **Files:**
-- Modify: `include/asos/schema.hpp:516-530`
+- Modify: `include/agentic_blackboard/schema.hpp:516-530`
 - Modify: `src/Blackboard.cpp:95-135`
 - Test: `src/main_verify.cpp:1100-1160`
 
 **Interfaces:**
-- Consumes: Existing `CpbEntry` struct in `include/asos/schema.hpp`.
+- Consumes: Existing `CpbEntry` struct in `include/agentic_blackboard/schema.hpp`.
 - Produces: Expanded `CpbEntry::Header::Origin` with `user_id`, `surface_id`, `surface_type`, `context_id`, and `session_id`, fully serialized/deserialized in zero-copy BSON buffers.
 
 - [ ] **Step 1: Write failing test in `src/main_verify.cpp`**
 
 ```cpp
-void test_multi_surface_provenance(asos::Blackboard& bb) {
+void test_multi_surface_provenance(ab::Blackboard& bb) {
     std::cout << "\n[Test] Starting Multi-Surface Provenance Verification..." << std::endl;
     
-    asos::CpbEntry atom;
+    ab::CpbEntry atom;
     atom.header.uuid = "atom-provenance-1";
     atom.header.origin.user_id = "user:jason";
     atom.header.origin.agent_id = "agent:spatial-librarian";
@@ -82,7 +82,7 @@ void test_multi_surface_provenance(asos::Blackboard& bb) {
     atom.header.origin.session_id = "sess-alpha-99";
     
     atom.payload.statement = "Topological defects in superfluid helium mimic cosmic strings.";
-    atom.taxonomy.knowledge_area = asos::KnowledgeArea::COMPUTING_FOUNDATIONS;
+    atom.taxonomy.knowledge_area = ab::KnowledgeArea::COMPUTING_FOUNDATIONS;
     
     assert(bb.commit_cpb_entry(atom));
     
@@ -91,7 +91,7 @@ void test_multi_surface_provenance(asos::Blackboard& bb) {
     auto buf = bb.get_engine()->get_store()->get(std::string(l3kvg::KeyBuilder::node_key(nid)));
     assert(buf.size() > 0);
     
-    auto retrieved = asos::CpbEntry::deserialize(buf);
+    auto retrieved = ab::CpbEntry::deserialize(buf);
     assert(retrieved.header.origin.user_id == "user:jason");
     assert(retrieved.header.origin.agent_id == "agent:spatial-librarian");
     assert(retrieved.header.origin.surface_id == "surface:multitouch-table-01");
@@ -106,10 +106,10 @@ void test_multi_surface_provenance(asos::Blackboard& bb) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cmake --build build --target asos_verify && ./build/asos_verify`  
+Run: `cmake --build build --target ab_verify && ./build/ab_verify`  
 Expected: Compilation failure due to missing `user_id`, `surface_id`, etc. on `header.origin`.
 
-- [ ] **Step 3: Update `Origin` struct and serialization in `include/asos/schema.hpp`**
+- [ ] **Step 3: Update `Origin` struct and serialization in `include/agentic_blackboard/schema.hpp`**
 
 ```cpp
 struct Origin {
@@ -130,13 +130,13 @@ Update anchor verification so that if `user_id` is present, it anchors to user i
 
 - [ ] **Step 5: Run tests and verify PASS**
 
-Run: `cmake --build build --target asos_verify && ./build/asos_verify`  
+Run: `cmake --build build --target ab_verify && ./build/ab_verify`  
 Expected: PASS with "[Test] Multi-Surface Provenance Verification PASSED".
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add include/asos/schema.hpp src/Blackboard.cpp src/main_verify.cpp
+git add include/agentic_blackboard/schema.hpp src/Blackboard.cpp src/main_verify.cpp
 git commit -m "feat(schema): add multi-surface origin provenance to CpbEntry"
 ```
 
@@ -145,7 +145,7 @@ git commit -m "feat(schema): add multi-surface origin provenance to CpbEntry"
 ### Task 2: Configurable Authentication & Token Credential Manager
 
 **Files:**
-- Modify: `include/asos/Blackboard.hpp:25-35`
+- Modify: `include/agentic_blackboard/Blackboard.hpp:25-35`
 - Modify: `src/Blackboard.cpp:75-95`
 - Modify: `src/ApiServer.cpp:135-155, 330-350`
 - Test: `src/main_verify.cpp:1170-1230`
@@ -161,7 +161,7 @@ git commit -m "feat(schema): add multi-surface origin provenance to CpbEntry"
 - [ ] **Step 1: Write failing test in `src/main_verify.cpp`**
 
 ```cpp
-void test_token_auth_and_roles(asos::Blackboard& bb) {
+void test_token_auth_and_roles(ab::Blackboard& bb) {
     std::cout << "\n[Test] Starting Token Authentication & RBAC Verification..." << std::endl;
     
     bb.set_auth_mode("token");
@@ -189,7 +189,7 @@ void test_token_auth_and_roles(asos::Blackboard& bb) {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cmake --build build --target asos_verify && ./build/asos_verify`  
+Run: `cmake --build build --target ab_verify && ./build/ab_verify`  
 Expected: Compilation failure due to missing `register_token` and `validate_token`.
 
 - [ ] **Step 3: Implement Token Manager in `Blackboard.hpp` and `Blackboard.cpp`**
@@ -207,13 +207,13 @@ If `auth_mode == "trusted_network"`:
 
 - [ ] **Step 5: Run tests and verify PASS**
 
-Run: `cmake --build build --target asos_verify && ./build/asos_verify`  
+Run: `cmake --build build --target ab_verify && ./build/ab_verify`  
 Expected: PASS with "[Test] Token Authentication & RBAC Verification PASSED".
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add include/asos/Blackboard.hpp src/Blackboard.cpp src/ApiServer.cpp src/main_verify.cpp
+git add include/agentic_blackboard/Blackboard.hpp src/Blackboard.cpp src/ApiServer.cpp src/main_verify.cpp
 git commit -m "feat(auth): implement token authentication guard and role validation"
 ```
 
@@ -222,7 +222,7 @@ git commit -m "feat(auth): implement token authentication guard and role validat
 ### Task 3: Shared Workspace Context & Multi-Surface SSE Event Sync
 
 **Files:**
-- Modify: `include/asos/ApiServer.hpp`
+- Modify: `include/agentic_blackboard/ApiServer.hpp`
 - Modify: `src/ApiServer.cpp`
 - Create: `scratch/test_multi_surface_sync.py`
 
@@ -260,7 +260,7 @@ Expected: PASS with 100% events delivered under 20ms.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add include/asos/ApiServer.hpp src/ApiServer.cpp scratch/test_multi_surface_sync.py
+git add include/agentic_blackboard/ApiServer.hpp src/ApiServer.cpp scratch/test_multi_surface_sync.py
 git commit -m "feat(sync): add multi-surface context broker and real-time SSE event streaming"
 ```
 

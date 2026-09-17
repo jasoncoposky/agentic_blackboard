@@ -1,7 +1,7 @@
 # Task Orchestration Skill
 
 ## name: task-orchestration
-## description: Decompose complex goals into a Work Breakdown Structure (WBS) on the ASOS Blackboard.
+## description: Decompose complex goals into a Work Breakdown Structure (WBS) on the Agentic Blackboard.
 
 ---
 

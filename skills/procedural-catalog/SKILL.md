@@ -6,7 +6,7 @@
 ---
 
 ## Overview
-Procedural knowledge encompasses reproducible instructions for physical, chemical, computational, and culinary processes. Unlike descriptive text, procedural execution requires structured decomposition into discrete bills-of-materials (`CatalogItem`), ordered instruction sequences (`CatalogStep`), and quantifiable operational limits (`CatalogMetric`). This skill guides agents in authoring, standardizing, and curating procedural catalog entries in the ASOS Substrate using the `create_catalog_entry` MCP tool.
+Procedural knowledge encompasses reproducible instructions for physical, chemical, computational, and culinary processes. Unlike descriptive text, procedural execution requires structured decomposition into discrete bills-of-materials (`CatalogItem`), ordered instruction sequences (`CatalogStep`), and quantifiable operational limits (`CatalogMetric`). This skill guides agents in authoring, standardizing, and curating procedural catalog entries in the Agentic Blackboard Substrate using the `create_catalog_entry` MCP tool.
 
 ## When to Use
 - **Culinary Recipes & Food Science**: Ingredients, prep steps, cooking times, temperatures, and yield metrics (`KA: 27 - CULINARY_RECIPES`).
@@ -253,7 +253,7 @@ After the catalog entry is committed:
    - `PAIRS_WITH`: Connect to companion recipes, sauces, or drink pairings (e.g., connecting focaccia to a roasted garlic dipping oil).
    - `VARIATION_OF`: Connect a customized iteration to its baseline catalog entry.
    - `USES_INGREDIENT`: Connect the catalog recipe to specific ingredient notes or starter cultures in the substrate.
-3. Validate W3C RDF Turtle projection with `export_graph_rdf` to ensure export conforms to `schema:Recipe`, `schema:recipeIngredient`, `schema:recipeInstructions`, and `asos:metric` vocabularies.
+3. Validate W3C RDF Turtle projection with `export_graph_rdf` to ensure export conforms to `schema:Recipe`, `schema:recipeIngredient`, `schema:recipeInstructions`, and `ab:metric` vocabularies.
 
 ---
 

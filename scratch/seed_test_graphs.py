@@ -2,7 +2,7 @@ import httpx
 import uuid
 import time
 
-ASOS_API_URL = "http://localhost:8085/api/v1"
+AB_API_URL = "http://localhost:8085/api/v1"
 
 def ensure_project(project_id, description):
     payload = {
@@ -14,7 +14,7 @@ def ensure_project(project_id, description):
         }
     }
     print(f"Ensuring Project: {project_id}")
-    res = httpx.post(f"{ASOS_API_URL}/graph/node", json=payload)
+    res = httpx.post(f"{AB_API_URL}/graph/node", json=payload)
     print(res.text)
 
 def commit_bundle(project_id, agent_id, atoms):
@@ -24,7 +24,7 @@ def commit_bundle(project_id, agent_id, atoms):
         "atoms": atoms
     }
     print(f"Committing Bundle for {project_id}")
-    res = httpx.post(f"{ASOS_API_URL}/graph/bundle", json=payload)
+    res = httpx.post(f"{AB_API_URL}/graph/bundle", json=payload)
     print(res.text)
     # Return UUIDs of created atoms
     import json
@@ -42,7 +42,7 @@ def link_nodes(src, dst, label):
         "weight": 1.0
     }
     print(f"Linking {src} -> {dst} ({label})")
-    res = httpx.post(f"{ASOS_API_URL}/link", json=payload)
+    res = httpx.post(f"{AB_API_URL}/link", json=payload)
     print(res.text)
 
 def seed():

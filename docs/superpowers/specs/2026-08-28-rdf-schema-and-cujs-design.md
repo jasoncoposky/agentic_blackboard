@@ -1,4 +1,4 @@
-# Design Spec: ASOS RDF Schema Enhancements & Critical User Journeys (CUJs)
+# Design Spec: Agentic Blackboard RDF Schema Enhancements & Critical User Journeys (CUJs)
 **Date**: 2026-08-28  
 **Status**: APPROVED (Approach A)  
 **Author**: Advanced Agentic Coding Pair  
@@ -7,10 +7,10 @@
 
 ## 1. Overview & Objectives
 
-The **Agentic Sovereign Orchestration Substrate (ASOS)** serves as the high-performance distributed blackboard for agentic swarm intelligence, spatial computing (Project Nucleus), and holistic life journaling. 
+The **Agentic Blackboard** serves as the high-performance distributed blackboard for agentic swarm intelligence, spatial computing (Project Nucleus), and holistic life journaling. 
 
 This specification establishes:
-1. **First-Class Semantic Predicates (`asos::rel`)**: Formalizing task dependencies (`DEPENDS_ON`, `BLOCKS`, `SUBTASK_OF`), compliance auditing (`VALIDATED_BY`), and goal alignment (`CONTRIBUTES_TO`).
+1. **First-Class Semantic Predicates (`ab::rel`)**: Formalizing task dependencies (`DEPENDS_ON`, `BLOCKS`, `SUBTASK_OF`), compliance auditing (`VALIDATED_BY`), and goal alignment (`CONTRIBUTES_TO`).
 2. **Bitemporality**: Adding `event_timestamp` to `CpbEntry::Header` to clearly decouple physical occurrence time from substrate transaction/commit time.
 3. **Long-Term Goal Hierarchy (`GoalNode`)**: Providing structured multi-period goal tracking linked to everyday knowledge atoms, wellness logs, and engineering tasks.
 4. **W3C RDF Turtle Export (`RdfExporter`)**: Enabling seamless interoperability with Semantic Web, GraphDB, and external visualization tools via standard Turtle (`.ttl`) format and REST API.
@@ -20,7 +20,7 @@ This specification establishes:
 
 ## 2. Detailed Schema Enhancements
 
-### 2.1. New Semantic Graph Relationships (`asos::rel`)
+### 2.1. New Semantic Graph Relationships (`ab::rel`)
 
 ```cpp
 namespace rel {
@@ -109,23 +109,23 @@ struct GoalNode {
 The `RdfExporter` class inspects nodes and edges in `l3kvg` and outputs standard W3C Turtle (`text/turtle`):
 
 ```turtle
-@prefix asos: <http://asos.substrate.ai/schema#> .
+@prefix ab: <http://agenticblackboard.ai/schema#> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix geo: <http://www.w3.org/2003/01/geo/wgs84_pos#> .
 
-<atom:101> a asos:KnowledgeAtom ;
-    asos:statement "Visitor pattern for AST traversal in C++" ;
-    asos:knowledgeArea 2 ;
-    asos:applicability 85 ;
+<atom:101> a ab:KnowledgeAtom ;
+    ab:statement "Visitor pattern for AST traversal in C++" ;
+    ab:knowledgeArea 2 ;
+    ab:applicability 85 ;
     prov:wasGeneratedBy <identity:agent-arch> ;
-    asos:belongsTo <project:proj-compiler> ;
-    asos:eventTime "2026-08-28T16:00:00Z"^^xsd:dateTime ;
+    ab:belongsTo <project:proj-compiler> ;
+    ab:eventTime "2026-08-28T16:00:00Z"^^xsd:dateTime ;
     prov:generatedAtTime "2026-08-28T16:05:00Z"^^xsd:dateTime ;
-    asos:validatedBy <identity:auditor-007> ;
-    asos:contributesTo <goal:c-compiler> .
+    ab:validatedBy <identity:auditor-007> ;
+    ab:contributesTo <goal:c-compiler> .
 ```
 
 * **HTTP Endpoint**: `GET /api/v1/graph/export?format=turtle` in `ApiServer`.
@@ -136,7 +136,7 @@ The `RdfExporter` class inspects nodes and edges in `l3kvg` and outputs standard
 
 ```mermaid
 journey
-    title ASOS Swarm Critical User Journeys
+    title Agentic Blackboard Swarm Critical User Journeys
     section CUJ 1: Multi-Agent SWE Execution
       Decompose WBS into DAG: 5: Architect Agent
       Claim Subtask & Execute: 5: Worker Agent
@@ -188,7 +188,7 @@ journey
 
 ## 4. Verification Plan
 
-1. **Schema Unit Tests (`asos_verify`)**:
+1. **Schema Unit Tests (`ab_verify`)**:
    - Verify `DEPENDS_ON`, `BLOCKS`, `SUBTASK_OF`, `VALIDATED_BY`, and `CONTRIBUTES_TO` edge traversal.
    - Verify `GoalNode` serialization, deserialization, and progress tracking.
    - Verify bitemporal sorting and filtering (`event_timestamp` vs `timestamp`).
