@@ -82,7 +82,21 @@ Standardized Markdown-based procedural guides that instruct agents on how to lev
 
 Agents can discover and fetch these skills dynamically at runtime via MCP resources: `ab://skills/{name}` and `ab://schema`.
 
-### 5. Dual Model Context Protocol (MCP) Servers
+### 5. Administrative & MCP Bridge CLI (`ab-ctl`)
+An enterprise administrative and operational control tool installed to `/usr/bin/ab-ctl` (or `python3 src/ab-ctl.py`):
+*   **Substrate Management**: `ab-ctl init --bootstrap` (generates credential database and admin bootstrap token), `ab-ctl status` (checks daemon connectivity, auth mode, and substrate state).
+*   **RBAC & Token Credential Management**:
+    *   `ab-ctl user create <username> --role <admin|curator|agent|surface>`
+    *   `ab-ctl user list`
+    *   `ab-ctl agent create <agent_name> --user <username> --project <project_id>`
+*   **Ambient Multi-Surface Context**:
+    *   `ab-ctl surface register --name <surface_id> --type <tabletop|tablet|wall|hmd> --context <context_id>`
+    *   `ab-ctl context show <context_id>`
+    *   `ab-ctl context focus <context_id> --selected <atom_id_1> <atom_id_2>`
+*   **Integrated FastMCP Server**:
+    *   `ab-ctl mcp run --connect=http://localhost:8085 --token=<token>` (launches stdio MCP bridge with all 15 blackboard tools and dynamic skill resources).
+
+### 6. Dual Model Context Protocol (MCP) Servers
 Agentic Blackboard provides dual MCP server implementations with 100% feature parity for Python and Node.js/TypeScript agents:
 *   **Python FastMCP (`ab_mcp_server.py`)**: High-performance asynchronous FastMCP server.
 *   **Node.js MCP (`ab-mcp/index.js`)**: Official `@modelcontextprotocol/sdk` implementation.
@@ -93,6 +107,10 @@ Both servers expose:
 *   **Semantic Export**: `export_graph_rdf` (W3C RDF Turtle).
 *   **Dynamic Resources**: `ab://schema`, `ab://skills/{name}`.
 *   **Agent Prompts**: `curate_note`, `author_catalog`, `init_swarm`.
+
+### 7. Enterprise RPM Packaging & Canonical Containerization
+*   **Enterprise Linux 9 RPM**: Packaged via CPack and RPM spec (`packaging/rpm/agentic-blackboard.spec`) providing `/usr/bin/agentic-blackboardd`, `/usr/bin/ab-ctl`, `/usr/lib/systemd/system/agentic-blackboard.service`, `/etc/agentic-blackboard/blackboard.conf`, `/etc/security/limits.d/99-blackboard.conf`, and `/usr/share/agentic-blackboard/skills`.
+*   **Canonical Container (UBI 9 Minimal)**: `Dockerfile` builds a production Red Hat Universal Base Image 9 container running as unprivileged `blackboard` user with volume auto-initialization via `entrypoint.sh`.
 
 ---
 
@@ -114,6 +132,45 @@ cmake --build . --target agentic-blackboardd ab_verify
 ### Run End-to-End Integration Verification
 ```bash
 python3 scratch/test_atmosphere_full_cycle.py
+```
+
+### Administrative & CLI Control (`ab-ctl`)
+```bash
+# Bootstrap substrate and generate initial admin token
+python3 src/ab-ctl.py init --bootstrap
+
+# Check operational status
+python3 src/ab-ctl.py status
+
+# Create a curator user
+python3 src/ab-ctl.py user create alice --role curator
+
+# Register an ambient tabletop surface
+python3 src/ab-ctl.py surface register --name table-01 --type tabletop --context ctx:lab-42
+
+# Launch integrated FastMCP runner for LLM agent integration
+python3 src/ab-ctl.py mcp run --smoke-test
+```
+
+### Build Enterprise RPM Package
+```bash
+cd build
+cpack -G RPM
+# Generates build/agentic-blackboard-0.4.0-1.el9.x86_64.rpm
+```
+
+### Run Canonical Container (Docker / Podman)
+```bash
+# Build the container image
+docker build -t agentic-blackboard:latest .
+
+# Run with persistent data and configuration volumes
+docker run -d \
+  --name agentic-blackboard \
+  -p 8085:8085 \
+  -v /var/lib/agentic-blackboard:/var/lib/agentic-blackboard:rw \
+  -v /etc/agentic-blackboard:/etc/agentic-blackboard:rw \
+  agentic-blackboard:latest
 ```
 
 ### Launch the Dashboard (Next.js)
@@ -153,6 +210,10 @@ node ab-mcp/index.js
 | `/api/v1/cpb/promote` | `POST` | Elevate an atom to `PRINCIPLE` status. |
 | `/api/v1/graph/snapshot` | `GET` | Retrieve the full substrate topology. |
 | `/api/v1/graph/export` | `GET` | Export the substrate knowledge graph as W3C RDF Turtle. |
+| `/api/v1/context/register` | `POST` | Register an ambient surface and join a shared workspace context. |
+| `/api/v1/context/:id` | `GET` | Retrieve context state, active surfaces list, and current focus selection. |
+| `/api/v1/context/:id/focus` | `POST` | Broadcast multi-surface focus updates and selection telemetry to subscribers. |
+| `/api/v1/events` | `GET` | Real-time Server-Sent Events (SSE) stream for context events and committed atoms. |
 | `/api/v1/nucleus/materialize` | `POST` | Spawn a spatial widget in Project Nucleus. |
 | `/api/v1/nucleus/bind` | `POST` | Bind an atom to a spatial anchor. |
 
