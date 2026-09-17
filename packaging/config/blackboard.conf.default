@@ -1,5 +1,5 @@
 # Agentic Blackboard Configuration (Reference / Default)
-# Stock configuration template for ASOS ambient substrate daemon
+# Stock configuration template for Agentic Blackboard daemon
 
 [server]
 port = 8085

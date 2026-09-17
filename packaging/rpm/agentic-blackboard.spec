@@ -3,7 +3,7 @@ Version:        0.4.0
 Release:        1.el9
 Summary:        Agentic Blackboard Server & Ambient Substrate Daemon
 License:        Apache-2.0
-URL:            https://github.com/asos/agentic-blackboard
+URL:            https://github.com/agentic-blackboard/agentic-blackboard
 
 Requires:         python3, zeromq, openssl
 Requires(pre):    shadow-utils
@@ -17,7 +17,7 @@ AutoReqProv:    no
 %define _build_id_links none
 
 %description
-Agentic Blackboard (ASOS) ambient substrate daemon, CLI control tool,
+Agentic Blackboard ambient substrate daemon, CLI control tool,
 and semantic skills catalog.
 
 %prep
@@ -34,6 +34,7 @@ mkdir -p %{buildroot}/etc/security/limits.d
 mkdir -p %{buildroot}/usr/share/agentic-blackboard/skills
 mkdir -p %{buildroot}/var/lib/agentic-blackboard
 mkdir -p %{buildroot}/var/log/agentic-blackboard
+mkdir -p %{buildroot}/usr/include
 
 SOURCE_DIR="%{_sourcedir}"
 if [ ! -f "$SOURCE_DIR/build/agentic-blackboardd" ] && [ -f "$SOURCE_DIR/../build/agentic-blackboardd" ]; then
@@ -47,6 +48,8 @@ install -m 0640 $SOURCE_DIR/packaging/config/blackboard.conf %{buildroot}/etc/ag
 install -m 0644 $SOURCE_DIR/packaging/config/blackboard.conf.default %{buildroot}/etc/agentic-blackboard/blackboard.conf.default
 install -m 0644 $SOURCE_DIR/packaging/limits/99-blackboard.conf %{buildroot}/etc/security/limits.d/99-blackboard.conf
 cp -r $SOURCE_DIR/skills/* %{buildroot}/usr/share/agentic-blackboard/skills/
+cp -r $SOURCE_DIR/include/agentic_blackboard %{buildroot}/usr/include/
+cp -r $SOURCE_DIR/include/ab %{buildroot}/usr/include/
 
 %pre
 getent group blackboard >/dev/null || groupadd -r blackboard
@@ -83,5 +86,7 @@ fi
 %config(noreplace) %attr(0644, root, root) /etc/agentic-blackboard/blackboard.conf.default
 %config(noreplace) %attr(0644, root, root) /etc/security/limits.d/99-blackboard.conf
 /usr/share/agentic-blackboard
+/usr/include/agentic_blackboard
+/usr/include/ab
 %dir %attr(0750, blackboard, blackboard) /var/lib/agentic-blackboard
 %dir %attr(0750, blackboard, blackboard) /var/log/agentic-blackboard

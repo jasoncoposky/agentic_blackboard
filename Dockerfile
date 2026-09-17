@@ -1,3 +1,4 @@
+# Agentic Blackboard Container Image: agentic-blackboard:latest
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 COPY build/agentic-blackboard-*.rpm /tmp/

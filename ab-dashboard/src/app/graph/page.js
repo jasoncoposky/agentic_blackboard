@@ -10,7 +10,7 @@ export default function KnowledgeStudio() {
   const [selectedNode, setSelectedNode] = useState(null);
 
 
-  // Fetch real-time graph snapshot from ASOS Substrate
+  // Fetch real-time graph snapshot from Agentic Blackboard Substrate
   useEffect(() => {
     const fetchSnapshot = async () => {
       try {
@@ -53,7 +53,7 @@ export default function KnowledgeStudio() {
         body: JSON.stringify({ 
           atom_id: atomId, 
           behavior: "status_ring",
-          label: "ASOS Materialization"
+          label: "Agentic Blackboard Materialization"
         })
       });
       alert("Command dispatched to Nucleus Governor.");

@@ -38,11 +38,13 @@
 *.app
 
 # debug information files
-# ASOS Specific
+# Agentic Blackboard Specific
 build/
 *.log
-asos_db
-asos_db-*
+ab_db
+ab_db-*
+blackboard_db
+blackboard_db-*
 __pycache__/
 node_modules/
 .next/

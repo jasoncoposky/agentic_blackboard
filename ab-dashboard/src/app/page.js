@@ -13,7 +13,7 @@ export default function Overview() {
     { id: "Pittsburgh_PA", status: "CONNECTED", type: "Satellite" },
   ]);
 
-  // Real-time metrics polling from ASOS Substrate (Port 8085)
+  // Real-time metrics polling from Agentic Blackboard Substrate (Port 8085)
   useEffect(() => {
     const fetchMetrics = async () => {
       try {

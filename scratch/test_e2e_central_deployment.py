@@ -37,7 +37,7 @@ AB_CTL_PY = WORKSPACE_ROOT / "src" / "ab-ctl.py"
 
 CONTAINER_ENGINE = os.environ.get("CONTAINER_ENGINE") or shutil.which("docker") or shutil.which("podman") or "docker"
 CONTAINER_IMAGE = "agentic-blackboard:latest"
-CONTAINER_PORT = int(os.environ.get("ASOS_CONTAINER_PORT", "18095"))
+CONTAINER_PORT = int(os.environ.get("AB_CONTAINER_PORT", "18095"))
 BASE_URL = f"http://localhost:{CONTAINER_PORT}"
 CONTAINER_NAME = f"ab-e2e-test-{os.getpid()}"
 
@@ -99,6 +99,8 @@ rpm -ivh /workspace/{rpm_rel}
 [ -f /etc/agentic-blackboard/blackboard.conf.default ]
 [ -f /etc/security/limits.d/99-blackboard.conf ]
 [ -d /usr/share/agentic-blackboard/skills ]
+[ -d /usr/include/agentic_blackboard ]
+[ -d /usr/include/ab ]
 [ -d /var/lib/agentic-blackboard ]
 [ -d /var/log/agentic-blackboard ]
 
@@ -348,7 +350,7 @@ def step4_to_7_container_lifecycle_and_e2e() -> bool:
 
 
 def main():
-    print("=== ASOS Task 6: Canonical Containerization & E2E Deployment Verification ===")
+    print("=== Agentic Blackboard: Canonical Containerization & E2E Deployment Verification ===")
     print(f"[*] Using Container Engine: {CONTAINER_ENGINE}")
     
     # 1. RPM packaging installation and file verification in container

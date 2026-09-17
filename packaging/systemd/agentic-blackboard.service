@@ -1,5 +1,5 @@
 [Unit]
-Description=Agentic Blackboard Substrate Daemon
+Description=Agentic Blackboard Daemon (ab)
 After=network.target network-online.target
 Wants=network-online.target
 

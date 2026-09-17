@@ -17,7 +17,7 @@ export default function Sidebar() {
     <aside className="sidebar glass">
       <div className="logo">
         <span className="logo-icon pulse"></span>
-        <h2 className="logo-text">ASOS</h2>
+        <h2 className="logo-text">Agentic Blackboard</h2>
       </div>
       <nav className="nav-links">
         {links.map((link) => (

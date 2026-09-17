@@ -3,7 +3,7 @@ import Sidebar from "../components/Sidebar";
 
 
 export const metadata = {
-  title: "ASOS Agentic Dashboard",
+  title: "Agentic Blackboard Dashboard",
   description: "Distributed Knowledge Swarm Governance",
 };
 

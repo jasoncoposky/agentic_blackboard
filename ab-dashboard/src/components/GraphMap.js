@@ -46,7 +46,7 @@ const getKAName = (ka) => {
 };
 
 /**
- * @brief Dynamic SVG Force-Directed Graph for ASOS Substrate
+ * @brief Dynamic SVG Force-Directed Graph for Agentic Blackboard Substrate
  */
 export default function GraphMap({ data, selectedNodeId, onNodeSelect }) {
   const [nodes, setNodes] = useState([]);

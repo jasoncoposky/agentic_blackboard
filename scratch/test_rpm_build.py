@@ -229,6 +229,8 @@ fi
         "/usr/lib/systemd/system/agentic-blackboard.service",
         "/etc/agentic-blackboard/blackboard.conf",
         "/usr/share/agentic-blackboard/skills",
+        "/usr/include/agentic_blackboard",
+        "/usr/include/ab",
     ]
 
     missing_paths = []
@@ -308,7 +310,7 @@ rpm -e agentic-blackboard
 
 
 def main():
-    print("=== Task 5 Verification: RPM Packaging & Filesystem Layout Specs ===")
+    print("=== Agentic Blackboard: RPM Packaging & Filesystem Layout Specs ===")
     if not verify_packaging_files():
         print("\n[-] STEP 1 (Packaging Files) FAILED.")
         sys.exit(1)

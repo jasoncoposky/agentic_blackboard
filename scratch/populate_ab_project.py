@@ -1,7 +1,7 @@
 import httpx
 import time
 
-ASOS_API_URL = "http://localhost:8085/api/v1"
+AB_API_URL = "http://localhost:8085/api/v1"
 
 def ensure_node(type, id, description, content=""):
     payload = {
@@ -12,7 +12,7 @@ def ensure_node(type, id, description, content=""):
             "content": content
         }
     }
-    httpx.post(f"{ASOS_API_URL}/graph/node", json=payload).raise_for_status()
+    httpx.post(f"{AB_API_URL}/graph/node", json=payload).raise_for_status()
 
 def commit_bundle(project_id, agent_id, atoms):
     payload = {
@@ -20,7 +20,7 @@ def commit_bundle(project_id, agent_id, atoms):
         "agent_id": agent_id,
         "atoms": atoms
     }
-    httpx.post(f"{ASOS_API_URL}/graph/bundle", json=payload).raise_for_status()
+    httpx.post(f"{AB_API_URL}/graph/bundle", json=payload).raise_for_status()
 
 def link_nodes(src, dst, label):
     payload = {
@@ -29,17 +29,17 @@ def link_nodes(src, dst, label):
         "label": label,
         "weight": 1.0
     }
-    httpx.post(f"{ASOS_API_URL}/link", json=payload).raise_for_status()
+    httpx.post(f"{AB_API_URL}/link", json=payload).raise_for_status()
 
 def main():
-    print("Populating ASOS Project Graph...")
+    print("Populating Agentic Blackboard Project Graph...")
 
     # 1. Identity and Project
     ensure_node("IDENTITY", "jason_coposky", "Jason Coposky", 
                 "### Identity: Jason Coposky\nRole: Lead Architect\n\nExpert in distributed graph systems and agentic swarms.")
     
-    ensure_node("PROJECT", "asos_substrate", "ASOS Knowledge Substrate and Agentic Blackboard",
-                "# ASOS Substrate\n\nThe foundational layer for autonomous agentic swarms. Implements a high-performance L3KVG distributed graph engine.")
+    ensure_node("PROJECT", "ab_substrate", "Agentic Blackboard Knowledge Substrate",
+                "# Agentic Blackboard Substrate\n\nThe foundational layer for autonomous agentic swarms. Implements a high-performance L3KVG distributed graph engine.")
 
     # 2. Define Atoms with explicit UUIDs so we can link them
     atoms = [
@@ -64,32 +64,32 @@ def main():
         # Milestone 3
         {"uuid": "m3", "statement": "Milestone 3: Model Context Protocol (MCP) Integration", "tags": ["MILESTONE"]},
         {"uuid": "m3-wbs-hl", "statement": "M3 WBS (High-Level): Expose the substrate to external AI agents via standard MCP tools."},
-        {"uuid": "m3-wbs-det", "statement": "M3 WBS (Detail): Create Python FastMCP bridge (asos_mcp_server.py) providing ensure_node, commit_knowledge_bundle, and structural query endpoints."},
+        {"uuid": "m3-wbs-det", "statement": "M3 WBS (Detail): Create Python FastMCP bridge (ab_mcp_server.py) providing ensure_node, commit_knowledge_bundle, and structural query endpoints."},
         {"uuid": "m3-ac", "statement": "M3 Acceptance Criteria: Agent can query schema and autonomously execute the init_swarm playbook."}
     ]
 
-    commit_bundle("asos_substrate", "jason_coposky", atoms)
+    commit_bundle("ab_substrate", "jason_coposky", atoms)
 
     # 3. Establish structural links
     links = [
         # Docs related to project
-        ("doc-reqs", "asos_substrate", "DEFINES"),
-        ("doc-schema", "asos_substrate", "DEFINES"),
+        ("doc-reqs", "ab_substrate", "DEFINES"),
+        ("doc-schema", "ab_substrate", "DEFINES"),
         
         # M1 structure
-        ("m1", "asos_substrate", "MILESTONE"),
+        ("m1", "ab_substrate", "MILESTONE"),
         ("m1-wbs-hl", "m1", "BREAKDOWN"),
         ("m1-wbs-det", "m1-wbs-hl", "DETAIL"),
         ("m1-ac", "m1", "CRITERIA"),
 
         # M2 structure
-        ("m2", "asos_substrate", "MILESTONE"),
+        ("m2", "ab_substrate", "MILESTONE"),
         ("m2-wbs-hl", "m2", "BREAKDOWN"),
         ("m2-wbs-det", "m2-wbs-hl", "DETAIL"),
         ("m2-ac", "m2", "CRITERIA"),
 
         # M3 structure
-        ("m3", "asos_substrate", "MILESTONE"),
+        ("m3", "ab_substrate", "MILESTONE"),
         ("m3-wbs-hl", "m3", "BREAKDOWN"),
         ("m3-wbs-det", "m3-wbs-hl", "DETAIL"),
         ("m3-ac", "m3", "CRITERIA")
