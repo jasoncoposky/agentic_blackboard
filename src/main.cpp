@@ -26,12 +26,17 @@ int main(int argc, char* argv[]) {
     uint32_t node_id = 1;
     std::string auth_mode = "trusted_network";
 
+    std::string admin_token;
+    int port = 8085;
+
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
             if (isdigit(arg[0])) node_id = std::stoi(arg);
             else if (arg.find("--db=") == 0) db_path = arg.substr(5);
             else if (arg.find("--auth-mode=") == 0) auth_mode = arg.substr(12);
+            else if (arg.find("--admin-token=") == 0) admin_token = arg.substr(14);
+            else if (arg.find("--port=") == 0) port = std::stoi(arg.substr(7));
         }
     }
 
@@ -44,6 +49,9 @@ int main(int argc, char* argv[]) {
         // 1. Initialize Substrate (Storage)
         asos::Blackboard bb(db_path, node_id);
         bb.set_auth_mode(auth_mode);
+        if (!admin_token.empty()) {
+            bb.register_token(admin_token, "admin", "admin");
+        }
 
         // -- SEEDING LOGIC --
         bool should_exit = false;
@@ -100,7 +108,7 @@ int main(int argc, char* argv[]) {
         
         // 3. Start Observability & API
         asos::Monitor::instance().start(&bb);
-        asos::ApiServer::instance().start(&bb, 8085);
+        asos::ApiServer::instance().start(&bb, port);
 
 
         // 4. Start Intelligence & Governance

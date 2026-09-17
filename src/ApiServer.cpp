@@ -1498,6 +1498,80 @@ void ApiServer::listen_loop() {
         }
     });
 
+    // 7b. Admin User & Token Management
+    svr.Post("/api/v1/admin/users", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            if (auth_role != "admin") {
+                res.status = 403;
+                res.set_content(json({{"error", "Forbidden"}, {"message", "Admin role required"}}).dump(), "application/json");
+                return;
+            }
+
+            auto j = json::parse(req.body);
+            std::string username = j.value("username", "");
+            std::string role = j.value("role", "curator");
+            std::string token = j.value("token", "");
+
+            if (username.empty() || token.empty()) {
+                res.status = 400;
+                res.set_content(json({{"error", "Bad Request"}, {"message", "Missing username or token"}}).dump(), "application/json");
+                return;
+            }
+
+            if (!blackboard_->register_token(token, username, role)) {
+                res.status = 500;
+                res.set_content(json({{"error", "Internal Error"}, {"message", "Failed to register token"}}).dump(), "application/json");
+                return;
+            }
+
+            json resp = {
+                {"status", "CREATED"},
+                {"username", username},
+                {"role", role},
+                {"token", token}
+            };
+            res.status = 200;
+            res.set_content(resp.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(e.what(), "text/plain");
+        }
+    });
+
+    svr.Get("/api/v1/admin/users", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            if (auth_role != "admin") {
+                res.status = 403;
+                res.set_content(json({{"error", "Forbidden"}, {"message", "Admin role required"}}).dump(), "application/json");
+                return;
+            }
+
+            json resp = {
+                {"status", "OK"},
+                {"users", json::array()}
+            };
+            res.status = 200;
+            res.set_content(resp.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(e.what(), "text/plain");
+        }
+    });
+
     // 8. Shared Workspace Context & Multi-Surface SSE Event Sync
     svr.Post("/api/v1/context/register", [this](const httplib::Request& req, httplib::Response& res) {
         try {
