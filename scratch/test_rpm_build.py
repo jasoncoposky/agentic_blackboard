@@ -283,7 +283,8 @@ def verify_rpm_install() -> bool:
         "registry.access.redhat.com/ubi9/ubi-minimal:latest",
         "bash", "-c",
         """set -e
-microdnf install -y shadow-utils python3 systemd >/dev/null 2>&1
+rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm >/dev/null 2>&1 || true
+microdnf install -y shadow-utils python3 systemd zeromq openssl >/dev/null 2>&1
 rpm -ivh /workspace/build/agentic-blackboard-0.4.0-1.el9.x86_64.rpm
 id blackboard >/dev/null
 [ -f /var/lib/agentic-blackboard/credentials.db ]

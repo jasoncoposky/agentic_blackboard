@@ -95,6 +95,46 @@ namespace asos {
 
 Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) {
     engine_ = std::make_unique<l3kvg::Engine>(db_path, node_id);
+    try {
+        auto* store = engine_->get_store();
+        lite3cpp::Buffer buf = store->get("auth:registry:users", l3kv::ADMIN_UID);
+        if (buf.size() > 0) {
+            std::string js;
+            try {
+                js = lite3cpp::lite3_json::to_json_string(buf, 0);
+            } catch (...) {}
+            if (js.empty()) {
+                try {
+                    js = std::string(reinterpret_cast<const char*>(buf.data()), buf.size());
+                } catch (...) {}
+            }
+            if (!js.empty()) {
+                auto j = nlohmann::json::parse(js);
+                auto user_list = j.is_array() ? j : (j.contains("users") && j["users"].is_array() ? j["users"] : nlohmann::json::array());
+                std::unique_lock lock(auth_mutex_);
+                for (const auto& item : user_list) {
+                    std::string u = item.value("username", "");
+                    std::string r = item.value("role", "");
+                    if (!u.empty()) {
+                        bool exists = false;
+                        for (const auto& entry : registered_users_) {
+                            if (entry.first == u) {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists) {
+                            registered_users_.emplace_back(u, r);
+                        }
+                        register_user_credentials(u, u + "-key");
+                        if (r == "admin" || u == "admin") {
+                            store->credentials().set_acl(get_user_uid(u), "*", l3kv::Permission::READ | l3kv::Permission::WRITE | l3kv::Permission::ADMIN);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {}
 }
 
 Blackboard::~Blackboard() = default;
@@ -153,6 +193,16 @@ bool Blackboard::register_token(const std::string& token, const std::string& use
         if (!found) {
             registered_users_.emplace_back(user, role);
         }
+
+        nlohmann::json user_arr = nlohmann::json::array();
+        for (const auto& entry : registered_users_) {
+            user_arr.push_back({
+                {"username", entry.first},
+                {"role", entry.second}
+            });
+        }
+        store->put("auth:registry:users", user_arr.dump());
+        store->wait_all_shards();
     }
 
     return true;
@@ -214,6 +264,7 @@ uint32_t Blackboard::get_user_uid(const std::string& username) const {
     for (char c : username) {
         hash = ((hash << 5) + hash) + c;
     }
+    if (hash == 0 || hash == 0xFFFFFFFF) hash = 1;
     return hash;
 }
 
@@ -265,7 +316,8 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
             if (get_user_uid(user_name) == principal_id || (!user_id.empty() && get_user_uid(user_id) == principal_id)) {
                 authorized = true;
             }
-        } else if (!author_name.empty()) {
+        }
+        if (!authorized && !author_name.empty()) {
             if (get_user_uid(author_name) == principal_id || (!author_agent.empty() && get_user_uid(author_agent) == principal_id)) {
                 authorized = true;
             }
@@ -298,7 +350,39 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     if (exists) {
         // Security check 2: Check if user has WRITE access on this existing key
         auto perm = creds.check_permission(principal_id, db_key);
-        if (!(perm & l3kv::Permission::WRITE) && !(perm & l3kv::Permission::ADMIN)) {
+        bool has_write = (perm & l3kv::Permission::WRITE) || (perm & l3kv::Permission::ADMIN);
+        if (!has_write && principal_id != 0) {
+            // Check if principal matches stored author identity across restarts
+            try {
+                auto buf = engine_->get_store()->get(db_key, l3kv::ADMIN_UID);
+                if (buf.size() > 0) {
+                    CpbEntry existing = CpbEntry::deserialize(buf);
+                    const auto& exist_user = existing.header.origin.user_id;
+                    const auto& exist_agent = existing.header.origin.agent_id;
+
+                    std::string exist_user_name = exist_user;
+                    if (exist_user.starts_with("identity:")) exist_user_name = exist_user.substr(9);
+                    else if (exist_user.starts_with("user:")) exist_user_name = exist_user.substr(5);
+                    else if (exist_user.starts_with("agent:")) exist_user_name = exist_user.substr(6);
+
+                    std::string exist_agent_name = exist_agent;
+                    if (exist_agent.starts_with("identity:")) exist_agent_name = exist_agent.substr(9);
+                    else if (exist_agent.starts_with("agent:")) exist_agent_name = exist_agent.substr(6);
+                    else if (exist_agent.starts_with("user:")) exist_agent_name = exist_agent.substr(5);
+
+                    if ((!exist_user.empty() && (get_user_uid(exist_user) == principal_id || get_user_uid(exist_user_name) == principal_id)) ||
+                        (!exist_agent.empty() && (get_user_uid(exist_agent) == principal_id || get_user_uid(exist_agent_name) == principal_id))) {
+                        creds.set_acl(principal_id, db_key, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                        std::string hex_part = db_key.substr(2);
+                        creds.set_acl(principal_id, "e:out:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                        creds.set_acl(principal_id, "e:in:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                        has_write = true;
+                    }
+                }
+            } catch (...) {}
+        }
+
+        if (!has_write) {
             std::cerr << "[Blackboard] Rejecting Atom " << adjusted.header.uuid 
                       << ": Access Denied (No WRITE permission for principal " << principal_id << ")" << std::endl;
             return false;

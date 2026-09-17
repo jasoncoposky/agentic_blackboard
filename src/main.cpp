@@ -13,6 +13,59 @@
 
 #include "L3KVG/KeyBuilder.hpp"
 #include "engine/store.hpp"
+#include <cstdlib>
+#include <random>
+#include <cstring>
+#if defined(__linux__)
+#include <dlfcn.h>
+#endif
+
+#if defined(__linux__)
+extern "C" {
+long int __isoc23_strtol(const char *nptr, char **endptr, int base) {
+    static auto real_fn = (long int (*)(const char*, char**, int))dlsym(RTLD_DEFAULT, "strtol");
+    if (real_fn) return real_fn(nptr, endptr, base);
+    return 0;
+}
+long long int __isoc23_strtoll(const char *nptr, char **endptr, int base) {
+    static auto real_fn = (long long int (*)(const char*, char**, int))dlsym(RTLD_DEFAULT, "strtoll");
+    if (real_fn) return real_fn(nptr, endptr, base);
+    return 0;
+}
+unsigned long int __isoc23_strtoul(const char *nptr, char **endptr, int base) {
+    static auto real_fn = (unsigned long int (*)(const char*, char**, int))dlsym(RTLD_DEFAULT, "strtoul");
+    if (real_fn) return real_fn(nptr, endptr, base);
+    return 0;
+}
+unsigned long long int __isoc23_strtoull(const char *nptr, char **endptr, int base) {
+    static auto real_fn = (unsigned long long int (*)(const char*, char**, int))dlsym(RTLD_DEFAULT, "strtoull");
+    if (real_fn) return real_fn(nptr, endptr, base);
+    return 0;
+}
+
+uint32_t arc4random(void) {
+    static thread_local std::mt19937 gen(std::chrono::high_resolution_clock::now().time_since_epoch().count() ^ (uintptr_t)&gen);
+    return gen();
+}
+void arc4random_buf(void *buf, size_t nbytes) {
+    uint8_t *p = static_cast<uint8_t*>(buf);
+    while (nbytes >= 4) {
+        uint32_t r = arc4random();
+        std::memcpy(p, &r, 4);
+        p += 4;
+        nbytes -= 4;
+    }
+    if (nbytes > 0) {
+        uint32_t r = arc4random();
+        std::memcpy(p, &r, nbytes);
+    }
+}
+uint32_t arc4random_uniform(uint32_t upper_bound) {
+    if (upper_bound <= 1) return 0;
+    return arc4random() % upper_bound;
+}
+}
+#endif
 
 std::atomic<bool> g_running(true);
 

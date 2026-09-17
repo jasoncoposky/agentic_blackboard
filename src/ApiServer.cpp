@@ -154,7 +154,7 @@ std::shared_ptr<SseClientSession> ContextBroker::create_client(const std::string
         {"status", "connected"},
         {"context_id", context_id}
     };
-    std::string init_evt = "event: connected\ndata: " + handshake.dump() + "\n\n";
+    std::string init_evt = "retry: 3000\n\nevent: connected\ndata: " + handshake.dump() + "\n\n";
     session->event_queue.push(init_evt);
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1714,6 +1714,11 @@ void ApiServer::listen_loop() {
                             msgs.push_back(std::move(session->event_queue.front()));
                             session->event_queue.pop();
                         }
+                    }
+
+                    if (msgs.empty()) {
+                        std::string keepalive = ": keepalive\n\n";
+                        return sink.write(keepalive.data(), keepalive.size());
                     }
 
                     for (const auto& msg : msgs) {

@@ -1,9 +1,10 @@
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 cmake_minimum_required(VERSION 3.5...3.30)
-project(ASOS VERSION 0.2 LANGUAGES CXX C)
+project(agentic-blackboard VERSION 0.4.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_compile_definitions(__GLIBC_USE_C2X_STRTOL=0)
 
 # Paths to dependencies
 set(L3KVG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../l3kvg)
@@ -47,10 +48,17 @@ target_link_libraries(asos_engine PUBLIC
     OpenSSL::Crypto
 )
 
+target_compile_definitions(asos_engine PRIVATE __GLIBC_USE_C2X_STRTOL=0)
+
 # ASOS / Agentic Blackboard Daemon
 add_executable(agentic-blackboardd
     src/main.cpp
 )
+
+target_compile_definitions(agentic-blackboardd PRIVATE __GLIBC_USE_C2X_STRTOL=0)
+if(UNIX AND NOT APPLE)
+    target_link_options(agentic-blackboardd PRIVATE -static-libstdc++ -static-libgcc)
+endif()
 
 target_link_libraries(agentic-blackboardd PRIVATE
     asos_engine
@@ -63,6 +71,11 @@ target_link_libraries(agentic-blackboardd PRIVATE
 add_executable(asos_daemon
     src/main.cpp
 )
+
+target_compile_definitions(asos_daemon PRIVATE __GLIBC_USE_C2X_STRTOL=0)
+if(UNIX AND NOT APPLE)
+    target_link_options(asos_daemon PRIVATE -static-libstdc++ -static-libgcc)
+endif()
 
 target_link_libraries(asos_daemon PRIVATE
     asos_engine
@@ -153,7 +166,7 @@ set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
 set(CPACK_RPM_PACKAGE_ARCHITECTURE "x86_64")
 set(CPACK_RPM_FILE_NAME "agentic-blackboard-0.4.0-1.el9.x86_64.rpm")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV "no")
-set(CPACK_RPM_PACKAGE_REQUIRES "systemd, python3")
+set(CPACK_RPM_PACKAGE_REQUIRES "systemd, python3, zeromq, openssl")
 
 set(CPACK_SET_DESTDIR ON)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/")

@@ -131,7 +131,8 @@ def step2_verify_systemd_service_syntax() -> bool:
         "registry.access.redhat.com/ubi9/ubi-minimal:latest",
         "bash", "-c",
         f"""set -e
-microdnf install -y shadow-utils systemd python3 >/dev/null 2>&1
+rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm >/dev/null 2>&1 || true
+microdnf install -y shadow-utils systemd python3 zeromq openssl >/dev/null 2>&1
 rpm -ivh /workspace/{rpm_rel} >/dev/null 2>&1
 systemd-analyze verify /usr/lib/systemd/system/agentic-blackboard.service
 echo "SYSTEMD_VERIFY_OK"

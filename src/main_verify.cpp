@@ -1199,17 +1199,25 @@ void test_multi_surface_provenance(Blackboard& bb) {
     uint32_t jason_uid = bb.get_user_uid("jason");
     bb.register_user_credentials("intruder", "intruder-key");
     uint32_t intruder_uid = bb.get_user_uid("intruder");
+    bb.register_user_credentials("delegated-agent", "agent-key");
+    uint32_t delegated_agent_uid = bb.get_user_uid("delegated-agent");
 
     CpbEntry secure_atom;
     secure_atom.header.uuid = "atom-auth-test";
     secure_atom.header.origin.user_id = "user:jason";
-    secure_atom.header.origin.agent_id = "agent:intruder";
+    secure_atom.header.origin.agent_id = "agent:delegated-agent";
     secure_atom.header.origin.project_id = "proj-quantum-optics";
     secure_atom.payload.statement = "Secure authorization test atom";
 
-    // Intruder principal trying to commit on behalf of user:jason must be rejected
+    // Intruder principal trying to commit on behalf of user:jason and agent:delegated-agent must be rejected
     if (bb.commit_cpb_entry(secure_atom, intruder_uid)) {
         std::cerr << "[Test] FAILED: Intruder principal successfully committed atom on behalf of user:jason!" << std::endl;
+        exit(1);
+    }
+
+    // Delegated agent principal committing dual-identity atom must succeed
+    if (!bb.commit_cpb_entry(secure_atom, delegated_agent_uid)) {
+        std::cerr << "[Test] FAILED: Delegated agent principal failed to commit dual-identity atom" << std::endl;
         exit(1);
     }
 
@@ -1342,6 +1350,72 @@ void test_token_auth_and_roles(asos::Blackboard& bb) {
     std::cout << "[Test] Token Authentication & RBAC Verification PASSED" << std::endl;
 }
 
+void test_review_fixes() {
+    std::cout << "\n[Test] Starting Review Fixes Verification..." << std::endl;
+
+    // 1. UID Hash Collision Guard (Task 5)
+    {
+        asos::Blackboard bb("test_collision_db", 20);
+        // Ensure get_user_uid never returns 0 or 0xFFFFFFFF
+        assert(bb.get_user_uid("") != 0 && bb.get_user_uid("") != 0xFFFFFFFF);
+        assert(bb.get_user_uid("test") != 0 && bb.get_user_uid("test") != 0xFFFFFFFF);
+        assert(bb.get_user_uid("admin_user") != 0 && bb.get_user_uid("admin_user") != 0xFFFFFFFF);
+    }
+    std::filesystem::remove_all("test_collision_db");
+
+    // 2. Persistent User Registry Across Restarts (Task 3)
+    std::string test_db = "test_persistence_registry_db";
+    std::filesystem::remove_all(test_db);
+    {
+        asos::Blackboard bb1(test_db, 21);
+        assert(bb1.register_token("tok_alice_123", "alice", "curator"));
+        assert(bb1.register_token("tok_bob_456", "bob", "developer"));
+        auto users = bb1.get_registered_users();
+        assert(users.size() == 2);
+    }
+    // Reopen Blackboard on same db_path (simulating daemon restart)
+    {
+        asos::Blackboard bb2(test_db, 21);
+        auto users = bb2.get_registered_users();
+        assert(users.size() == 2);
+        bool found_alice = false, found_bob = false;
+        for (const auto& u : users) {
+            if (u.first == "alice" && u.second == "curator") found_alice = true;
+            if (u.first == "bob" && u.second == "developer") found_bob = true;
+        }
+        assert(found_alice && found_bob);
+    }
+
+    // 3. Durable ACLs for Non-Admin Node Updates Across Restarts (Task 4)
+    {
+        uint32_t alice_uid = 0;
+        {
+            asos::Blackboard bb_acl1(test_db, 21);
+            alice_uid = bb_acl1.get_user_uid("alice");
+            asos::CpbEntry atom;
+            atom.header.uuid = "atom-alice-persistent-1";
+            atom.header.origin.user_id = "alice";
+            atom.header.origin.project_id = "proj-alice";
+            atom.payload.statement = "Alice initial statement";
+            assert(bb_acl1.commit_cpb_entry(atom, alice_uid));
+        }
+        // Restart daemon: in-memory ACLs wiped in CredentialManager
+        {
+            asos::Blackboard bb_acl2(test_db, 21);
+            asos::CpbEntry atom_update;
+            atom_update.header.uuid = "atom-alice-persistent-1";
+            atom_update.header.origin.user_id = "alice";
+            atom_update.header.origin.project_id = "proj-alice";
+            atom_update.payload.statement = "Alice updated statement";
+            // Alice (non-admin principal) attempts update on existing atom
+            assert(bb_acl2.commit_cpb_entry(atom_update, alice_uid));
+        }
+    }
+    std::filesystem::remove_all(test_db);
+
+    std::cout << "[Test] Review Fixes Verification PASSED" << std::endl;
+}
+
 int main() {
     try {
         test_identity_integrity();
@@ -1369,6 +1443,7 @@ int main() {
             test_token_auth_and_roles(bb);
         }
         std::filesystem::remove_all("test_token_db");
+        test_review_fixes();
         std::cout << "\n[SUCCESS] All ASOS Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {

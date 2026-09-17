@@ -5,7 +5,7 @@ Summary:        Agentic Blackboard Server & Ambient Substrate Daemon
 License:        Apache-2.0
 URL:            https://github.com/asos/agentic-blackboard
 
-Requires:         python3
+Requires:         python3, zeromq, openssl
 Requires(pre):    shadow-utils
 Requires(post):   systemd
 Requires(preun):  systemd

@@ -493,8 +493,12 @@ def handle_context(args, cfg: dict):
 
 def build_mcp_server(connect_url: str, token: str | None):
     """Instantiate and configure FastMCP server forwarding tool calls to ASOS REST API."""
-    import httpx
-    from mcp.server.fastmcp import FastMCP
+    try:
+        import httpx
+        from mcp.server.fastmcp import FastMCP
+    except ImportError:
+        print("[ERROR] MCP dependencies missing. Install via: pip install httpx mcp", file=sys.stderr)
+        return 1
 
     mcp = FastMCP("Agentic Blackboard MCP Bridge")
     api_url = f"{connect_url.rstrip('/')}/api/v1"
@@ -878,6 +882,8 @@ def handle_mcp(args, cfg: dict):
     token = args.token or cfg.get("token")
 
     mcp = build_mcp_server(connect_url, token)
+    if mcp is None or mcp == 1:
+        return 1
 
     if args.smoke_test:
         print("[MCP] Running self-test and smoke verification...")
