@@ -21,8 +21,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 AB_CTL_PY = REPO_ROOT / "src" / "ab-ctl.py"
-DAEMON_BIN = REPO_ROOT / "build" / "asos_daemon"
-TEST_PORT = int(os.environ.get("ASOS_TEST_PORT", 18088))
+DAEMON_BIN = REPO_ROOT / "build" / "agentic-blackboardd"
+TEST_PORT = int(os.environ.get("AB_TEST_PORT", 18088))
 BASE_URL = f"http://127.0.0.1:{TEST_PORT}"
 
 
@@ -106,7 +106,7 @@ def main():
         print(f"[PASS] Step 1: init created substrate and admin token: {admin_token[:15]}...")
 
         # Verify credentials.db contains salted hash
-        salt = "asos_salt_token_v1:"
+        salt = "ab_salt_token_v1:"
         expected_hash = hashlib.sha256((salt + admin_token).encode("utf-8")).hexdigest()
         conn = sqlite3.connect(creds_db)
         cursor = conn.cursor()
@@ -120,7 +120,7 @@ def main():
         # -------------------------------------------------------------
         # Step 2: Spawn daemon or test server with generated admin token
         # -------------------------------------------------------------
-        print("\n--- Step 2: Spawning ASOS daemon ---")
+        print("\n--- Step 2: Spawning Agentic Blackboard daemon ---")
         daemon_cmd = [
             str(DAEMON_BIN),
             "1",
@@ -139,7 +139,7 @@ def main():
         ready = wait_for_server(BASE_URL, timeout_secs=10)
         if not ready:
             raise RuntimeError(f"Daemon failed to start on {BASE_URL}")
-        print(f"[PASS] Step 2: ASOS daemon started (pid: {daemon_proc.pid}) on {BASE_URL}")
+        print(f"[PASS] Step 2: Agentic Blackboard daemon started (pid: {daemon_proc.pid}) on {BASE_URL}")
 
         # Test status subcommand
         status_proc = run_cli(["status", f"--connect={BASE_URL}", f"--token={admin_token}"])

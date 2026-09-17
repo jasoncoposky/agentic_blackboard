@@ -14,7 +14,7 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
-const API_BASE = process.env.ASOS_API_URL || "http://localhost:8085/api/v1";
+const API_BASE = process.env.AB_API_URL || "http://localhost:8085/api/v1";
 const REPO_ROOT = path.resolve(__dirname, "..");
 const SKILLS_DIR = path.resolve(REPO_ROOT, "skills");
 
@@ -70,7 +70,7 @@ async function get_skill(name) {
 }
 
 /**
- * Retrieve ASOS schema.
+ * Retrieve Agentic Blackboard schema.
  */
 async function get_schema() {
   try {
@@ -84,7 +84,7 @@ async function get_schema() {
 }
 
 /**
- * Search the ASOS Commonplace Book.
+ * Search the Agentic Blackboard Commonplace Book.
  */
 async function search_commonplace(queryOrArgs, kaParam, tagsParam, limitParam, activeUserParam) {
   let query, ka, tags, limit, active_user;
@@ -197,7 +197,7 @@ async function export_graph_rdf(activeUserOrArgs) {
 }
 
 /**
- * Create a knowledge note atom in the ASOS substrate with optional duplicate prevention.
+ * Create a knowledge note atom in the Agentic Blackboard substrate with optional duplicate prevention.
  */
 async function create_note(
   projectIdOrArgs,
@@ -446,7 +446,7 @@ async function commit_anchored_knowledge(projectIdOrArgs, agentIdParam, atomsPar
 const commit_knowledge_bundle = commit_anchored_knowledge;
 
 /**
- * Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the ASOS substrate.
+ * Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the Agentic Blackboard substrate.
  */
 async function ensure_node(typeOrArgs, idParam, descriptionParam, statusParam, contentParam, activeUserParam) {
   let type, id, description, status, content, active_user;
@@ -516,7 +516,7 @@ async function link_nodes(sourceOrArgs, targetParam, labelParam, weightParam, ac
 }
 
 /**
- * Execute a graph query against the ASOS knowledge substrate.
+ * Execute a graph query against the Agentic Blackboard knowledge substrate.
  */
 async function query_knowledge(whereEqOrArgs, matchParam, activeUserParam) {
   let where_eq = {};
@@ -555,7 +555,7 @@ const query_substrate = query_knowledge;
 
 // Prompt templates matching FastMCP server
 function init_swarm(project_id, objective) {
-  return `You are an ASOS Agent tasked with initializing a new swarm project: '${project_id}'.
+  return `You are an Agentic Blackboard Agent tasked with initializing a new swarm project: '${project_id}'.
 Objective: ${objective}
 
 Please follow these steps using the available tools:
@@ -565,11 +565,11 @@ Please follow these steps using the available tools:
 4. Use 'commit_knowledge_bundle' to commit these atoms to the substrate, anchored to '${project_id}'.
 5. Use 'link_nodes' to establish hierarchical or sequential relationships between the atoms.
 
-Consult 'asos://schema' for valid Knowledge Area (KA) IDs and relationship labels.`;
+Consult 'ab://schema' for valid Knowledge Area (KA) IDs and relationship labels.`;
 }
 
 function curate_note(project_id, thesis) {
-  return `You are curating a Knowledge Note in the ASOS Substrate for project '${project_id}'.
+  return `You are curating a Knowledge Note in the Agentic Blackboard Substrate for project '${project_id}'.
 Thesis / Insight: ${thesis}
 
 Follow this workflow strictly:
@@ -603,7 +603,7 @@ Follow this workflow strictly:
 
 const server = new Server(
   {
-    name: "asos-swarm-mcp",
+    name: "ab-mcp",
     version: "0.4.0",
   },
   {
@@ -647,12 +647,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "discover_schema",
-        description: "Fetch the current ASOS graph schema, types, and allowed relationships.",
+        description: "Fetch the current Agentic Blackboard graph schema, types, and allowed relationships.",
         inputSchema: { type: "object", properties: {} },
       },
       {
         name: "query_knowledge",
-        description: "Execute a graph query against the ASOS knowledge swarm (e.g., search by KA, tags, or UUID).",
+        description: "Execute a graph query against the Agentic Blackboard knowledge swarm (e.g., search by KA, tags, or UUID).",
         inputSchema: {
           type: "object",
           properties: {
@@ -676,7 +676,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "ensure_node",
-        description: "Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the ASOS substrate.",
+        description: "Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the Agentic Blackboard substrate.",
         inputSchema: {
           type: "object",
           properties: {
@@ -725,7 +725,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "search_commonplace",
-        description: "Search the ASOS Commonplace Book for existing notes, concepts, and recipes. ALWAYS use this before creating a new note to prevent duplicate nodes.",
+        description: "Search the Agentic Blackboard Commonplace Book for existing notes, concepts, and recipes. ALWAYS use this before creating a new note to prevent duplicate nodes.",
         inputSchema: {
           type: "object",
           properties: {
@@ -774,7 +774,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "create_note",
-        description: "Create a knowledge note atom in the ASOS substrate. Optionally checks for existing duplicate notes before creation.",
+        description: "Create a knowledge note atom in the Agentic Blackboard substrate. Optionally checks for existing duplicate notes before creation.",
         inputSchema: {
           type: "object",
           properties: {
@@ -909,13 +909,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
   const resources = [
     {
-      uri: "asos://schema",
-      name: "ASOS Knowledge Schema",
-      description: "ASOS graph schema, node types, knowledge areas, and relationship predicates.",
+      uri: "ab://schema",
+      name: "Agentic Blackboard Knowledge Schema",
+      description: "Agentic Blackboard graph schema, node types, knowledge areas, and relationship predicates.",
       mimeType: "application/json",
     },
     {
-      uri: "asos://swarm/health",
+      uri: "ab://swarm/health",
       name: "Swarm SRE Health Metrics",
       description: "Real-time telemetry for Knowledge Velocity, Toil, and Latency.",
       mimeType: "application/json",
@@ -927,7 +927,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         resources.push({
-          uri: `asos://skills/${entry.name}`,
+          uri: `ab://skills/${entry.name}`,
           name: `Skill: ${entry.name}`,
           description: `Skill documentation for ${entry.name}`,
           mimeType: "text/markdown",
@@ -945,8 +945,8 @@ server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
   return {
     resourceTemplates: [
       {
-        uriTemplate: "asos://skills/{name}",
-        name: "ASOS Skill Documentation",
+        uriTemplate: "ab://skills/{name}",
+        name: "Agentic Blackboard Skill Documentation",
         description: "Retrieve on-demand skill documentation markdown files.",
         mimeType: "text/markdown",
       },
@@ -957,12 +957,12 @@ server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const uri = request.params.uri;
 
-  if (uri === "asos://schema") {
+  if (uri === "ab://schema") {
     const text = await get_schema();
     return {
       contents: [
         {
-          uri: "asos://schema",
+          uri: "ab://schema",
           mimeType: "application/json",
           text,
         },
@@ -970,8 +970,8 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     };
   }
 
-  if (uri.startsWith("asos://skills/")) {
-    const skillName = uri.replace(/^asos:\/\/skills\//, "");
+  if (uri.startsWith("ab://skills/")) {
+    const skillName = uri.replace(/^ab:\/\/skills\//, "");
     const content = await get_skill(skillName);
     return {
       contents: [
@@ -984,11 +984,11 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     };
   }
 
-  if (uri === "asos://swarm/health") {
+  if (uri === "ab://swarm/health") {
     return {
       contents: [
         {
-          uri: "asos://swarm/health",
+          uri: "ab://swarm/health",
           mimeType: "application/json",
           text: JSON.stringify({ status: "OK", velocity: 1.0, toil: 0.0 }),
         },
@@ -1013,7 +1013,7 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
       },
       {
         name: "curate_note",
-        description: "Guiding prompt for curating a knowledge note in the ASOS Commonplace Book.",
+        description: "Guiding prompt for curating a knowledge note in the Agentic Blackboard Commonplace Book.",
         arguments: [
           { name: "project_id", description: "Project ID", required: true },
           { name: "thesis", description: "Thesis / Insight", required: true },
@@ -1058,7 +1058,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 async function run() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("ASOS MCP Server running on stdio");
+  console.error("Agentic Blackboard MCP Server running on stdio");
 }
 
 if (require.main === module) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ab-ctl: Agentic Blackboard Control & MCP Integration CLI
+ab-ctl: Agentic Blackboard (ab) Controller
 Provides administrative operations, credentials initialization, surface registration,
 shared context management, and an integrated Model Context Protocol (MCP) server runner.
 """
@@ -29,11 +29,11 @@ DEFAULT_CONFIG_PATHS = [
 ]
 DEFAULT_DATA_DIR = "/var/lib/agentic-blackboard"
 DEFAULT_CONNECT_URL = "http://localhost:8085"
-TOKEN_SALT = "asos_salt_token_v1:"
+TOKEN_SALT = "ab_salt_token_v1:"
 
 
 def hash_token(token: str) -> str:
-    """Hash token with ASOS salt using SHA-256."""
+    """Hash token with Agentic Blackboard salt using SHA-256."""
     return hashlib.sha256((TOKEN_SALT + token).encode("utf-8")).hexdigest()
 
 
@@ -81,10 +81,8 @@ def load_config(config_path: str | None = None) -> dict:
             pass
 
     # Environment variable overrides
-    if "ASOS_URL" in os.environ:
-        cfg["connect"] = os.environ["ASOS_URL"]
-    if "ASOS_TOKEN" in os.environ:
-        cfg["token"] = os.environ["ASOS_TOKEN"]
+    if "AB_URL" in os.environ:
+        cfg["connect"] = os.environ["AB_URL"]
     if "AB_TOKEN" in os.environ:
         cfg["token"] = os.environ["AB_TOKEN"]
 
@@ -492,7 +490,7 @@ def handle_context(args, cfg: dict):
 # ----------------------------------------------------------------------
 
 def build_mcp_server(connect_url: str, token: str | None):
-    """Instantiate and configure FastMCP server forwarding tool calls to ASOS REST API."""
+    """Instantiate and configure FastMCP server forwarding tool calls to Agentic Blackboard REST API."""
     try:
         import httpx
         from mcp.server.fastmcp import FastMCP
@@ -500,7 +498,12 @@ def build_mcp_server(connect_url: str, token: str | None):
         print("[ERROR] MCP dependencies missing. Install via: pip install httpx mcp", file=sys.stderr)
         return 1
 
-    mcp = FastMCP("Agentic Blackboard MCP Bridge")
+    try:
+        import ab_mcp_server
+    except ImportError:
+        pass
+
+    mcp = FastMCP("agentic-blackboard")
     api_url = f"{connect_url.rstrip('/')}/api/v1"
     headers = {}
     if token:
@@ -518,7 +521,7 @@ def build_mcp_server(connect_url: str, token: str | None):
         content: str = "",
         active_user: str | None = None
     ) -> str:
-        """Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the ASOS substrate."""
+        """Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the Agentic Blackboard substrate."""
         payload = {
             "type": type,
             "id": id,
@@ -567,7 +570,7 @@ def build_mcp_server(connect_url: str, token: str | None):
         limit: int = 10,
         active_user: str | None = None
     ) -> str:
-        """Search the ASOS Commonplace Book for notes and concepts."""
+        """Search the Agentic Blackboard Commonplace Book for notes and concepts."""
         params = {"q": query, "limit": limit}
         if ka is not None:
             params["ka"] = ka
@@ -620,7 +623,7 @@ def build_mcp_server(connect_url: str, token: str | None):
         uuid: str | None = None,
         active_user: str | None = None
     ) -> str:
-        """Create a knowledge note atom in the ASOS substrate."""
+        """Create a knowledge note atom in the Agentic Blackboard substrate."""
         node_uuid = uuid if uuid else f"note-{uuid_mod.uuid4().hex[:8]}"
         atom = {
             "statement": statement,
@@ -746,7 +749,7 @@ def build_mcp_server(connect_url: str, token: str | None):
         label: str = "",
         active_user: str | None = None
     ) -> str:
-        """Propose a Nucleus spatial widget for an ASOS Knowledge Atom."""
+        """Propose a Nucleus spatial widget for an Agentic Blackboard Knowledge Atom."""
         payload = {
             "atom_id": atom_id,
             "behavior": behavior,
@@ -768,7 +771,7 @@ def build_mcp_server(connect_url: str, token: str | None):
         device_id: str = "default",
         active_user: str | None = None
     ) -> str:
-        """Bind a physical fiducial marker to an ASOS Knowledge Atom."""
+        """Bind a physical fiducial marker to an Agentic Blackboard Knowledge Atom."""
         payload = {
             "marker_id": marker_id,
             "atom_id": atom_id,
@@ -847,16 +850,16 @@ def build_mcp_server(connect_url: str, token: str | None):
                 "links": links_data
             })
 
-    @mcp.resource("asos://schema")
+    @mcp.resource("ab://schema")
     async def get_schema() -> str:
-        """Retrieve ASOS Knowledge Schema."""
+        """Retrieve Agentic Blackboard Knowledge Schema."""
         async with httpx.AsyncClient(timeout=client_timeout) as client:
             resp = await client.get(f"{api_url}/schema", headers=headers)
             if resp.is_error:
                 return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
             return resp.text
 
-    @mcp.resource("asos://skills/{name}")
+    @mcp.resource("ab://skills/{name}")
     async def get_skill(name: str) -> str:
         """Retrieve skill documentation by name from skills/{name}/SKILL.md."""
         try:
@@ -920,7 +923,7 @@ def handle_mcp(args, cfg: dict):
 def main():
     parser = argparse.ArgumentParser(
         prog="ab-ctl",
-        description="Agentic Blackboard Admin, Surface & MCP Bridge CLI"
+        description="Agentic Blackboard (ab) Controller"
     )
     parser.add_argument("--config", help="Path to blackboard.conf configuration file")
     parser.add_argument("--connect", help="Blackboard daemon URL (default: http://localhost:8085)")

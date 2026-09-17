@@ -21,7 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-SERVER_PORT = int(os.environ.get("ASOS_PORT", 8085))
+SERVER_PORT = int(os.environ.get("AB_PORT", 8085))
 BASE_URL = f"http://127.0.0.1:{SERVER_PORT}"
 CONTEXT_ID = "ctx:lab-42"
 ADMIN_TOKEN = "ab_adm_0123456789abcdef0123456789abcdef"
@@ -151,22 +151,22 @@ def start_server_if_needed(auth_mode: str = "trusted_network"):
     try:
         status, _ = http_get("/api/v1/schema")
         if status == 200 and auth_mode == "trusted_network":
-            print(f"[Test] Found running ASOS server on port {SERVER_PORT}")
+            print(f"[Test] Found running Agentic Blackboard server on port {SERVER_PORT}")
             return None, None
     except Exception:
         pass
 
-    print(f"[Test] Starting new ASOS daemon on port {SERVER_PORT} (auth_mode: {auth_mode})...")
-    temp_dir = tempfile.mkdtemp(prefix="asos_sync_test_")
+    print(f"[Test] Starting new Agentic Blackboard daemon on port {SERVER_PORT} (auth_mode: {auth_mode})...")
+    temp_dir = tempfile.mkdtemp(prefix="ab_sync_test_")
     db_path = os.path.join(temp_dir, "db")
 
     # Seed anchors & tokens
-    seed_cmd = ["./build/asos_daemon", "--seed", f"--db={db_path}"]
+    seed_cmd = ["./build/agentic-blackboardd", "--seed", f"--db={db_path}"]
     subprocess.run(seed_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # Launch daemon
     daemon_proc = subprocess.Popen(
-        ["./build/asos_daemon", "1", f"--db={db_path}", f"--auth-mode={auth_mode}"],
+        ["./build/agentic-blackboardd", "1", f"--db={db_path}", f"--auth-mode={auth_mode}"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
@@ -186,9 +186,9 @@ def start_server_if_needed(auth_mode: str = "trusted_network"):
     if not ready:
         daemon_proc.terminate()
         shutil.rmtree(temp_dir, ignore_errors=True)
-        raise RuntimeError("Failed to start ASOS daemon within timeout.")
+        raise RuntimeError("Failed to start Agentic Blackboard daemon within timeout.")
 
-    print(f"[Test] ASOS daemon started (pid: {daemon_proc.pid})")
+    print(f"[Test] Agentic Blackboard daemon started (pid: {daemon_proc.pid})")
     return daemon_proc, temp_dir
 
 

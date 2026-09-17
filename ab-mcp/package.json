@@ -1,7 +1,7 @@
 {
-  "name": "asos-mcp",
+  "name": "ab-mcp",
   "version": "1.0.0",
-  "description": "",
+  "description": "Model Context Protocol server for Agentic Blackboard",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
