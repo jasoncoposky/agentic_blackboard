@@ -43,6 +43,14 @@ std::string extract_token(const httplib::Request& req) {
             return key.substr(start, end - start + 1);
         }
     }
+    if (req.has_param("token")) {
+        std::string tok = req.get_param_value("token");
+        size_t start = tok.find_first_not_of(" \t\r\n");
+        size_t end = tok.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos) {
+            return tok.substr(start, end - start + 1);
+        }
+    }
     return "";
 }
 
@@ -51,6 +59,174 @@ std::string extract_token(const httplib::Request& req) {
 namespace asos {
 
 static std::atomic<httplib::Server*> s_server{nullptr};
+
+bool ContextBroker::register_surface(const std::string& context_id,
+                                     const std::string& surface_id,
+                                     const std::string& client_app,
+                                     const nlohmann::json& capabilities,
+                                     nlohmann::json& out_resp) {
+    SurfaceInfo info;
+    info.surface_id = surface_id;
+    info.client_app = client_app;
+    info.capabilities = capabilities;
+    info.registered_at = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ContextRecord& ctx = contexts_[context_id];
+        ctx.context_id = context_id;
+        ctx.surfaces[surface_id] = info;
+    }
+
+    out_resp = {
+        {"status", "REGISTERED"},
+        {"context_id", context_id},
+        {"surface_id", surface_id}
+    };
+
+    nlohmann::json evt_payload = {
+        {"event", "surface_joined"},
+        {"context_id", context_id},
+        {"surface_id", surface_id},
+        {"client_app", client_app},
+        {"capabilities", capabilities}
+    };
+    broadcast(context_id, "surface_joined", evt_payload.dump());
+    return true;
+}
+
+bool ContextBroker::get_context_state(const std::string& context_id, nlohmann::json& out_state) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = contexts_.find(context_id);
+    if (it == contexts_.end()) {
+        return false;
+    }
+    const auto& ctx = it->second;
+    nlohmann::json surfaces_arr = nlohmann::json::array();
+    for (const auto& [sid, sinfo] : ctx.surfaces) {
+        surfaces_arr.push_back({
+            {"surface_id", sinfo.surface_id},
+            {"client_app", sinfo.client_app},
+            {"capabilities", sinfo.capabilities}
+        });
+    }
+    out_state = {
+        {"context_id", ctx.context_id},
+        {"active_surfaces", surfaces_arr},
+        {"focus", ctx.focus}
+    };
+    return true;
+}
+
+bool ContextBroker::update_focus(const std::string& context_id,
+                                 const std::string& surface_id,
+                                 const nlohmann::json& focus_payload,
+                                 nlohmann::json& out_broadcast_payload) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ContextRecord& ctx = contexts_[context_id];
+        ctx.context_id = context_id;
+        ctx.focus = focus_payload;
+        if (!surface_id.empty() && !ctx.focus.contains("surface_id")) {
+            ctx.focus["surface_id"] = surface_id;
+        }
+        if (!ctx.focus.contains("selected")) {
+            ctx.focus["selected"] = nlohmann::json::array();
+        }
+    }
+
+    out_broadcast_payload = focus_payload;
+    if (!surface_id.empty() && !out_broadcast_payload.contains("surface_id")) {
+        out_broadcast_payload["surface_id"] = surface_id;
+    }
+    if (!out_broadcast_payload.contains("context_id")) {
+        out_broadcast_payload["context_id"] = context_id;
+    }
+
+    broadcast(context_id, "focus_update", out_broadcast_payload.dump());
+    return true;
+}
+
+std::shared_ptr<SseClientSession> ContextBroker::create_client(const std::string& context_id) {
+    auto session = std::make_shared<SseClientSession>();
+    session->id = next_client_id_++;
+    session->context_id = context_id;
+    session->active = true;
+
+    nlohmann::json handshake = {
+        {"status", "connected"},
+        {"context_id", context_id}
+    };
+    std::string init_evt = "event: connected\ndata: " + handshake.dump() + "\n\n";
+    session->event_queue.push(init_evt);
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (contexts_.find(context_id) == contexts_.end()) {
+        ContextRecord rec;
+        rec.context_id = context_id;
+        contexts_[context_id] = rec;
+    }
+    subscribers_[context_id][session->id] = session;
+    return session;
+}
+
+void ContextBroker::remove_client(const std::string& context_id, uint64_t client_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = subscribers_.find(context_id);
+    if (it != subscribers_.end()) {
+        it->second.erase(client_id);
+        if (it->second.empty()) {
+            subscribers_.erase(it);
+        }
+    }
+}
+
+void ContextBroker::broadcast(const std::string& context_id, const std::string& event_name, const std::string& json_data) {
+    std::string sse_msg = "event: " + event_name + "\ndata: " + json_data + "\n\n";
+    std::vector<std::shared_ptr<SseClientSession>> targets;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = subscribers_.find(context_id);
+        if (it != subscribers_.end()) {
+            targets.reserve(it->second.size());
+            for (auto& [cid, session] : it->second) {
+                targets.push_back(session);
+            }
+        }
+    }
+
+    for (auto& session : targets) {
+        if (!session->active) continue;
+        {
+            std::lock_guard<std::mutex> slock(session->mutex);
+            if (!session->active) continue;
+            session->event_queue.push(sse_msg);
+        }
+        session->cv.notify_one();
+    }
+}
+
+void ContextBroker::shutdown() {
+    std::vector<std::shared_ptr<SseClientSession>> all_sessions;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& [ctx_id, clients] : subscribers_) {
+            for (auto& [cid, session] : clients) {
+                all_sessions.push_back(session);
+            }
+        }
+        subscribers_.clear();
+        contexts_.clear();
+    }
+    for (auto& session : all_sessions) {
+        {
+            std::lock_guard<std::mutex> slock(session->mutex);
+            session->active = false;
+        }
+        session->cv.notify_all();
+    }
+}
 
 ApiServer::~ApiServer() {
     stop();
@@ -66,6 +242,7 @@ void ApiServer::start(Blackboard* blackboard, int port) {
 void ApiServer::stop() {
     if (!running_) return;
     running_ = false;
+    context_broker_.shutdown();
     auto* s = s_server.load();
     if (s) {
         s->stop();
@@ -245,6 +422,32 @@ void ApiServer::listen_loop() {
                 e.header.origin.agent_id = agent_id;
                 e.header.origin.project_id = project_id;
 
+                if (item.contains("header") && item["header"].contains("origin") && item["header"]["origin"].contains("context_id")) {
+                    e.header.origin.context_id = item["header"]["origin"].value("context_id", "");
+                } else if (item.contains("origin") && item["origin"].contains("context_id")) {
+                    e.header.origin.context_id = item["origin"].value("context_id", "");
+                } else if (item.contains("context_id")) {
+                    e.header.origin.context_id = item.value("context_id", "");
+                } else if (j.contains("context_id")) {
+                    e.header.origin.context_id = j.value("context_id", "");
+                }
+
+                if (item.contains("header") && item["header"].contains("origin") && item["header"]["origin"].contains("surface_id")) {
+                    e.header.origin.surface_id = item["header"]["origin"].value("surface_id", "");
+                } else if (item.contains("origin") && item["origin"].contains("surface_id")) {
+                    e.header.origin.surface_id = item["origin"].value("surface_id", "");
+                } else if (item.contains("surface_id")) {
+                    e.header.origin.surface_id = item.value("surface_id", "");
+                }
+
+                if (item.contains("header") && item["header"].contains("origin") && item["header"]["origin"].contains("surface_type")) {
+                    e.header.origin.surface_type = item["header"]["origin"].value("surface_type", "");
+                } else if (item.contains("origin") && item["origin"].contains("surface_type")) {
+                    e.header.origin.surface_type = item["origin"].value("surface_type", "");
+                } else if (item.contains("surface_type")) {
+                    e.header.origin.surface_type = item.value("surface_type", "");
+                }
+
                 if (item.contains("payload")) {
                     e.payload.statement = item["payload"].value("statement", "");
                     e.payload.content = item["payload"].value("content", "");
@@ -402,6 +605,13 @@ void ApiServer::listen_loop() {
                 std::cout << "[API] Processing Atom Statement: " << e.payload.statement << std::endl;
                 if (blackboard_->commit_cpb_entry(e, principal_id)) {
                     count++;
+                    if (!e.header.origin.context_id.empty()) {
+                        json atom_evt = {
+                            {"context_id", e.header.origin.context_id},
+                            {"uuid", e.header.uuid}
+                        };
+                        context_broker_.broadcast(e.header.origin.context_id, "atom_committed", atom_evt.dump());
+                    }
                 }
             }
             
@@ -511,6 +721,13 @@ void ApiServer::listen_loop() {
             e.taxonomy.uncertainty = false; // Promotion implies validation
             
             if (blackboard_->commit_cpb_entry(e, principal_id)) {
+                if (!e.header.origin.context_id.empty()) {
+                    json atom_evt = {
+                        {"context_id", e.header.origin.context_id},
+                        {"uuid", e.header.uuid}
+                    };
+                    context_broker_.broadcast(e.header.origin.context_id, "atom_committed", atom_evt.dump());
+                }
                 res.set_content("{\"status\":\"PROMOTED\"}", "application/json");
             } else {
                 res.status = 500;
@@ -1277,6 +1494,158 @@ void ApiServer::listen_loop() {
         } catch (const std::exception& e) {
             res.status = 500;
             res.set_content(e.what(), "text/plain");
+        }
+    });
+
+    // 8. Shared Workspace Context & Multi-Surface SSE Event Sync
+    svr.Post("/api/v1/context/register", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            auto j = json::parse(req.body);
+            std::string context_id = j.value("context_id", "");
+            std::string surface_id = j.value("surface_id", "");
+            std::string client_app = j.value("client_app", "");
+            json capabilities = j.value("capabilities", json::object());
+
+            if (context_id.empty() || surface_id.empty()) {
+                res.status = 400;
+                res.set_content(json({{"error", "Missing context_id or surface_id"}}).dump(), "application/json");
+                return;
+            }
+
+            json resp;
+            context_broker_.register_surface(context_id, surface_id, client_app, capabilities, resp);
+            res.status = 200;
+            res.set_content(resp.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 400;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    svr.Get(R"(/api/v1/context/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            std::string context_id = req.matches[1];
+            json state;
+            if (!context_broker_.get_context_state(context_id, state)) {
+                res.status = 404;
+                res.set_content(json({{"error", "Context not found"}, {"context_id", context_id}}).dump(), "application/json");
+                return;
+            }
+
+            res.status = 200;
+            res.set_content(state.dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    svr.Post(R"(/api/v1/context/([^/]+)/focus)", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            std::string context_id = req.matches[1];
+            auto j = json::parse(req.body);
+            std::string surface_id = j.value("surface_id", "");
+
+            json broadcast_payload;
+            context_broker_.update_focus(context_id, surface_id, j, broadcast_payload);
+
+            res.status = 200;
+            res.set_content(json({{"status", "OK"}, {"context_id", context_id}}).dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 400;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    svr.Get("/api/v1/events", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            std::string context_id;
+            if (req.has_param("context")) {
+                context_id = req.get_param_value("context");
+            }
+
+            if (context_id.empty()) {
+                res.status = 400;
+                res.set_content(json({{"error", "Missing context query parameter"}}).dump(), "application/json");
+                return;
+            }
+
+            auto session = context_broker_.create_client(context_id);
+
+            res.set_header("Content-Type", "text/event-stream");
+            res.set_header("Cache-Control", "no-cache");
+            res.set_header("Connection", "keep-alive");
+
+            res.set_chunked_content_provider(
+                "text/event-stream",
+                [session, this](size_t /*offset*/, httplib::DataSink& sink) -> bool {
+                    if (!running_ || !session->active) {
+                        return false;
+                    }
+                    if (!sink.is_writable()) {
+                        return false;
+                    }
+
+                    std::vector<std::string> msgs;
+                    {
+                        std::unique_lock<std::mutex> lock(session->mutex);
+                        session->cv.wait_for(lock, std::chrono::milliseconds(100), [&]() {
+                            return !running_ || !session->active || !session->event_queue.empty();
+                        });
+
+                        if (!running_ || !session->active) {
+                            return false;
+                        }
+                        while (!session->event_queue.empty()) {
+                            msgs.push_back(std::move(session->event_queue.front()));
+                            session->event_queue.pop();
+                        }
+                    }
+
+                    for (const auto& msg : msgs) {
+                        if (!sink.write(msg.data(), msg.size())) {
+                            return false;
+                        }
+                    }
+                    return true;
+                },
+                [session, this](bool /*success*/) {
+                    session->active = false;
+                    session->cv.notify_all();
+                    context_broker_.remove_client(session->context_id, session->id);
+                }
+            );
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
         }
     });
 
