@@ -45,6 +45,7 @@ ab_db
 ab_db-*
 blackboard_db
 blackboard_db-*
+test_*_db*
 __pycache__/
 node_modules/
 .next/

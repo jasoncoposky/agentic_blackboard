@@ -75,7 +75,7 @@ graph TD
 - Consumes: L3KV engine, cpp-httplib, OpenSSL, nlohmann::json.
 - Produces: `namespace agentic_blackboard` and `namespace ab = agentic_blackboard` exporting all engine classes: `Blackboard`, `ApiServer`, `DeltaEngine`, `Librarian`, `Monitor`, `Orchestrator`, `RdfExporter`, `Validator`, `CpbEntry`.
 
-- [ ] **Step 1: Move header directory and create forwarding headers**
+- [x] **Step 1: Move header directory and create forwarding headers**
 ```bash
 git mv include/legacy include/agentic_blackboard
 mkdir -p include/ab
@@ -86,7 +86,7 @@ Create forwarding shims in `include/ab/*.hpp` forwarding to `<agentic_blackboard
 #include <agentic_blackboard/Blackboard.hpp>
 ```
 
-- [ ] **Step 2: Update namespace and header guards in `include/agentic_blackboard/`**
+- [x] **Step 2: Update namespace and header guards in `include/agentic_blackboard/`**
 In each header file (`schema.hpp`, `Blackboard.hpp`, `ApiServer.hpp`, etc.):
 - Replace legacy header guards with `#pragma once` or `AGENTIC_BLACKBOARD_...`.
 - Replace legacy namespace with `namespace agentic_blackboard {`.
@@ -96,7 +96,7 @@ namespace ab = agentic_blackboard;
 ```
 - Replace any legacy includes with `<agentic_blackboard/...>`.
 
-- [ ] **Step 3: Update source implementations in `src/*.cpp` and `src/main.cpp`**
+- [x] **Step 3: Update source implementations in `src/*.cpp` and `src/main.cpp`**
 - In `src/ApiServer.cpp`, `src/Blackboard.cpp`, `src/DeltaEngine.cpp`, `src/Librarian.cpp`, `src/Monitor.cpp`, `src/Orchestrator.cpp`, `src/RdfExporter.cpp`, `src/Validator.cpp`:
   - Update header includes to `#include <agentic_blackboard/...>`.
   - Replace legacy namespace with `namespace agentic_blackboard`.
@@ -107,11 +107,11 @@ namespace ab = agentic_blackboard;
   - Update namespace references to `agentic_blackboard::` or `ab::`.
   - Update banner and CLI help strings to `Agentic Blackboard Daemon`.
 
-- [ ] **Step 4: Verify compilation of source files**
+- [x] **Step 4: Verify compilation of source files**
 Run: `gcc -Iinclude -fsyntax-only src/main.cpp` (or test build target).
 Expected: Compiles with namespace `agentic_blackboard`.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 ```bash
 git add include/ src/
 git commit -m "refactor(core): migrate namespace and headers to agentic_blackboard / ab"
@@ -130,7 +130,7 @@ git commit -m "refactor(core): migrate namespace and headers to agentic_blackboa
 - Consumes: Migrated headers and source files from Task 1.
 - Produces: CMake targets `ab_engine`, `agentic_blackboardd`, `ab_daemon`, and `ab_verify`.
 
-- [ ] **Step 1: Update `CMakeLists.txt`**
+- [x] **Step 1: Update `CMakeLists.txt`**
 - Configure library target `ab_engine`:
   ```cmake
   add_library(ab_engine STATIC ${AB_ENGINE_SOURCES})
@@ -148,13 +148,13 @@ git commit -m "refactor(core): migrate namespace and headers to agentic_blackboa
   ```
 - Update include directories and install directives to `agentic_blackboard`.
 
-- [ ] **Step 2: Update `src/main_verify.cpp`**
+- [x] **Step 2: Update `src/main_verify.cpp`**
 - Use `#include <agentic_blackboard/...>` or `#include <ab/...>`.
 - Use `ab::` or `agentic_blackboard::`.
 - Update test log banners to `[Test] Agentic Blackboard Verification...`.
 - Update token test strings and salts to `ab_salt_token_v1:`.
 
-- [ ] **Step 3: Build targets and run `ab_verify`**
+- [x] **Step 3: Build targets and run `ab_verify`**
 Run:
 ```bash
 cmake -B build -S .
@@ -163,7 +163,7 @@ cmake --build build --target ab_engine ab_verify agentic-blackboardd
 ```
 Expected: All verification suites pass with `[SUCCESS] All Agentic Blackboard Verification Tests Passed!`.
 
-- [ ] **Step 4: Commit Task 2**
+- [x] **Step 4: Commit Task 2**
 ```bash
 git add CMakeLists.txt src/main_verify.cpp
 git commit -m "build(cmake): update targets to ab_engine, ab_verify, and agentic-blackboardd"
@@ -185,7 +185,7 @@ git commit -m "build(cmake): update targets to ab_engine, ab_verify, and agentic
 - Consumes: REST endpoints of `agentic-blackboardd` on port 8085 / configurable port.
 - Produces: `ab-ctl` CLI commands and FastMCP / Node.js MCP server tools.
 
-- [ ] **Step 1: Move and update MCP Python server**
+- [x] **Step 1: Move and update MCP Python server**
 ```bash
 # migrate to ab_mcp_server.py
 ```
@@ -193,13 +193,13 @@ In `ab_mcp_server.py`:
 - Use `Agentic Blackboard` or `ab`.
 - Update server name `mcp = FastMCP("agentic-blackboard")`.
 
-- [ ] **Step 2: Update `src/ab-ctl.py`**
+- [x] **Step 2: Update `src/ab-ctl.py`**
 - Update token salt prefix to `ab_salt_token_v1:`.
 - Update banner, docstrings, and CLI help strings to `Agentic Blackboard (ab) Controller`.
 - Update FastMCP server initialization and imports from `ab_mcp_server`.
 - Update default database path strings to `ab_db` or `/var/lib/agentic-blackboard`.
 
-- [ ] **Step 3: Move and update Node.js MCP server**
+- [x] **Step 3: Move and update Node.js MCP server**
 ```bash
 # migrate to ab-mcp
 ```
@@ -208,7 +208,7 @@ In `ab-mcp/package.json`:
 In `ab-mcp/index.js`:
 - Update log messages and server name to `agentic-blackboard`.
 
-- [ ] **Step 4: Update and run test scripts**
+- [x] **Step 4: Update and run test scripts**
 In `scratch/test_ab_ctl.py` and `scratch/test_multi_surface_sync.py`:
 - Update binary invocation to `build/agentic-blackboardd`.
 - Run:
@@ -218,7 +218,7 @@ python3 scratch/test_multi_surface_sync.py
 ```
 Expected: All steps and phases pass with exit code 0.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 ```bash
 git add src/ab-ctl.py ab_mcp_server.py ab-mcp/ scratch/test_ab_ctl.py scratch/test_multi_surface_sync.py
 git commit -m "feat(cli): rename MCP server and update ab-ctl branding and tests"
@@ -241,7 +241,7 @@ git commit -m "feat(cli): rename MCP server and update ab-ctl branding and tests
 - Consumes: Built binary `build/agentic-blackboardd`, `src/ab-ctl.py`.
 - Produces: Clean enterprise RPM `agentic-blackboard-0.4.0-1.el9.x86_64.rpm` and Docker image `agentic-blackboard:latest`.
 
-- [ ] **Step 1: Move assets and dashboard**
+- [x] **Step 1: Move assets and dashboard**
 ```bash
 # migrate to ab-dashboard
 # migrate to ab_logo.png
@@ -253,7 +253,7 @@ In `ab-dashboard/package.json`:
 In `ab-dashboard/src/app/layout.js`, `page.js`, `Sidebar.js`:
 - Set dashboard branding to `"Agentic Blackboard"`.
 
-- [ ] **Step 2: Update packaging, systemd, and configs**
+- [x] **Step 2: Update packaging, systemd, and configs**
 - In `packaging/rpm/agentic-blackboard.spec`:
   - Ensure all comments and descriptions use `Agentic Blackboard` with zero mentions of legacy branding.
 - In `packaging/systemd/agentic-blackboard.service`:
@@ -265,7 +265,7 @@ In `ab-dashboard/src/app/layout.js`, `page.js`, `Sidebar.js`:
 - In `Dockerfile`:
   - Ensure image tags and comments reference `agentic-blackboard`.
 
-- [ ] **Step 3: Run RPM build and container deployment verification**
+- [x] **Step 3: Run RPM build and container deployment verification**
 Run:
 ```bash
 python3 scratch/test_rpm_build.py
@@ -273,7 +273,7 @@ python3 scratch/test_e2e_central_deployment.py
 ```
 Expected: Both tests pass all phases and exit code 0.
 
-- [ ] **Step 4: Commit Task 4**
+- [x] **Step 4: Commit Task 4**
 ```bash
 git add ab-dashboard/ ab_logo.png ab_screenshot.png scratch/populate_ab_project.py packaging/ Dockerfile .gitignore scratch/test_rpm_build.py scratch/test_e2e_central_deployment.py
 git commit -m "packaging: rename dashboard and scrub legacy references from configs and assets"
@@ -295,35 +295,35 @@ git commit -m "packaging: rename dashboard and scrub legacy references from conf
 - Consumes: Entire repository.
 - Produces: Zero occurrences of legacy branding across the repository.
 
-- [ ] **Step 1: Rename reference guides**
+- [x] **Step 1: Rename reference guides**
 ```bash
 # rename to Agentic Blackboard Schema & Code Reference Guide.md
 # rename to Agentic Blackboard Architecture & Master Schema TRD v0.2.md
 ```
 
-- [ ] **Step 2: Update reference guides and `README.md`**
+- [x] **Step 2: Update reference guides and `README.md`**
 - Update references to `Agentic Blackboard` or `ab`.
 - Update include paths, namespace examples, and build commands.
 
-- [ ] **Step 3: Update built-in skills in `skills/`**
+- [x] **Step 3: Update built-in skills in `skills/`**
 - In all 6 `skills/*/SKILL.md` files:
   - Update references to `Agentic Blackboard` or `ab`.
   - Update endpoint examples and tool references.
 
-- [ ] **Step 4: Update scratch scripts and historical specs/plans**
+- [x] **Step 4: Update scratch scripts and historical specs/plans**
 - In `scratch/*.cpp`, `scratch/*.py`, `scripts/*.py`:
   - Update namespace, includes, and log strings.
 - In `docs/superpowers/specs/` and `docs/superpowers/plans/`:
   - Update all historical specs and plans to use `Agentic Blackboard` / `ab`.
 
-- [ ] **Step 5: Final Zero-Tolerance Sweep**
+- [x] **Step 5: Final Zero-Tolerance Sweep**
 Run:
 ```bash
 git grep -i "<legacy_term>"
 ```
 Expected: 0 lines returned.
 
-- [ ] **Step 6: Run full test suite regression**
+- [x] **Step 6: Run full test suite regression**
 Run:
 ```bash
 ./build/ab_verify
@@ -332,7 +332,7 @@ python3 scratch/test_multi_surface_sync.py
 ```
 Expected: All tests pass.
 
-- [ ] **Step 7: Commit Task 5**
+- [x] **Step 7: Commit Task 5**
 ```bash
 git add README.md "Agentic Blackboard Schema & Code Reference Guide.md" "Agentic Blackboard Architecture & Master Schema TRD v0.2.md" skills/ scratch/ scripts/ docs/superpowers/
 git commit -m "docs: complete rebranding to agentic_blackboard and ab across all documentation"
