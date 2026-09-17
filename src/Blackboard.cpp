@@ -100,10 +100,12 @@ Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) {
 Blackboard::~Blackboard() = default;
 
 void Blackboard::set_auth_mode(const std::string& mode) {
+    std::unique_lock lock(auth_mutex_);
     auth_mode_ = mode;
 }
 
 std::string Blackboard::get_auth_mode() const {
+    std::shared_lock lock(auth_mutex_);
     return auth_mode_;
 }
 

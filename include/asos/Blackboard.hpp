@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <shared_mutex>
 
 namespace asos {
 
@@ -83,6 +84,7 @@ public:
 private:
     std::unique_ptr<l3kvg::Engine> engine_;
     std::string auth_mode_{"trusted_network"};
+    mutable std::shared_mutex auth_mutex_;
 };
 
 } // namespace asos

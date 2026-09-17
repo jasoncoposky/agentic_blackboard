@@ -453,6 +453,13 @@ void ApiServer::listen_loop() {
     // { "source": "...", "target": "...", "label": "...", "weight": 1.0 }
     svr.Post("/api/v1/link", [this](const httplib::Request& req, httplib::Response& res) {
         try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
             auto j = json::parse(req.body);
             std::string src = j.at("source");
             std::string dst = j.at("target");
@@ -514,6 +521,13 @@ void ApiServer::listen_loop() {
     // 5. Nucleus Integration Endpoints
     svr.Post("/api/v1/nucleus/materialize", [this](const httplib::Request& req, httplib::Response& res) {
         try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
             auto j = json::parse(req.body);
             std::string atom_id = j.at("atom_id");
             std::string behavior = j.at("behavior");
@@ -539,6 +553,13 @@ void ApiServer::listen_loop() {
 
     svr.Post("/api/v1/nucleus/bind", [this](const httplib::Request& req, httplib::Response& res) {
         try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
             auto j = json::parse(req.body);
             std::string marker_id = j.at("marker_id");
             std::string atom_id = j.at("atom_id");

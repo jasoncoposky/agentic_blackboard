@@ -1321,6 +1321,22 @@ void test_token_auth_and_roles(asos::Blackboard& bb) {
     auto res_valid_key = cli.Post("/api/v1/query", valid_key, "{}", "application/json");
     assert(res_valid_key && res_valid_key->status == 200);
 
+    // 7. Verify POST /api/v1/link unauthenticated rejection (401) and authenticated acceptance (200)
+    nlohmann::json link_body = {
+        {"source", "atom-link-src"},
+        {"target", "atom-link-dst"},
+        {"label", "RELATED_TO"},
+        {"weight", 1.0}
+    };
+    auto res_link_unauth = cli.Post("/api/v1/link", link_body.dump(), "application/json");
+    assert(res_link_unauth && res_link_unauth->status == 401);
+    auto link_unauth_json = nlohmann::json::parse(res_link_unauth->body);
+    assert(link_unauth_json["error"] == "Unauthorized");
+    assert(link_unauth_json["message"] == "Valid Bearer token required");
+
+    auto res_link_auth = cli.Post("/api/v1/link", valid_bearer, link_body.dump(), "application/json");
+    assert(res_link_auth && res_link_auth->status == 200);
+
     ApiServer::instance().stop();
     
     std::cout << "[Test] Token Authentication & RBAC Verification PASSED" << std::endl;
