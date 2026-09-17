@@ -3,7 +3,8 @@
 Integration test for Task 3: Shared Workspace Context & Multi-Surface SSE Event Sync
 Connects Simulated Table and Simulated Tablet to SSE event streams,
 tests surface registration, context state query, focus broadcasting (<50ms latency),
-context-anchored atom commit notifications, multi-surface presence, and edge cases.
+context-anchored atom commit notifications, multi-surface presence,
+token authentication mode validation, and edge cases.
 """
 
 import http.client
@@ -23,6 +24,8 @@ import urllib.request
 SERVER_PORT = int(os.environ.get("ASOS_PORT", 8085))
 BASE_URL = f"http://127.0.0.1:{SERVER_PORT}"
 CONTEXT_ID = "ctx:lab-42"
+ADMIN_TOKEN = "ab_adm_0123456789abcdef0123456789abcdef"
+CURATOR_TOKEN = "ab_usr_fedcba9876543210fedcba9876543210"
 
 
 class SSEClient:
@@ -34,6 +37,7 @@ class SSEClient:
         self.events = queue.Queue()
         self.running = True
         self.connected_event = threading.Event()
+        self.http_status = None
         self.conn = None
         self.thread = threading.Thread(target=self._reader_loop, daemon=True)
         self.thread.start()
@@ -45,6 +49,7 @@ class SSEClient:
             req_headers.update(self.headers)
             self.conn.request("GET", self.path, headers=req_headers)
             res = self.conn.getresponse()
+            self.http_status = res.status
             if res.status != 200:
                 self.events.put({"error": f"HTTP {res.status}", "status": res.status})
                 self.connected_event.set()
@@ -142,26 +147,26 @@ def http_post(path: str, body: dict, headers: dict = None):
             return e.code, resp_body
 
 
-def start_server_if_needed():
+def start_server_if_needed(auth_mode: str = "trusted_network"):
     try:
         status, _ = http_get("/api/v1/schema")
-        if status == 200:
+        if status == 200 and auth_mode == "trusted_network":
             print(f"[Test] Found running ASOS server on port {SERVER_PORT}")
             return None, None
     except Exception:
         pass
 
-    print(f"[Test] Starting new ASOS daemon on port {SERVER_PORT}...")
+    print(f"[Test] Starting new ASOS daemon on port {SERVER_PORT} (auth_mode: {auth_mode})...")
     temp_dir = tempfile.mkdtemp(prefix="asos_sync_test_")
     db_path = os.path.join(temp_dir, "db")
 
-    # Seed anchors
+    # Seed anchors & tokens
     seed_cmd = ["./build/asos_daemon", "--seed", f"--db={db_path}"]
     subprocess.run(seed_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # Launch daemon
     daemon_proc = subprocess.Popen(
-        ["./build/asos_daemon", "1", f"--db={db_path}"],
+        ["./build/asos_daemon", "1", f"--db={db_path}", f"--auth-mode={auth_mode}"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
@@ -187,13 +192,25 @@ def start_server_if_needed():
     return daemon_proc, temp_dir
 
 
-def main():
+def stop_server(daemon_proc, temp_dir):
+    if daemon_proc:
+        print("[Test] Stopping test daemon...")
+        daemon_proc.terminate()
+        try:
+            daemon_proc.wait(timeout=3)
+        except Exception:
+            daemon_proc.kill()
+    if temp_dir:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def test_standard_sync():
     daemon_proc, temp_dir = None, None
     table_sse = None
     tablet_sse = None
     token_sse = None
     try:
-        daemon_proc, temp_dir = start_server_if_needed()
+        daemon_proc, temp_dir = start_server_if_needed("trusted_network")
 
         print("\n=== Phase 1: Connect Simulated Table & Tablet to SSE stream ===")
         events_path = f"/api/v1/events?context={urllib.parse.quote(CONTEXT_ID)}"
@@ -286,14 +303,16 @@ def main():
         assert focus_evt["event"] == "focus_update", f"Expected focus_update event, got {focus_evt}"
         assert focus_evt["data"].get("selected") == ["atom-1", "atom-2"], f"Selected mismatch: {focus_evt['data']}"
         assert focus_evt["data"].get("surface_id") == "table-1", f"Surface mismatch: {focus_evt['data']}"
+        assert focus_evt["data"].get("context_id") == CONTEXT_ID, f"Context mismatch: {focus_evt['data']}"
         print(f"  [PASS] Tablet received focus_update in {latency_ms:.2f}ms (threshold < 50ms).")
         assert latency_ms < 50.0, f"Focus update latency {latency_ms:.2f}ms exceeded 50ms threshold!"
 
-        # Verify context state now has this focus
+        # Verify context state now has this focus with normalized fields
         status, ctx_state = http_get(f"/api/v1/context/{urllib.parse.quote(CONTEXT_ID)}", headers={"X-Active-User": "admin"})
         assert status == 200
         assert ctx_state.get("focus", {}).get("selected") == ["atom-1", "atom-2"]
-        print("  [PASS] Context state reflects updated focus selection.")
+        assert ctx_state.get("focus", {}).get("context_id") == CONTEXT_ID
+        print("  [PASS] Context state reflects updated, normalized focus selection.")
 
         print("\n=== Phase 4: Atom Commit Context Broadcast ===")
         bundle_payload = {
@@ -335,8 +354,6 @@ def main():
         assert evt_tok_init["event"] == "connected"
         print("  [PASS] SSE connection authenticated via '?token=...' query parameter.")
 
-        print("\n[SUCCESS] Multi-Surface SSE Event Sync integration tests all passed!")
-
     finally:
         if table_sse:
             table_sse.close()
@@ -344,15 +361,117 @@ def main():
             tablet_sse.close()
         if token_sse:
             token_sse.close()
-        if daemon_proc:
-            print("[Test] Stopping test daemon...")
-            daemon_proc.terminate()
-            try:
-                daemon_proc.wait(timeout=3)
-            except Exception:
-                daemon_proc.kill()
-        if temp_dir:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        stop_server(daemon_proc, temp_dir)
+
+
+def test_token_mode_auth():
+    print("\n=== Phase 6: Token Auth Mode Enforcement & UUID Fallback ===")
+    daemon_proc, temp_dir = start_server_if_needed(auth_mode="token")
+    client_unauth = None
+    client_bad_tok = None
+    client_valid_tok = None
+    try:
+        ctx_tok = "ctx:token-workspace-99"
+
+        # 1. Unauthenticated SSE connection must be rejected with 401
+        path_unauth = f"/api/v1/events?context={urllib.parse.quote(ctx_tok)}"
+        client_unauth = SSEClient("127.0.0.1", SERVER_PORT, path_unauth)
+        assert client_unauth.connected_event.wait(3.0)
+        assert client_unauth.http_status == 401, f"Expected 401 unauth, got {client_unauth.http_status}"
+        print("  [PASS] SSE connection without token in token mode rejected with 401 Unauthorized.")
+
+        # 2. Invalid token must be rejected with 401
+        path_bad = f"/api/v1/events?context={urllib.parse.quote(ctx_tok)}&token=ab_usr_invalid_token"
+        client_bad_tok = SSEClient("127.0.0.1", SERVER_PORT, path_bad)
+        assert client_bad_tok.connected_event.wait(3.0)
+        assert client_bad_tok.http_status == 401, f"Expected 401 bad token, got {client_bad_tok.http_status}"
+        print("  [PASS] SSE connection with invalid ?token=... rejected with 401 Unauthorized.")
+
+        # 3. Valid token query parameter must succeed (200) and establish SSE stream
+        path_valid = f"/api/v1/events?context={urllib.parse.quote(ctx_tok)}&token={ADMIN_TOKEN}"
+        client_valid_tok = SSEClient("127.0.0.1", SERVER_PORT, path_valid)
+        assert client_valid_tok.connected_event.wait(3.0)
+        assert client_valid_tok.http_status == 200, f"Expected 200 with valid token, got {client_valid_tok.http_status}"
+        evt_init = client_valid_tok.get_event(timeout=2.0)
+        assert evt_init["event"] == "connected"
+        assert evt_init["data"].get("context_id") == ctx_tok
+        print("  [PASS] SSE connection with valid ?token=... connected (200) and received handshake.")
+
+        # 4. Context query before any surface registers must return 404 (phantom context not seeded)
+        status, ctx_res = http_get(f"/api/v1/context/{urllib.parse.quote(ctx_tok)}?token={ADMIN_TOKEN}")
+        assert status == 404, f"Expected 404 for un-registered context, got {status}: {ctx_res}"
+        print("  [PASS] GET /api/v1/context/:id returned 404 before registration (no phantom context).")
+
+        # 5. Surface registration with valid token
+        reg_payload = {
+            "context_id": ctx_tok,
+            "surface_id": "surface:secure-wall",
+            "client_app": "secure-canvas",
+            "capabilities": {"security_level": "top_secret"}
+        }
+        status, reg_res = http_post(f"/api/v1/context/register?token={ADMIN_TOKEN}", reg_payload)
+        assert status == 200
+        join_evt = client_valid_tok.get_event(timeout=2.0)
+        assert join_evt["event"] == "surface_joined"
+        assert join_evt["data"]["surface_id"] == "surface:secure-wall"
+        print("  [PASS] Registered surface with ?token=...; SSE received 'surface_joined'.")
+
+        # 6. Context query now returns active surface
+        status, ctx_res = http_get(f"/api/v1/context/{urllib.parse.quote(ctx_tok)}?token={ADMIN_TOKEN}")
+        assert status == 200
+        assert any(s["surface_id"] == "surface:secure-wall" for s in ctx_res["active_surfaces"])
+        print("  [PASS] GET /api/v1/context/:id with token returned active surfaces.")
+
+        # 7. Focus update with normalized payload
+        focus_body = {
+            "surface_id": "surface:secure-wall",
+            "selected": ["atom-secure-1", "atom-secure-2"]
+        }
+        status, _ = http_post(f"/api/v1/context/{urllib.parse.quote(ctx_tok)}/focus?token={ADMIN_TOKEN}", focus_body)
+        assert status == 200
+        f_evt = client_valid_tok.get_event(timeout=2.0)
+        assert f_evt["event"] == "focus_update"
+        assert f_evt["data"]["selected"] == ["atom-secure-1", "atom-secure-2"]
+        assert f_evt["data"]["context_id"] == ctx_tok
+        assert f_evt["data"]["surface_id"] == "surface:secure-wall"
+        print("  [PASS] Focus updated and broadcast with consistent normalized payload.")
+
+        # 8. Atom commit without explicit UUID - verifies UUID auto-generation before broadcast
+        anon_atom_bundle = {
+            "project_id": "ALPHA_SWARM",
+            "agent_id": "Nexus_Agent_7",
+            "atoms": [
+                {
+                    "statement": "Anonymously identified atom with auto-generated UUID",
+                    "context_id": ctx_tok
+                }
+            ]
+        }
+        status, bundle_res = http_post(f"/api/v1/graph/bundle?token={ADMIN_TOKEN}", anon_atom_bundle)
+        assert status == 200, f"Bundle commit failed: {bundle_res}"
+        atom_evt = client_valid_tok.get_event(timeout=2.0)
+        assert atom_evt["event"] == "atom_committed"
+        assert atom_evt["data"]["context_id"] == ctx_tok
+        gen_uuid = atom_evt["data"].get("uuid", "")
+        assert gen_uuid.startswith("atom-"), f"Expected auto-generated UUID starting with 'atom-', got: {gen_uuid}"
+        print(f"  [PASS] Auto-generated UUID verified on commit broadcast: '{gen_uuid}'.")
+
+        print("\n[SUCCESS] Token authentication mode and review polish tests passed!")
+
+    finally:
+        if client_unauth:
+            client_unauth.close()
+        if client_bad_tok:
+            client_bad_tok.close()
+        if client_valid_tok:
+            client_valid_tok.close()
+        stop_server(daemon_proc, temp_dir)
+
+
+def main():
+    test_standard_sync()
+    test_token_mode_auth()
+    print("\n[FINAL SUCCESS] All Task 3 integration and security tests passed!")
 
 
 if __name__ == "__main__":

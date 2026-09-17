@@ -23,14 +23,15 @@ void signal_handler(int signal) {
 
 int main(int argc, char* argv[]) {
     std::string db_path = "asos_db";
-
     uint32_t node_id = 1;
+    std::string auth_mode = "trusted_network";
 
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
             if (isdigit(arg[0])) node_id = std::stoi(arg);
             else if (arg.find("--db=") == 0) db_path = arg.substr(5);
+            else if (arg.find("--auth-mode=") == 0) auth_mode = arg.substr(12);
         }
     }
 
@@ -42,12 +43,17 @@ int main(int argc, char* argv[]) {
         
         // 1. Initialize Substrate (Storage)
         asos::Blackboard bb(db_path, node_id);
+        bb.set_auth_mode(auth_mode);
 
         // -- SEEDING LOGIC --
         bool should_exit = false;
         for (int i = 1; i < argc; ++i) {
             if (std::string(argv[i]) == "--seed") {
                 std::cout << "[ASOS] Seeding Substrate with Identity and Project Anchors..." << std::endl;
+                
+                // Seed auth tokens for admin and curator
+                bb.register_token("ab_adm_0123456789abcdef0123456789abcdef", "admin", "admin");
+                bb.register_token("ab_usr_fedcba9876543210fedcba9876543210", "alice", "curator");
                 
                 // Agents
                 asos::IdentityNode agent1 = {"Nexus_Agent_7", "Nexus Agent 7", "Lead Architect", "pub-key-n7"};
@@ -131,9 +137,10 @@ int main(int argc, char* argv[]) {
         // 6. Graceful Atomic Shutdown Sequence
         std::cout << "[ASOS] Initiating graceful shutdown..." << std::endl;
         
-        asos::Librarian::instance().stop();    // Stop intelligence first
-        asos::Monitor::instance().stop();      // Stop metrics second
-        asos::Orchestrator::instance().stop(); // Stop network third
+        asos::ApiServer::instance().stop();    // Stop API server and disconnect SSE clients first
+        asos::Librarian::instance().stop();    // Stop intelligence second
+        asos::Monitor::instance().stop();      // Stop metrics third
+        asos::Orchestrator::instance().stop(); // Stop network fourth
         
         std::cout << "[ASOS] Clean shutdown complete. Substrate de-commissioned." << std::endl;
 

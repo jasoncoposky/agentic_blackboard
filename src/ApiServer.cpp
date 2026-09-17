@@ -134,14 +134,10 @@ bool ContextBroker::update_focus(const std::string& context_id,
         if (!ctx.focus.contains("selected")) {
             ctx.focus["selected"] = nlohmann::json::array();
         }
-    }
-
-    out_broadcast_payload = focus_payload;
-    if (!surface_id.empty() && !out_broadcast_payload.contains("surface_id")) {
-        out_broadcast_payload["surface_id"] = surface_id;
-    }
-    if (!out_broadcast_payload.contains("context_id")) {
-        out_broadcast_payload["context_id"] = context_id;
+        if (!ctx.focus.contains("context_id")) {
+            ctx.focus["context_id"] = context_id;
+        }
+        out_broadcast_payload = ctx.focus;
     }
 
     broadcast(context_id, "focus_update", out_broadcast_payload.dump());
@@ -162,11 +158,6 @@ std::shared_ptr<SseClientSession> ContextBroker::create_client(const std::string
     session->event_queue.push(init_evt);
 
     std::lock_guard<std::mutex> lock(mutex_);
-    if (contexts_.find(context_id) == contexts_.end()) {
-        ContextRecord rec;
-        rec.context_id = context_id;
-        contexts_[context_id] = rec;
-    }
     subscribers_[context_id][session->id] = session;
     return session;
 }
@@ -201,6 +192,9 @@ void ContextBroker::broadcast(const std::string& context_id, const std::string& 
         {
             std::lock_guard<std::mutex> slock(session->mutex);
             if (!session->active) continue;
+            if (session->event_queue.size() >= SseClientSession::kMaxQueueSize) {
+                session->event_queue.pop();
+            }
             session->event_queue.push(sse_msg);
         }
         session->cv.notify_one();
@@ -600,6 +594,13 @@ void ApiServer::listen_loop() {
                             e.attributes[k] = v.dump();
                         }
                     }
+                }
+
+                if (e.header.uuid.empty()) {
+                    uint32_t h = std::hash<std::string>{}(e.payload.statement);
+                    char hex[9];
+                    snprintf(hex, sizeof(hex), "%08x", h);
+                    e.header.uuid = "atom-" + std::string(hex);
                 }
 
                 std::cout << "[API] Processing Atom Statement: " << e.payload.statement << std::endl;
@@ -1603,6 +1604,7 @@ void ApiServer::listen_loop() {
             res.set_header("Content-Type", "text/event-stream");
             res.set_header("Cache-Control", "no-cache");
             res.set_header("Connection", "keep-alive");
+            res.set_header("X-Accel-Buffering", "no");
 
             res.set_chunked_content_provider(
                 "text/event-stream",

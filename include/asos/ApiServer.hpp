@@ -33,6 +33,7 @@ struct ContextRecord {
 };
 
 struct SseClientSession {
+    static constexpr size_t kMaxQueueSize = 1000;
     uint64_t id{0};
     std::string context_id;
     std::mutex mutex;
