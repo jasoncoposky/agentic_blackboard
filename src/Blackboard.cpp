@@ -100,6 +100,9 @@ Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) {
 Blackboard::~Blackboard() = default;
 
 void Blackboard::set_auth_mode(const std::string& mode) {
+    if (mode != "token" && mode != "trusted_network") {
+        return;
+    }
     std::unique_lock lock(auth_mutex_);
     auth_mode_ = mode;
 }
@@ -118,12 +121,11 @@ bool Blackboard::register_token(const std::string& token, const std::string& use
     auto* store = engine_->get_store();
     if (role == "admin" || user == "admin") {
         store->credentials().set_acl(uid, "*", l3kv::Permission::READ | l3kv::Permission::WRITE | l3kv::Permission::ADMIN);
-    } else {
-        store->credentials().set_acl(uid, "*", l3kv::Permission::READ | l3kv::Permission::WRITE);
     }
 
     // Salted SHA-256 token hashing
     std::string token_hash = hash_token_sha256(token);
+    if (token_hash.empty()) return false;
     std::string db_key = "auth:token:" + token_hash;
 
     auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -144,6 +146,7 @@ bool Blackboard::validate_token(const std::string& token, std::string& out_user,
     if (token.empty()) return false;
 
     std::string token_hash = hash_token_sha256(token);
+    if (token_hash.empty()) return false;
     std::string db_key = "auth:token:" + token_hash;
 
     auto* store = engine_->get_store();

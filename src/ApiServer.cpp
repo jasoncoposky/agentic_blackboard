@@ -32,13 +32,7 @@ std::string extract_token(const httplib::Request& req) {
                 if (start != std::string::npos && end != std::string::npos) {
                     return tok.substr(start, end - start + 1);
                 }
-                return "";
             }
-        }
-        size_t start = auth.find_first_not_of(" \t\r\n");
-        size_t end = auth.find_last_not_of(" \t\r\n");
-        if (start != std::string::npos && end != std::string::npos) {
-            return auth.substr(start, end - start + 1);
         }
     }
     if (req.has_header("X-AB-Key")) {
@@ -84,7 +78,17 @@ void ApiServer::stop() {
 bool ApiServer::authenticate_request(const httplib::Request& req, httplib::Response& res,
                                      uint32_t& principal_id, std::string& authenticated_user,
                                      std::string& authenticated_role) {
-    std::string auth_mode = blackboard_ ? blackboard_->get_auth_mode() : "trusted_network";
+    if (!blackboard_) {
+        res.status = 503;
+        json err = {
+            {"error", "Service Unavailable"},
+            {"message", "Blackboard instance not initialized"}
+        };
+        res.set_content(err.dump(), "application/json");
+        return false;
+    }
+
+    std::string auth_mode = blackboard_->get_auth_mode();
     if (auth_mode == "token") {
         std::string token = extract_token(req);
         if (token.empty() || !blackboard_->validate_token(token, authenticated_user, authenticated_role)) {
@@ -205,6 +209,13 @@ void ApiServer::listen_loop() {
     // Expects JSON: { "atoms": [...], "project_id": "...", "agent_id": "..." }
     svr.Post("/api/v1/graph/bundle", [this](const httplib::Request& req, httplib::Response& res) {
         try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
             auto j = json::parse(req.body);
             if (!j.contains("atoms") || !j["atoms"].is_array()) {
                 res.status = 400;
@@ -218,13 +229,6 @@ void ApiServer::listen_loop() {
             if (project_id.empty() || agent_id.empty()) {
                 res.status = 400;
                 res.set_content("Error: Missing mandatory Project or Identity anchor.", "text/plain");
-                return;
-            }
-
-            std::string active_user;
-            std::string auth_role;
-            uint32_t principal_id = 0;
-            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
                 return;
             }
 
@@ -412,15 +416,15 @@ void ApiServer::listen_loop() {
     // Expects Query DSL: { "match": "...", "where_eq": {"key": "val"} }
     svr.Post("/api/v1/query", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            auto j = json::parse(req.body);
-            auto engine = blackboard_->get_engine();
-            
             std::string active_user;
             std::string auth_role;
             uint32_t principal_id = 0;
             if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
                 return;
             }
+
+            auto j = json::parse(req.body);
+            auto engine = blackboard_->get_engine();
 
             auto q = engine->query();
             q.set_principal_id(principal_id);
@@ -480,18 +484,18 @@ void ApiServer::listen_loop() {
     // 2c. Atom Promotion (Move to PRINCIPLE status)
     svr.Post("/api/v1/cpb/promote", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            auto j = json::parse(req.body);
-            std::string uuid = j.at("uuid");
-            
-            auto engine = blackboard_->get_engine();
-            auto store = engine->get_store();
-
             std::string active_user;
             std::string auth_role;
             uint32_t principal_id = 0;
             if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
                 return;
             }
+
+            auto j = json::parse(req.body);
+            std::string uuid = j.at("uuid");
+            
+            auto engine = blackboard_->get_engine();
+            auto store = engine->get_store();
             
             auto key_uuid = engine->get_resolver().parse_uuid(uuid);
             std::string key = std::string(l3kvg::KeyBuilder::node_key(key_uuid));
@@ -900,17 +904,17 @@ void ApiServer::listen_loop() {
     // 4b. RDF Turtle Export Endpoint
     svr.Get("/api/v1/graph/export", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            std::string format = req.get_param_value("format");
-            std::string format_lower = format;
-            std::transform(format_lower.begin(), format_lower.end(), format_lower.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-
             std::string active_user;
             std::string auth_role;
             uint32_t principal_id = 0;
             if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
                 return;
             }
+
+            std::string format = req.get_param_value("format");
+            std::string format_lower = format;
+            std::transform(format_lower.begin(), format_lower.end(), format_lower.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
 
             if (format_lower.empty() || format_lower == "turtle" || format_lower == "ttl" || format_lower == "text/turtle") {
                 std::string ttl = RdfExporter::export_turtle(blackboard_, principal_id);
@@ -928,6 +932,13 @@ void ApiServer::listen_loop() {
     // 5. Idempotent Node Creation (For MCP)
     svr.Post("/api/v1/graph/node", [this](const httplib::Request& req, httplib::Response& res) {
         try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
             auto j = json::parse(req.body);
             std::string type = j.at("type");
             std::string id = j.at("id");
@@ -935,13 +946,6 @@ void ApiServer::listen_loop() {
 
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
-
-            std::string active_user;
-            std::string auth_role;
-            uint32_t principal_id = 0;
-            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
-                return;
-            }
 
             std::string key = std::string(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(id)));
             auto buf = store->get(key, principal_id);
@@ -984,16 +988,16 @@ void ApiServer::listen_loop() {
     // 5b. Get Node Links (Inbound & Outbound)
     svr.Get(R"(/api/v1/node/([^/]+)/links)", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            std::string uuid = req.matches[1];
-            auto engine = blackboard_->get_engine();
-            auto store = engine->get_store();
-
             std::string active_user;
             std::string auth_role;
             uint32_t principal_id = 0;
             if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
                 return;
             }
+
+            std::string uuid = req.matches[1];
+            auto engine = blackboard_->get_engine();
+            auto store = engine->get_store();
 
             std::string db_key = std::string(l3kvg::KeyBuilder::node_key(engine->get_resolver().parse_uuid(uuid)));
             auto node_buf = store->get(db_key, principal_id);
@@ -1070,16 +1074,16 @@ void ApiServer::listen_loop() {
     // 6. Get Node Details
     svr.Get(R"(/api/v1/node/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
         try {
-            std::string uuid = req.matches[1];
-            auto engine = blackboard_->get_engine();
-            auto store = engine->get_store();
-
             std::string active_user;
             std::string auth_role;
             uint32_t principal_id = 0;
             if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
                 return;
             }
+
+            std::string uuid = req.matches[1];
+            auto engine = blackboard_->get_engine();
+            auto store = engine->get_store();
 
             std::string key = std::string(l3kvg::KeyBuilder::node_key(blackboard_->get_engine()->get_resolver().parse_uuid(uuid)));
             auto buf = store->get(key, principal_id);
