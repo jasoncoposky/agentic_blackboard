@@ -30,6 +30,7 @@ int main(int argc, char* argv[]) {
 
     std::string admin_token;
     int port = 8085;
+    std::string host = "0.0.0.0";
 
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
@@ -39,33 +40,37 @@ int main(int argc, char* argv[]) {
             else if (arg.find("--auth-mode=") == 0) auth_mode = arg.substr(12);
             else if (arg.find("--admin-token=") == 0) admin_token = arg.substr(14);
             else if (arg.find("--port=") == 0) port = std::stoi(arg.substr(7));
+            else if (arg.find("--host=") == 0) host = arg.substr(7);
             else if (arg.find("--config=") == 0) {
                 std::string conf_file = arg.substr(9);
                 std::ifstream cf(conf_file);
-                if (cf.is_open()) {
-                    std::string line;
-                    while (std::getline(cf, line)) {
-                        size_t start = line.find_first_not_of(" \t\r\n");
-                        if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
-                        size_t end = line.find_last_not_of(" \t\r\n");
-                        std::string trimmed = line.substr(start, end - start + 1);
-                        if (trimmed.front() == '[' && trimmed.back() == ']') continue;
-                        auto eq = trimmed.find('=');
-                        if (eq != std::string::npos) {
-                            std::string k = trimmed.substr(0, eq);
-                            std::string v = trimmed.substr(eq + 1);
-                            size_t ks = k.find_first_not_of(" \t");
-                            size_t ke = k.find_last_not_of(" \t");
-                            if (ks != std::string::npos) k = k.substr(ks, ke - ks + 1);
-                            size_t vs = v.find_first_not_of(" \t");
-                            size_t ve = v.find_last_not_of(" \t");
-                            if (vs != std::string::npos) v = v.substr(vs, ve - vs + 1);
+                if (!cf.is_open()) {
+                    std::cerr << "[CRITICAL] Unable to open configuration file: " << conf_file << std::endl;
+                    return 1;
+                }
+                std::string line;
+                while (std::getline(cf, line)) {
+                    size_t start = line.find_first_not_of(" \t\r\n");
+                    if (start == std::string::npos || line[start] == '#' || line[start] == ';') continue;
+                    size_t end = line.find_last_not_of(" \t\r\n");
+                    std::string trimmed = line.substr(start, end - start + 1);
+                    if (trimmed.front() == '[' && trimmed.back() == ']') continue;
+                    auto eq = trimmed.find('=');
+                    if (eq != std::string::npos) {
+                        std::string k = trimmed.substr(0, eq);
+                        std::string v = trimmed.substr(eq + 1);
+                        size_t ks = k.find_first_not_of(" \t");
+                        size_t ke = k.find_last_not_of(" \t");
+                        if (ks != std::string::npos) k = k.substr(ks, ke - ks + 1);
+                        size_t vs = v.find_first_not_of(" \t");
+                        size_t ve = v.find_last_not_of(" \t");
+                        if (vs != std::string::npos) v = v.substr(vs, ve - vs + 1);
 
-                            if (k == "port") port = std::stoi(v);
-                            else if (k == "mode" || k == "auth_mode") auth_mode = v;
-                            else if (k == "data_dir") {
-                                db_path = v + "/asos_db";
-                            }
+                        if (k == "port") port = std::stoi(v);
+                        else if (k == "host") host = v;
+                        else if (k == "mode" || k == "auth_mode") auth_mode = v;
+                        else if (k == "data_dir") {
+                            db_path = v + "/asos_db";
                         }
                     }
                 }
@@ -165,7 +170,7 @@ int main(int argc, char* argv[]) {
         
         // 3. Start Observability & API
         asos::Monitor::instance().start(&bb);
-        asos::ApiServer::instance().start(&bb, port);
+        asos::ApiServer::instance().start(&bb, port, host);
 
 
         // 4. Start Intelligence & Governance

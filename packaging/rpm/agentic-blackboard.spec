@@ -5,8 +5,11 @@ Summary:        Agentic Blackboard Server & Ambient Substrate Daemon
 License:        Apache-2.0
 URL:            https://github.com/asos/agentic-blackboard
 
-Recommends:     systemd
-Requires:       python3
+Requires:         python3
+Requires(pre):    shadow-utils
+Requires(post):   systemd
+Requires(preun):  systemd
+Requires(postun): systemd
 
 AutoReqProv:    no
 
@@ -58,9 +61,9 @@ if [ ! -f /var/lib/agentic-blackboard/initialized ]; then
     mkdir -p /var/lib/agentic-blackboard /var/log/agentic-blackboard
     chown -R blackboard:blackboard /var/lib/agentic-blackboard /var/log/agentic-blackboard
     if [ -x /usr/bin/ab-ctl ]; then
-        /usr/bin/ab-ctl init --bootstrap --data-dir=/var/lib/agentic-blackboard || true
+        /usr/bin/ab-ctl init --bootstrap --data-dir=/var/lib/agentic-blackboard && \
+            touch /var/lib/agentic-blackboard/initialized || true
     fi
-    touch /var/lib/agentic-blackboard/initialized
     chown -R blackboard:blackboard /var/lib/agentic-blackboard
 fi
 

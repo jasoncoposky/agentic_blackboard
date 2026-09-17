@@ -226,9 +226,10 @@ ApiServer::~ApiServer() {
     stop();
 }
 
-void ApiServer::start(Blackboard* blackboard, int port) {
+void ApiServer::start(Blackboard* blackboard, int port, const std::string& host) {
     blackboard_ = blackboard;
     port_ = port;
+    host_ = host.empty() ? "0.0.0.0" : host;
     running_ = true;
     thread_ = std::thread(&ApiServer::listen_loop, this);
 }
@@ -1734,10 +1735,10 @@ void ApiServer::listen_loop() {
         }
     });
 
-    std::cout << "[API] ASOS Server starting on 127.0.0.1:" << port_ << "..." << std::endl;
+    std::cout << "[API] ASOS Server starting on " << host_ << ":" << port_ << "..." << std::endl;
 
-    if (!svr.listen("127.0.0.1", port_)) {
-        std::cerr << "[API] FAILED to start server on port " << port_ << std::endl;
+    if (!svr.listen(host_.c_str(), port_)) {
+        std::cerr << "[API] FAILED to start server on " << host_ << ":" << port_ << std::endl;
     }
     s_server.store(nullptr);
 }

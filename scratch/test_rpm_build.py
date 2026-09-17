@@ -93,6 +93,8 @@ def verify_packaging_files() -> bool:
         "ExecStart=/usr/bin/agentic-blackboardd --config=/etc/agentic-blackboard/blackboard.conf",
         "Restart=always",
         "LimitNOFILE=65536",
+        "NoNewPrivileges=true",
+        "PrivateTmp=true",
     ]:
         if req not in service_content:
             print(f"[-] FAIL: Systemd service missing requirement '{req}'")
@@ -281,7 +283,7 @@ def verify_rpm_install() -> bool:
         "registry.access.redhat.com/ubi9/ubi-minimal:latest",
         "bash", "-c",
         """set -e
-microdnf install -y shadow-utils python3 >/dev/null 2>&1
+microdnf install -y shadow-utils python3 systemd >/dev/null 2>&1
 rpm -ivh /workspace/build/agentic-blackboard-0.4.0-1.el9.x86_64.rpm
 id blackboard >/dev/null
 [ -f /var/lib/agentic-blackboard/credentials.db ]

@@ -83,9 +83,9 @@ public:
     }
 
     /**
-     * @brief Start the API server on the specified port.
+     * @brief Start the API server on the specified port and host.
      */
-    void start(Blackboard* blackboard, int port = 8081);
+    void start(Blackboard* blackboard, int port = 8081, const std::string& host = "0.0.0.0");
 
     /**
      * @brief Stop the API server.
@@ -98,7 +98,7 @@ public:
     }
 
 private:
-    ApiServer() : running_(false), blackboard_(nullptr), port_(8081) {}
+    ApiServer() : running_(false), blackboard_(nullptr), port_(8081), host_("0.0.0.0") {}
     ~ApiServer();
 
     void listen_loop();
@@ -110,6 +110,7 @@ private:
     std::thread thread_;
     Blackboard* blackboard_;
     int port_;
+    std::string host_;
     ContextBroker context_broker_;
 };
 

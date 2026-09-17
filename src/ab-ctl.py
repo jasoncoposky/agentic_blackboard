@@ -73,7 +73,7 @@ def load_config(config_path: str | None = None) -> dict:
                         cfg["data_dir"] = v.strip()
                     elif k_lower in ("token", "admin_token"):
                         cfg["token"] = v.strip()
-                    elif k_lower in ("auth_mode", "authmode"):
+                    elif k_lower in ("mode", "auth_mode", "authmode"):
                         cfg["auth_mode"] = v.strip()
                     elif k_lower == "port":
                         cfg["connect"] = f"http://localhost:{v.strip()}"
