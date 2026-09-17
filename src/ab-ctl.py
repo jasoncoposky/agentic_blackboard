@@ -21,9 +21,6 @@ import urllib.parse
 import urllib.request
 import uuid as uuid_mod
 
-import httpx
-from mcp.server.fastmcp import FastMCP
-
 DEFAULT_CONFIG_PATHS = [
     Path("/etc/agentic-blackboard/blackboard.conf"),
     Path("/etc/agentic-blackboard/blackboard.conf.default"),
@@ -39,7 +36,7 @@ def hash_token(token: str) -> str:
 
 
 def load_config(config_path: str | None = None) -> dict:
-    """Load configuration from config file or default locations."""
+    """Load configuration from config file or default locations supporting multiple INI sections."""
     cfg = {
         "connect": DEFAULT_CONNECT_URL,
         "data_dir": DEFAULT_DATA_DIR,
@@ -65,19 +62,19 @@ def load_config(config_path: str | None = None) -> dict:
             if not content.strip().startswith("["):
                 content = "[default]\n" + content
             parser.read_string(content)
-            section = parser.sections()[0] if parser.sections() else "default"
-            for k, v in parser.items(section):
-                k_lower = k.lower().replace("-", "_")
-                if k_lower in ("connect", "url", "api_url"):
-                    cfg["connect"] = v.strip()
-                elif k_lower in ("data_dir", "datadir"):
-                    cfg["data_dir"] = v.strip()
-                elif k_lower in ("token", "admin_token"):
-                    cfg["token"] = v.strip()
-                elif k_lower in ("auth_mode", "authmode"):
-                    cfg["auth_mode"] = v.strip()
-                elif k_lower == "port":
-                    cfg["connect"] = f"http://localhost:{v.strip()}"
+            for section in parser.sections():
+                for k, v in parser.items(section):
+                    k_lower = k.lower().replace("-", "_")
+                    if k_lower in ("connect", "url", "api_url"):
+                        cfg["connect"] = v.strip()
+                    elif k_lower in ("data_dir", "datadir"):
+                        cfg["data_dir"] = v.strip()
+                    elif k_lower in ("token", "admin_token"):
+                        cfg["token"] = v.strip()
+                    elif k_lower in ("auth_mode", "authmode"):
+                        cfg["auth_mode"] = v.strip()
+                    elif k_lower == "port":
+                        cfg["connect"] = f"http://localhost:{v.strip()}"
         except Exception:
             pass
 
@@ -224,7 +221,8 @@ def handle_status(args, cfg: dict):
                         return 0
             except Exception:
                 pass
-        print(f"Error checking status: HTTP {e.code} {e.reason}", file=sys.stderr)
+        err_body = e.read().decode("utf-8", errors="replace")
+        print(f"Error checking status: HTTP {e.code} {e.reason}: {err_body}", file=sys.stderr)
         return 1
     except Exception as e:
         print(f"Status: UNREACHABLE (Failed to connect to {connect_url}: {e})", file=sys.stderr)
@@ -256,8 +254,13 @@ def handle_user(args, cfg: dict):
                     if resp.status not in (200, 201):
                         print(f"Error registering user on daemon: HTTP {resp.status}", file=sys.stderr)
                         return 1
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                print(f"Error registering user: HTTP {e.code} {e.reason}: {err_body}", file=sys.stderr)
+                return 1
             except Exception as e:
-                print(f"[WARN] Could not register user on daemon at {connect_url}: {e}", file=sys.stderr)
+                print(f"Error connecting to daemon at {req_url}: {e}", file=sys.stderr)
+                return 1
 
         # Also store locally in credentials.db if available
         data_dir_str = args.data_dir or cfg.get("data_dir")
@@ -271,34 +274,43 @@ def handle_user(args, cfg: dict):
         return 0
 
     elif args.user_action == "list":
-        data_dir_str = args.data_dir or cfg.get("data_dir")
-        if data_dir_str:
-            db_path = Path(data_dir_str) / "credentials.db"
-            if db_path.is_file():
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                cursor.execute("SELECT username, role, created_at FROM users")
-                rows = cursor.fetchall()
-                conn.close()
-                print("Registered Users:")
-                for r in rows:
-                    print(f" - {r[0]} (Role: {r[1]}, Created: {r[2]})")
-                return 0
+        # If --data-dir was NOT passed on CLI, query daemon API
+        if not args.data_dir:
+            connect_url = (args.connect or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+            admin_token = args.token or cfg.get("token")
+            headers = get_auth_headers(admin_token)
+            req_url = f"{connect_url}/api/v1/admin/users"
+            try:
+                req = urllib.request.Request(req_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    print("Registered Users:")
+                    for u in data.get("users", []):
+                        print(f" - {u.get('username')} (Role: {u.get('role')})")
+                    return 0
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                print(f"Error listing users from daemon: HTTP {e.code} {e.reason}: {err_body}", file=sys.stderr)
+                return 1
+            except Exception as e:
+                print(f"Error connecting to daemon at {req_url}: {e}", file=sys.stderr)
+                return 1
 
-        # Fallback to query daemon
-        connect_url = (args.connect or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
-        admin_token = args.token or cfg.get("token")
-        headers = get_auth_headers(admin_token)
-        try:
-            req = urllib.request.Request(f"{connect_url}/api/v1/admin/users", headers=headers)
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                print("Registered Users:")
-                for u in data.get("users", []):
-                    print(f" - {u.get('username')} (Role: {u.get('role')})")
-                return 0
-        except Exception as e:
-            print(f"Error listing users: {e}", file=sys.stderr)
+        # Otherwise read from credentials.db in provided data_dir
+        data_dir_str = args.data_dir
+        db_path = Path(data_dir_str) / "credentials.db"
+        if db_path.is_file():
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT username, role, created_at FROM users")
+            rows = cursor.fetchall()
+            conn.close()
+            print("Registered Users:")
+            for r in rows:
+                print(f" - {r[0]} (Role: {r[1]}, Created: {r[2]})")
+            return 0
+        else:
+            print(f"No credentials database found at {db_path}", file=sys.stderr)
             return 1
 
     return 0
@@ -330,8 +342,14 @@ def handle_agent(args, cfg: dict):
                 with urllib.request.urlopen(req, timeout=5.0) as resp:
                     if resp.status not in (200, 201):
                         print(f"Error registering agent token on daemon: HTTP {resp.status}", file=sys.stderr)
+                        return 1
+            except urllib.error.HTTPError as e:
+                err_body = e.read().decode("utf-8", errors="replace")
+                print(f"Error registering agent: HTTP {e.code} {e.reason}: {err_body}", file=sys.stderr)
+                return 1
             except Exception as e:
-                print(f"[WARN] Could not register agent token on daemon: {e}", file=sys.stderr)
+                print(f"Error connecting to daemon at {req_url}: {e}", file=sys.stderr)
+                return 1
 
             # 2. Ensure IDENTITY node in substrate graph
             node_url = f"{connect_url}/api/v1/graph/node"
@@ -406,7 +424,8 @@ def handle_surface(args, cfg: dict):
                 print(body)
                 return 0
         except urllib.error.HTTPError as e:
-            print(f"Error registering surface: HTTP {e.code} {e.reason}: {e.read().decode('utf-8')}", file=sys.stderr)
+            err_body = e.read().decode("utf-8", errors="replace")
+            print(f"Error registering surface: HTTP {e.code} {e.reason}: {err_body}", file=sys.stderr)
             return 1
         except Exception as e:
             print(f"Error connecting to {req_url}: {e}", file=sys.stderr)
@@ -431,7 +450,8 @@ def handle_context(args, cfg: dict):
                 print(json.dumps(data, indent=2))
                 return 0
         except urllib.error.HTTPError as e:
-            print(f"Error querying context: HTTP {e.code} {e.reason}", file=sys.stderr)
+            err_body = e.read().decode("utf-8", errors="replace")
+            print(f"Error querying context: HTTP {e.code} {e.reason}: {err_body}", file=sys.stderr)
             return 1
         except Exception as e:
             print(f"Error connecting to {req_url}: {e}", file=sys.stderr)
@@ -455,7 +475,8 @@ def handle_context(args, cfg: dict):
                 print(body)
                 return 0
         except urllib.error.HTTPError as e:
-            print(f"Error updating focus: HTTP {e.code} {e.reason}", file=sys.stderr)
+            err_body = e.read().decode("utf-8", errors="replace")
+            print(f"Error updating focus: HTTP {e.code} {e.reason}: {err_body}", file=sys.stderr)
             return 1
         except Exception as e:
             print(f"Error connecting to {req_url}: {e}", file=sys.stderr)
@@ -465,11 +486,14 @@ def handle_context(args, cfg: dict):
 
 
 # ----------------------------------------------------------------------
-# Integrated FastMCP Server Runner
+# Integrated FastMCP Server Runner (with deferred imports)
 # ----------------------------------------------------------------------
 
-def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
+def build_mcp_server(connect_url: str, token: str | None):
     """Instantiate and configure FastMCP server forwarding tool calls to ASOS REST API."""
+    import httpx
+    from mcp.server.fastmcp import FastMCP
+
     mcp = FastMCP("Agentic Blackboard MCP Bridge")
     api_url = f"{connect_url.rstrip('/')}/api/v1"
     headers = {}
@@ -488,7 +512,7 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
         content: str = "",
         active_user: str | None = None
     ) -> str:
-        """Idempotently ensure an anchor node (PROJECT or IDENTITY) exists."""
+        """Idempotently ensure an anchor node (PROJECT or IDENTITY) exists in the ASOS substrate."""
         payload = {
             "type": type,
             "id": id,
@@ -541,6 +565,8 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
         params = {"q": query, "limit": limit}
         if ka is not None:
             params["ka"] = ka
+        if tags:
+            params["tags"] = ",".join(tags)
         req_h = dict(headers)
         if active_user:
             req_h["X-Active-User"] = active_user
@@ -552,7 +578,7 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
 
     @mcp.tool()
     async def get_node(uuid: str, active_user: str | None = None) -> str:
-        """Retrieve node by UUID from the substrate."""
+        """Retrieve full hydrated atom or node by UUID from the substrate."""
         req_h = dict(headers)
         if active_user:
             req_h["X-Active-User"] = active_user
@@ -564,7 +590,7 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
 
     @mcp.tool()
     async def get_node_links(uuid: str, direction: str = "both", active_user: str | None = None) -> str:
-        """Query synapses connected to a node."""
+        """Query synapses (inbound and/or outbound links) connected to a node."""
         params = {"direction": direction}
         req_h = dict(headers)
         if active_user:
@@ -581,6 +607,8 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
         agent_id: str,
         statement: str,
         content: str = "",
+        references: list[dict] | None = None,
+        note_links: list[dict] | None = None,
         tags: list[str] | None = None,
         ka: int | None = 31,
         uuid: str | None = None,
@@ -595,6 +623,58 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
             "tags": tags or [],
             "uuid": node_uuid,
         }
+        if references:
+            atom["references"] = references
+        if note_links:
+            atom["note_links"] = note_links
+
+        payload = {
+            "project_id": project_id,
+            "agent_id": agent_id,
+            "atoms": [atom]
+        }
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            resp = await client.post(f"{api_url}/graph/bundle", json=payload, headers=req_h)
+            if resp.is_error:
+                return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
+            return json.dumps({"status": "COMMITTED", "uuid": node_uuid, "message": resp.text})
+
+    @mcp.tool()
+    async def create_catalog_entry(
+        project_id: str,
+        agent_id: str,
+        statement: str,
+        content: str = "",
+        items: list[dict] | None = None,
+        steps: list[dict] | None = None,
+        metrics: list[dict] | None = None,
+        attributes: dict | None = None,
+        tags: list[str] | None = None,
+        ka: int | None = 27,
+        uuid: str | None = None,
+        active_user: str | None = None
+    ) -> str:
+        """Create a structured catalog entry (recipe, protocol, runbook, or inventory) in the substrate."""
+        node_uuid = uuid if uuid else f"catalog-{uuid_mod.uuid4().hex[:8]}"
+        atom = {
+            "statement": statement,
+            "content": content,
+            "ka": ka if ka is not None else 27,
+            "tags": tags or [],
+            "uuid": node_uuid,
+        }
+        if items:
+            atom["items"] = items
+        if steps:
+            atom["steps"] = steps
+        if metrics:
+            atom["metrics"] = metrics
+        if attributes:
+            atom["attributes"] = attributes
+
         payload = {
             "project_id": project_id,
             "agent_id": agent_id,
@@ -617,7 +697,7 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
         weight: float = 1.0,
         active_user: str | None = None
     ) -> str:
-        """Create a labeled relationship between two nodes."""
+        """Create a labeled relationship (synapse) between two nodes."""
         payload = {
             "source": source,
             "target": target,
@@ -653,6 +733,114 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
                 return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
             return resp.text
 
+    @mcp.tool()
+    async def spawn_widget(
+        atom_id: str,
+        behavior: str,
+        label: str = "",
+        active_user: str | None = None
+    ) -> str:
+        """Propose a Nucleus spatial widget for an ASOS Knowledge Atom."""
+        payload = {
+            "atom_id": atom_id,
+            "behavior": behavior,
+            "label": label
+        }
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            resp = await client.post(f"{api_url}/nucleus/materialize", json=payload, headers=req_h)
+            if resp.is_error:
+                return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
+            return resp.text
+
+    @mcp.tool()
+    async def bind_anchor_to_atom(
+        marker_id: str,
+        atom_id: str,
+        device_id: str = "default",
+        active_user: str | None = None
+    ) -> str:
+        """Bind a physical fiducial marker to an ASOS Knowledge Atom."""
+        payload = {
+            "marker_id": marker_id,
+            "atom_id": atom_id,
+            "device_id": device_id
+        }
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            resp = await client.post(f"{api_url}/nucleus/bind", json=payload, headers=req_h)
+            if resp.is_error:
+                return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
+            return resp.text
+
+    @mcp.tool()
+    async def export_graph_rdf(active_user: str | None = None) -> str:
+        """Export the substrate knowledge graph as W3C RDF Turtle text."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            resp = await client.get(f"{api_url}/graph/export", headers=req_h)
+            if resp.is_error:
+                return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
+            return resp.text
+
+    @mcp.tool()
+    async def inspect_blackboard_health(active_user: str | None = None) -> str:
+        """Query operational health, sync latency, and toil metrics of the blackboard substrate."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            resp = await client.get(f"{api_url}/health", headers=req_h)
+            if resp.is_error:
+                s_resp = await client.get(f"{api_url}/schema", headers=req_h)
+                if not s_resp.is_error:
+                    return json.dumps({"status": "OPERATIONAL", "message": "Substrate online; health metrics pending initialization."})
+                return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
+            return resp.text
+
+    @mcp.tool()
+    async def verify_atom_integrity(uuid: str, active_user: str | None = None) -> str:
+        """Verify knowledge atom existence, structural integrity, and schema compliance."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            resp = await client.get(f"{api_url}/node/{uuid}", headers=req_h)
+            if resp.status_code == 404:
+                return json.dumps({"status": "NOT_FOUND", "uuid": uuid})
+            if resp.is_error:
+                return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
+            data = resp.json()
+            has_origin = "origin" in data or "metadata" in data or "header" in data
+            return json.dumps({
+                "status": "VALID" if has_origin else "MALFORMED",
+                "uuid": uuid,
+                "data": data
+            })
+
+    @mcp.tool()
+    async def fetch_identity_provenance(atom_id: str, active_user: str | None = None) -> str:
+        """Fetch multi-surface origin provenance, author identity, and creation lineage for an atom."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            node_resp = await client.get(f"{api_url}/node/{atom_id}", headers=req_h)
+            links_resp = await client.get(f"{api_url}/node/{atom_id}/links?direction=both", headers=req_h)
+            node_data = node_resp.json() if node_resp.status_code == 200 else {}
+            links_data = links_resp.json() if links_resp.status_code == 200 else {}
+            return json.dumps({
+                "atom_id": atom_id,
+                "node": node_data,
+                "links": links_data
+            })
+
     @mcp.resource("asos://schema")
     async def get_schema() -> str:
         """Retrieve ASOS Knowledge Schema."""
@@ -661,6 +849,23 @@ def build_mcp_server(connect_url: str, token: str | None) -> FastMCP:
             if resp.is_error:
                 return json.dumps({"status": "ERROR", "code": resp.status_code, "message": resp.text})
             return resp.text
+
+    @mcp.resource("asos://skills/{name}")
+    async def get_skill(name: str) -> str:
+        """Retrieve skill documentation by name from skills/{name}/SKILL.md."""
+        try:
+            clean_name = name.removesuffix("/SKILL.md").removesuffix(".md").strip("/")
+            repo_root = Path(__file__).resolve().parent.parent
+            skills_dir = (repo_root / "skills").resolve()
+            skill_path = (skills_dir / clean_name / "SKILL.md").resolve()
+            if skill_path.is_file():
+                return skill_path.read_text(encoding="utf-8")
+            system_path = Path(f"/usr/share/agentic-blackboard/skills/{clean_name}/SKILL.md")
+            if system_path.is_file():
+                return system_path.read_text(encoding="utf-8")
+            return f"Error: Skill '{name}' not found."
+        except Exception:
+            return f"Error: Skill '{name}' not found."
 
     return mcp
 
@@ -674,10 +879,9 @@ def handle_mcp(args, cfg: dict):
 
     if args.smoke_test:
         print("[MCP] Running self-test and smoke verification...")
-        # Check MCP server has registered tools
         tools = asyncio.run(mcp.list_tools())
         assert len(tools) > 0, "No MCP tools registered on FastMCP server"
-        print(f"[MCP] Registered tools: {', '.join(t.name for t in tools)}")
+        print(f"[MCP] Registered {len(tools)} tools: {', '.join(t.name for t in tools)}")
 
         # Verify connectivity to blackboard REST API
         schema_url = f"{connect_url}/api/v1/schema"

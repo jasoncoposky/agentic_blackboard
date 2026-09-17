@@ -163,7 +163,7 @@ def main():
         user_token = user_token_match.group(0)
         print(f"[PASS] Step 3: user create succeeded with token: {user_token[:15]}...")
 
-        # Verify user list subcommand
+        # Verify user list subcommand with --data-dir
         user_list_proc = run_cli([
             "user", "list",
             f"--token={admin_token}",
@@ -172,7 +172,27 @@ def main():
         ])
         assert user_list_proc.returncode == 0
         assert "testuser" in user_list_proc.stdout
-        print("[PASS] Step 3b: user list displays created user.")
+        print("[PASS] Step 3b: user list with --data-dir displays created user.")
+
+        # Verify user list subcommand WITHOUT --data-dir (queries daemon API)
+        user_list_api_proc = run_cli([
+            "user", "list",
+            f"--token={admin_token}",
+            f"--connect={BASE_URL}"
+        ])
+        assert user_list_api_proc.returncode == 0
+        assert "testuser" in user_list_api_proc.stdout, f"User list via API missing testuser: {user_list_api_proc.stdout}"
+        print("[PASS] Step 3c: user list without --data-dir queries daemon API and displays created user.")
+
+        # Verify strict error handling on unauthorized / failed user create
+        failed_proc = run_cli([
+            "user", "create", "unauthorized_user",
+            "--role", "curator",
+            "--token=ab_usr_invalid_token_1234567890",
+            f"--connect={BASE_URL}"
+        ], check=False)
+        assert failed_proc.returncode != 0, "Expected non-zero exit code when server rejects user create"
+        print("[PASS] Step 3d: user create with invalid token strictly fails with non-zero exit code.")
 
         # -------------------------------------------------------------
         # Step 4: ab-ctl agent create testagent --user testuser --project proj-test

@@ -139,7 +139,28 @@ bool Blackboard::register_token(const std::string& token, const std::string& use
 
     store->put(db_key, meta.dump());
     store->wait_all_shards();
+
+    {
+        std::unique_lock lock(auth_mutex_);
+        bool found = false;
+        for (auto& entry : registered_users_) {
+            if (entry.first == user) {
+                entry.second = role;
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            registered_users_.emplace_back(user, role);
+        }
+    }
+
     return true;
+}
+
+std::vector<std::pair<std::string, std::string>> Blackboard::get_registered_users() const {
+    std::shared_lock lock(auth_mutex_);
+    return registered_users_;
 }
 
 bool Blackboard::validate_token(const std::string& token, std::string& out_user, std::string& out_role) {

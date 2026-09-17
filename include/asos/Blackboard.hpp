@@ -28,6 +28,7 @@ public:
     std::string get_auth_mode() const;
     bool register_token(const std::string& token, const std::string& user, const std::string& role);
     bool validate_token(const std::string& token, std::string& out_user, std::string& out_role);
+    std::vector<std::pair<std::string, std::string>> get_registered_users() const;
 
     bool register_user_credentials(const std::string& username, const std::string& public_key);
     uint32_t get_user_uid(const std::string& username) const;
@@ -85,6 +86,7 @@ private:
     std::unique_ptr<l3kvg::Engine> engine_;
     std::string auth_mode_{"trusted_network"};
     mutable std::shared_mutex auth_mutex_;
+    std::vector<std::pair<std::string, std::string>> registered_users_;
 };
 
 } // namespace asos

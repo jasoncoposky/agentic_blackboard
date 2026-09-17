@@ -1560,9 +1560,18 @@ void ApiServer::listen_loop() {
                 return;
             }
 
+            auto users = blackboard_->get_registered_users();
+            json users_arr = json::array();
+            for (const auto& u : users) {
+                users_arr.push_back({
+                    {"username", u.first},
+                    {"role", u.second}
+                });
+            }
+
             json resp = {
                 {"status", "OK"},
-                {"users", json::array()}
+                {"users", users_arr}
             };
             res.status = 200;
             res.set_content(resp.dump(), "application/json");
