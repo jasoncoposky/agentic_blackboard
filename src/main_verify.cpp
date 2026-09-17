@@ -1101,6 +1101,154 @@ void test_multi_surface_provenance(Blackboard& bb) {
         std::cerr << "[Test] FAILED: Origin fields mismatch in multi-surface provenance test" << std::endl;
         exit(1);
     }
+    // 1. Assert that the atom has CREATED_BY edges to both user:jason and agent:spatial-librarian
+    auto atom_node = bb.get_engine()->get_node("atom-provenance-1");
+    if (!atom_node) {
+        std::cerr << "[Test] FAILED: atom-provenance-1 node not found in engine" << std::endl;
+        exit(1);
+    }
+    bool has_user_edge = false;
+    bool has_agent_edge = false;
+    for (auto& edge : atom_node->get_edges(rel::CREATED_BY)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("user:jason")) {
+            has_user_edge = true;
+        }
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("agent:spatial-librarian")) {
+            has_agent_edge = true;
+        }
+    }
+    if (!has_user_edge || !has_agent_edge) {
+        std::cerr << "[Test] FAILED: CREATED_BY edges missing for dual identity (user:jason="
+                  << has_user_edge << ", agent:spatial-librarian=" << has_agent_edge << ")" << std::endl;
+        exit(1);
+    }
+
+    // 2. Test an atom created with ONLY user_id (and no agent_id), verifying successful commit and edge creation
+    CpbEntry user_only_atom;
+    user_only_atom.header.uuid = "atom-provenance-user-only";
+    user_only_atom.header.origin.user_id = "user:alice";
+    user_only_atom.header.origin.agent_id = "";
+    user_only_atom.header.origin.project_id = "proj-quantum-optics";
+    user_only_atom.payload.statement = "User-only provenance test atom";
+
+    bool user_atom_committed = bb.commit_cpb_entry(user_only_atom);
+    if (!user_atom_committed) {
+        std::cerr << "[Test] FAILED: Could not commit user-only provenance atom" << std::endl;
+        exit(1);
+    }
+    store->wait_all_shards();
+
+    auto user_atom_node = bb.get_engine()->get_node("atom-provenance-user-only");
+    if (!user_atom_node) {
+        std::cerr << "[Test] FAILED: atom-provenance-user-only node not found" << std::endl;
+        exit(1);
+    }
+    bool has_user_only_edge = false;
+    for (auto& edge : user_atom_node->get_edges(rel::CREATED_BY)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("user:alice")) {
+            has_user_only_edge = true;
+        }
+    }
+    if (!has_user_only_edge) {
+        std::cerr << "[Test] FAILED: CREATED_BY edge to user:alice missing for user-only atom" << std::endl;
+        exit(1);
+    }
+
+    auto user_atom_key = std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("atom-provenance-user-only")));
+    auto user_atom_raw = store->get(user_atom_key);
+    CpbEntry user_atom_fetched = CpbEntry::deserialize(user_atom_raw);
+    if (user_atom_fetched.header.origin.user_id != "user:alice" ||
+        !user_atom_fetched.header.origin.agent_id.empty()) {
+        std::cerr << "[Test] FAILED: Deserialized user-only atom fields mismatch (agent_id should be empty)" << std::endl;
+        exit(1);
+    }
+
+    // 3. Test rejection of an orphan atom (missing both user_id and agent_id, or missing project_id)
+    // Case A: Missing both user_id and agent_id
+    CpbEntry orphan_no_id;
+    orphan_no_id.header.uuid = "orphan-no-id";
+    orphan_no_id.header.origin.project_id = "proj-quantum-optics";
+    orphan_no_id.payload.statement = "Orphan missing user and agent";
+    if (bb.commit_cpb_entry(orphan_no_id)) {
+        std::cerr << "[Test] FAILED: Orphan atom missing both user_id and agent_id was accepted!" << std::endl;
+        exit(1);
+    }
+
+    // Case B: Missing project_id (with user_id)
+    CpbEntry orphan_no_proj_user;
+    orphan_no_proj_user.header.uuid = "orphan-no-proj-user";
+    orphan_no_proj_user.header.origin.user_id = "user:jason";
+    orphan_no_proj_user.payload.statement = "Orphan missing project with user";
+    if (bb.commit_cpb_entry(orphan_no_proj_user)) {
+        std::cerr << "[Test] FAILED: Orphan atom missing project_id was accepted!" << std::endl;
+        exit(1);
+    }
+
+    // Case C: Missing project_id (with agent_id)
+    CpbEntry orphan_no_proj_agent;
+    orphan_no_proj_agent.header.uuid = "orphan-no-proj-agent";
+    orphan_no_proj_agent.header.origin.agent_id = "agent:spatial-librarian";
+    orphan_no_proj_agent.payload.statement = "Orphan missing project with agent";
+    if (bb.commit_cpb_entry(orphan_no_proj_agent)) {
+        std::cerr << "[Test] FAILED: Orphan atom missing project_id with agent was accepted!" << std::endl;
+        exit(1);
+    }
+
+    // 4. Test authorization logic with principal_id (user impersonation prevention)
+    bb.register_user_credentials("jason", "jason-key");
+    uint32_t jason_uid = bb.get_user_uid("jason");
+    bb.register_user_credentials("intruder", "intruder-key");
+    uint32_t intruder_uid = bb.get_user_uid("intruder");
+
+    CpbEntry secure_atom;
+    secure_atom.header.uuid = "atom-auth-test";
+    secure_atom.header.origin.user_id = "user:jason";
+    secure_atom.header.origin.agent_id = "agent:intruder";
+    secure_atom.header.origin.project_id = "proj-quantum-optics";
+    secure_atom.payload.statement = "Secure authorization test atom";
+
+    // Intruder principal trying to commit on behalf of user:jason must be rejected
+    if (bb.commit_cpb_entry(secure_atom, intruder_uid)) {
+        std::cerr << "[Test] FAILED: Intruder principal successfully committed atom on behalf of user:jason!" << std::endl;
+        exit(1);
+    }
+
+    // Legitimate user principal committing user:jason must succeed
+    if (!bb.commit_cpb_entry(secure_atom, jason_uid)) {
+        std::cerr << "[Test] FAILED: Legitimate user principal failed to commit atom" << std::endl;
+        exit(1);
+    }
+
+    // 5. Test deserialization robustness against buffers without origin object
+    lite3cpp::Buffer legacy_buf;
+    legacy_buf.init_object();
+    size_t leg_h = legacy_buf.set_obj(0, "header");
+    legacy_buf.set_str(leg_h, "uuid", "legacy-atom-no-origin");
+    legacy_buf.set_i64(leg_h, "timestamp", 123456);
+    size_t leg_t = legacy_buf.set_obj(0, "taxonomy");
+    legacy_buf.set_i64(leg_t, "knowledge_area", 0);
+    legacy_buf.set_i64(leg_t, "applicability", 100);
+    legacy_buf.set_bool(leg_t, "uncertainty", false);
+    legacy_buf.set_bool(leg_t, "is_principle", false);
+    legacy_buf.set_arr(leg_t, "tags");
+    size_t leg_p = legacy_buf.set_obj(0, "payload");
+    legacy_buf.set_str(leg_p, "content_type", "text/markdown");
+    legacy_buf.set_str(leg_p, "statement", "Legacy statement");
+    legacy_buf.set_str(leg_p, "content", "Legacy content");
+    legacy_buf.set_arr(leg_p, "artifact_refs");
+    legacy_buf.set_arr(leg_p, "references");
+    legacy_buf.set_arr(leg_p, "note_links");
+    legacy_buf.set_arr(0, "items");
+    legacy_buf.set_arr(0, "steps");
+    legacy_buf.set_arr(0, "metrics");
+    legacy_buf.set_obj(0, "attributes");
+
+    CpbEntry legacy_entry = CpbEntry::deserialize(legacy_buf);
+    if (legacy_entry.header.uuid != "legacy-atom-no-origin" || !legacy_entry.header.origin.user_id.empty() || !legacy_entry.header.origin.agent_id.empty()) {
+        std::cerr << "[Test] FAILED: Deserialization of buffer without origin object failed or produced non-empty fields" << std::endl;
+        exit(1);
+    }
+
     std::cout << "[Test] Multi-Surface Origin Provenance Verification PASSED" << std::endl;
 }
 

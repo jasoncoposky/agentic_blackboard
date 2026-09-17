@@ -563,7 +563,7 @@ struct CpbEntry {
         buf.set_i64(h_idx, "event_timestamp", header.event_timestamp);
         size_t o_idx = buf.set_obj(h_idx, "origin");
         if (!header.origin.user_id.empty()) buf.set_str(o_idx, "user_id", header.origin.user_id);
-        buf.set_str(o_idx, "agent_id", header.origin.agent_id);
+        if (!header.origin.agent_id.empty()) buf.set_str(o_idx, "agent_id", header.origin.agent_id);
         if (!header.origin.surface_id.empty()) buf.set_str(o_idx, "surface_id", header.origin.surface_id);
         if (!header.origin.surface_type.empty()) buf.set_str(o_idx, "surface_type", header.origin.surface_type);
         buf.set_str(o_idx, "project_id", header.origin.project_id);
@@ -641,14 +641,16 @@ struct CpbEntry {
         } catch (...) {
             entry.header.event_timestamp = 0;
         }
-        size_t o_idx = buf.get_obj(h_idx, "origin");
-        try { entry.header.origin.agent_id = buf.get_str(o_idx, "agent_id"); } catch (...) { entry.header.origin.agent_id = ""; }
-        try { entry.header.origin.project_id = buf.get_str(o_idx, "project_id"); } catch (...) { entry.header.origin.project_id = ""; }
-        try { entry.header.origin.user_id = buf.get_str(o_idx, "user_id"); } catch (...) { entry.header.origin.user_id = ""; }
-        try { entry.header.origin.surface_id = buf.get_str(o_idx, "surface_id"); } catch (...) { entry.header.origin.surface_id = ""; }
-        try { entry.header.origin.surface_type = buf.get_str(o_idx, "surface_type"); } catch (...) { entry.header.origin.surface_type = ""; }
-        try { entry.header.origin.context_id = buf.get_str(o_idx, "context_id"); } catch (...) { entry.header.origin.context_id = ""; }
-        try { entry.header.origin.session_id = buf.get_str(o_idx, "session_id"); } catch (...) { entry.header.origin.session_id = ""; }
+        try {
+            size_t o_idx = buf.get_obj(h_idx, "origin");
+            try { entry.header.origin.agent_id = buf.get_str(o_idx, "agent_id"); } catch (...) { entry.header.origin.agent_id = ""; }
+            try { entry.header.origin.project_id = buf.get_str(o_idx, "project_id"); } catch (...) { entry.header.origin.project_id = ""; }
+            try { entry.header.origin.user_id = buf.get_str(o_idx, "user_id"); } catch (...) { entry.header.origin.user_id = ""; }
+            try { entry.header.origin.surface_id = buf.get_str(o_idx, "surface_id"); } catch (...) { entry.header.origin.surface_id = ""; }
+            try { entry.header.origin.surface_type = buf.get_str(o_idx, "surface_type"); } catch (...) { entry.header.origin.surface_type = ""; }
+            try { entry.header.origin.context_id = buf.get_str(o_idx, "context_id"); } catch (...) { entry.header.origin.context_id = ""; }
+            try { entry.header.origin.session_id = buf.get_str(o_idx, "session_id"); } catch (...) { entry.header.origin.session_id = ""; }
+        } catch (...) {}
 
         size_t t_idx = buf.get_obj(0, "taxonomy");
         entry.taxonomy.knowledge_area = static_cast<KnowledgeArea>(buf.get_i64(t_idx, "knowledge_area"));

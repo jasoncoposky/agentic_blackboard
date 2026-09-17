@@ -137,23 +137,21 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     // Security check 1: Ensure user is not impersonating someone else
     if (principal_id != 0) {
         bool authorized = false;
-        if (!author_name.empty() && get_user_uid(author_name) == principal_id) {
-            authorized = true;
+        if (!user_name.empty()) {
+            if (get_user_uid(user_name) == principal_id || (!user_id.empty() && get_user_uid(user_id) == principal_id)) {
+                authorized = true;
+            }
+        } else if (!author_name.empty()) {
+            if (get_user_uid(author_name) == principal_id || (!author_agent.empty() && get_user_uid(author_agent) == principal_id)) {
+                authorized = true;
+            }
         }
-        if (!author_agent.empty() && author_agent != author_name && get_user_uid(author_agent) == principal_id) {
-            authorized = true;
-        }
-        if (!user_name.empty() && get_user_uid(user_name) == principal_id) {
-            authorized = true;
-        }
-        if (!user_id.empty() && user_id != user_name && get_user_uid(user_id) == principal_id) {
-            authorized = true;
-        }
+
         if (!authorized) {
             std::cerr << "[Blackboard] Rejecting Atom " << adjusted.header.uuid 
                       << ": Access Denied (Principal ID " << principal_id 
-                      << " cannot write on behalf of agent " << author_name 
-                      << " or user " << user_id << ")" << std::endl;
+                      << " cannot write on behalf of user " << user_id 
+                      << " or agent " << author_agent << ")" << std::endl;
             return false;
         }
     }
@@ -208,20 +206,34 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
 
     
     // IDENTITY-CENTRIC ENFORCEMENT: Ensure Links (No Orphans)
-    auto author_id = adjusted.header.origin.agent_id;
-    if (author_id.empty()) {
-        author_id = adjusted.header.origin.user_id;
-    }
+    const auto& origin_user_id = adjusted.header.origin.user_id;
+    const auto& origin_agent_id = adjusted.header.origin.agent_id;
     auto project_id = adjusted.header.origin.project_id;
 
     // 1. Link Author (Identity)
-    if (!author_id.empty()) {
-        auto author_node = engine_->get_node(author_id);
-        if (!author_node->has_attribute("header")) {
-            IdentityNode stub = {author_id, "Unknown Agent (" + author_id + ")", "STUB", ""};
+    if (!origin_user_id.empty()) {
+        auto user_node = engine_->get_node(origin_user_id);
+        if (!user_node || !user_node->has_attribute("header")) {
+            IdentityNode stub = {origin_user_id, "Unknown User (" + origin_user_id + ")", "USER", ""};
             commit_identity_node(stub);
         }
-        engine_->add_edge(adjusted.header.uuid, rel::CREATED_BY, 1.0, author_id);
+        engine_->add_edge(adjusted.header.uuid, rel::CREATED_BY, 1.0, origin_user_id);
+
+        if (!origin_agent_id.empty() && origin_agent_id != origin_user_id) {
+            auto agent_node = engine_->get_node(origin_agent_id);
+            if (!agent_node || !agent_node->has_attribute("header")) {
+                IdentityNode stub = {origin_agent_id, "Unknown Agent (" + origin_agent_id + ")", "AGENT", ""};
+                commit_identity_node(stub);
+            }
+            engine_->add_edge(adjusted.header.uuid, rel::CREATED_BY, 1.0, origin_agent_id);
+        }
+    } else if (!origin_agent_id.empty()) {
+        auto agent_node = engine_->get_node(origin_agent_id);
+        if (!agent_node || !agent_node->has_attribute("header")) {
+            IdentityNode stub = {origin_agent_id, "Unknown Agent (" + origin_agent_id + ")", "AGENT", ""};
+            commit_identity_node(stub);
+        }
+        engine_->add_edge(adjusted.header.uuid, rel::CREATED_BY, 1.0, origin_agent_id);
     }
 
     // 2. Link Project
