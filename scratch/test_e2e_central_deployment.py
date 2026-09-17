@@ -5,9 +5,12 @@ Validates:
 1. RPM packaging installation and file verification in container.
 2. Systemd service syntax check with `systemd-analyze verify` in container.
 3. Container build from `Dockerfile` using `docker build -t agentic-blackboard:latest .`.
-4. Container startup with mounted volumes `/var/lib/agentic-blackboard` and `/etc/agentic-blackboard`, mapped port (e.g. -p 18095:8085).
-5. Bootstrap token initialization on first boot (reading token from mounted volume).
+4. Container startup with completely uninitialized mounted volumes:
+   `/var/lib/agentic-blackboard` and `/etc/agentic-blackboard`, mapped port (e.g. -p 18095:8085).
+5. Bootstrap token initialization on first boot (reading token from mounted volume),
+   and automated copying of default blackboard.conf to uninitialized config volume.
 6. Execution of CLI operations against container daemon:
+   - In-container CLI smoke check (docker exec <container> /usr/bin/ab-ctl status ...)
    - ab-ctl status --connect http://localhost:18095 --token <token>
    - ab-ctl user create container-user --role curator --connect http://localhost:18095 --token <token>
    - ab-ctl surface register --name table-c1 --type tabletop --context ctx:container --connect http://localhost:18095 --token <user_token>
@@ -32,6 +35,7 @@ BUILD_DIR = WORKSPACE_ROOT / "build"
 DOCKERFILE_PATH = WORKSPACE_ROOT / "Dockerfile"
 AB_CTL_PY = WORKSPACE_ROOT / "src" / "ab-ctl.py"
 
+CONTAINER_ENGINE = os.environ.get("CONTAINER_ENGINE") or shutil.which("docker") or shutil.which("podman") or "docker"
 CONTAINER_IMAGE = "agentic-blackboard:latest"
 CONTAINER_PORT = int(os.environ.get("ASOS_CONTAINER_PORT", "18095"))
 BASE_URL = f"http://localhost:{CONTAINER_PORT}"
@@ -74,17 +78,18 @@ def find_rpm_package() -> Path:
 def step1_verify_rpm_installation() -> bool:
     log_step("1. RPM Packaging Installation & File Verification in UBI 9 Minimal Container")
     rpm_file = find_rpm_package()
-    print(f"[+] Using RPM: {rpm_file}")
+    rpm_rel = rpm_file.relative_to(WORKSPACE_ROOT)
+    print(f"[+] Using RPM: {rpm_file} (relative: {rpm_rel})")
 
     test_cmd = [
-        "docker", "run", "--rm",
+        CONTAINER_ENGINE, "run", "--rm",
         "-v", f"{WORKSPACE_ROOT}:/workspace:ro",
         "registry.access.redhat.com/ubi9/ubi-minimal:latest",
         "bash", "-c",
         f"""set -e
 rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm >/dev/null 2>&1
 microdnf install -y shadow-utils systemd util-linux zeromq openssl python3 >/dev/null 2>&1
-rpm -ivh /workspace/build/{rpm_file.name}
+rpm -ivh /workspace/{rpm_rel}
 
 # Verify installed files
 [ -x /usr/bin/agentic-blackboardd ]
@@ -98,6 +103,10 @@ rpm -ivh /workspace/build/{rpm_file.name}
 [ -d /var/log/agentic-blackboard ]
 
 id blackboard >/dev/null 2>&1
+
+# Verify RPM integrity
+rpm -V agentic-blackboard
+
 echo "RPM verification passed"
 """
     ]
@@ -107,22 +116,23 @@ echo "RPM verification passed"
         print("[-] FAIL: Container verification script did not complete successfully.")
         return False
 
-    print("[+] PASS: RPM package installs cleanly and all files/directories verified.")
+    print("[+] PASS: RPM package installs cleanly, all files verified, and rpm -V passes.")
     return True
 
 
 def step2_verify_systemd_service_syntax() -> bool:
     log_step("2. Systemd Service Syntax Validation via systemd-analyze verify")
     rpm_file = find_rpm_package()
+    rpm_rel = rpm_file.relative_to(WORKSPACE_ROOT)
 
     test_cmd = [
-        "docker", "run", "--rm",
+        CONTAINER_ENGINE, "run", "--rm",
         "-v", f"{WORKSPACE_ROOT}:/workspace:ro",
         "registry.access.redhat.com/ubi9/ubi-minimal:latest",
         "bash", "-c",
         f"""set -e
 microdnf install -y shadow-utils systemd python3 >/dev/null 2>&1
-rpm -ivh /workspace/build/{rpm_file.name} >/dev/null 2>&1
+rpm -ivh /workspace/{rpm_rel} >/dev/null 2>&1
 systemd-analyze verify /usr/lib/systemd/system/agentic-blackboard.service
 echo "SYSTEMD_VERIFY_OK"
 """
@@ -144,16 +154,16 @@ def step3_build_container_image() -> bool:
         return False
 
     build_cmd = [
-        "docker", "build",
+        CONTAINER_ENGINE, "build",
         "-t", CONTAINER_IMAGE,
         "."
     ]
     proc = run_cmd(build_cmd, cwd=WORKSPACE_ROOT)
     if proc.returncode != 0:
-        print(f"[-] FAIL: docker build failed:\n{proc.stderr}")
+        print(f"[-] FAIL: container build failed:\n{proc.stderr}")
         return False
 
-    print(f"[+] PASS: Container image {CONTAINER_IMAGE} built successfully.")
+    print(f"[+] PASS: Container image {CONTAINER_IMAGE} built successfully using {CONTAINER_ENGINE}.")
     return True
 
 
@@ -178,25 +188,21 @@ def run_ab_ctl(args: list[str], check: bool = True) -> subprocess.CompletedProce
 def step4_to_7_container_lifecycle_and_e2e() -> bool:
     log_step("4-7. Container Startup, Bootstrap Token Init, CLI Operations & Shutdown")
 
+    # Step 4: Completely uninitialized empty directories for data and config
     host_data_dir = Path(tempfile.mkdtemp(prefix="bb_e2e_data_"))
     host_conf_dir = Path(tempfile.mkdtemp(prefix="bb_e2e_conf_"))
     host_data_dir.chmod(0o777)
     host_conf_dir.chmod(0o777)
 
-    # Pre-copy blackboard.conf into conf directory with open permissions
-    default_conf = WORKSPACE_ROOT / "packaging" / "config" / "blackboard.conf"
-    if default_conf.is_file():
-        dest_conf = host_conf_dir / "blackboard.conf"
-        shutil.copyfile(default_conf, dest_conf)
-        dest_conf.chmod(0o666)
-
     container_started = False
 
     try:
-        # Step 4: Container Startup with mounted volumes and mapped port
+        # Start container with empty mounted volumes and mapped port
         print(f"[*] Starting container '{CONTAINER_NAME}' on port {CONTAINER_PORT}...")
+        print(f"[*] Mounted data dir: {host_data_dir} (initially empty)")
+        print(f"[*] Mounted conf dir: {host_conf_dir} (initially empty)")
         run_container_cmd = [
-            "docker", "run", "-d",
+            CONTAINER_ENGINE, "run", "-d",
             "--name", CONTAINER_NAME,
             "-p", f"{CONTAINER_PORT}:8085",
             "-v", f"{host_data_dir}:/var/lib/agentic-blackboard:rw",
@@ -209,12 +215,16 @@ def step4_to_7_container_lifecycle_and_e2e() -> bool:
         # Wait for daemon readiness
         print(f"[*] Waiting for daemon on {BASE_URL}...")
         if not wait_for_daemon(BASE_URL, timeout_secs=25.0):
-            # Print logs for diagnostics
-            log_proc = subprocess.run(["docker", "logs", CONTAINER_NAME], capture_output=True, text=True)
+            log_proc = subprocess.run([CONTAINER_ENGINE, "logs", CONTAINER_NAME], capture_output=True, text=True)
             print(f"[-] Container logs:\n{log_proc.stdout}\n{log_proc.stderr}")
             raise RuntimeError("Daemon failed to become healthy within timeout.")
 
         print(f"[+] PASS: Container started and daemon is healthy at {BASE_URL}.")
+
+        # Assert blackboard.conf was automatically copied to uninitialized host_conf_dir
+        conf_file = host_conf_dir / "blackboard.conf"
+        assert conf_file.is_file(), f"Expected container to copy blackboard.conf to mounted volume: {conf_file}"
+        print(f"[+] PASS: Container automatically initialized config volume: {conf_file} ({conf_file.stat().st_size} bytes)")
 
         # Step 5: Bootstrap token initialization on first boot
         print("[*] Checking bootstrap token in mounted volume or container...")
@@ -236,7 +246,7 @@ def step4_to_7_container_lifecycle_and_e2e() -> bool:
         if not admin_token:
             # Check via docker exec
             exec_res = subprocess.run(
-                ["docker", "exec", CONTAINER_NAME, "cat", "/var/lib/agentic-blackboard/admin.token"],
+                [CONTAINER_ENGINE, "exec", CONTAINER_NAME, "cat", "/var/lib/agentic-blackboard/admin.token"],
                 capture_output=True, text=True
             )
             if exec_res.returncode == 0 and exec_res.stdout.strip().startswith("ab_adm_"):
@@ -248,6 +258,19 @@ def step4_to_7_container_lifecycle_and_e2e() -> bool:
 
         # Step 6: CLI Operations
         print("\n[*] Executing CLI verification operations against containerized daemon...")
+
+        # 6-smoke: In-container CLI smoke check
+        print("\n--- 6-smoke. in-container ab-ctl status ---")
+        in_container_cmd = [
+            CONTAINER_ENGINE, "exec", CONTAINER_NAME,
+            "/usr/bin/ab-ctl", "status",
+            "--connect=http://localhost:8085",
+            f"--token={admin_token}"
+        ]
+        in_container_res = run_cmd(in_container_cmd)
+        assert in_container_res.returncode == 0
+        assert "OPERATIONAL" in in_container_res.stdout
+        print(f"[+] PASS: In-container CLI status returned OPERATIONAL: {in_container_res.stdout.strip()[:80]}")
 
         # 6a. ab-ctl status --connect http://localhost:18095 --token <token>
         print("\n--- 6a. ab-ctl status ---")
@@ -314,9 +337,9 @@ def step4_to_7_container_lifecycle_and_e2e() -> bool:
         if container_started:
             log_step("7. Clean Container Shutdown (docker stop / docker rm)")
             print(f"[*] Stopping container {CONTAINER_NAME}...")
-            subprocess.run(["docker", "stop", CONTAINER_NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([CONTAINER_ENGINE, "stop", CONTAINER_NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print(f"[*] Removing container {CONTAINER_NAME}...")
-            subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([CONTAINER_ENGINE, "rm", "-f", CONTAINER_NAME], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print("[+] PASS: Container stopped and removed cleanly.")
 
         shutil.rmtree(host_data_dir, ignore_errors=True)
@@ -325,6 +348,7 @@ def step4_to_7_container_lifecycle_and_e2e() -> bool:
 
 def main():
     print("=== ASOS Task 6: Canonical Containerization & E2E Deployment Verification ===")
+    print(f"[*] Using Container Engine: {CONTAINER_ENGINE}")
     
     # 1. RPM packaging installation and file verification in container
     if not step1_verify_rpm_installation():
