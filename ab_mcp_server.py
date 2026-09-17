@@ -478,13 +478,15 @@ async def get_skill(name: str) -> str:
         skills_dir = (REPO_ROOT / "skills").resolve()
         skill_path = (skills_dir / clean_name / "SKILL.md").resolve()
         skill_path.relative_to(skills_dir)
-
-        if not skill_path.is_file():
-            return f"Error: Skill '{name}' not found."
-
-        return skill_path.read_text(encoding="utf-8")
+        if skill_path.is_file():
+            return skill_path.read_text(encoding="utf-8")
+        system_path = Path(f"/usr/share/agentic-blackboard/skills/{clean_name}/SKILL.md")
+        if system_path.is_file():
+            return system_path.read_text(encoding="utf-8")
     except Exception:
-        return f"Error: Skill '{name}' not found."
+        pass
+
+    return f"Error: Skill '{name}' not found."
 
 @mcp.prompt("init_swarm")
 def init_swarm(project_id: str, objective: str) -> str:
