@@ -410,6 +410,7 @@ async def run_swarm_mcp_tests(mcp, server, base_url: str, token: str):
     assert res.get("status") == "SUCCESS", f"swarm_record_verdict FAIL failed: {res}"
     assert server.nodes["Task-A"].get("metadata", {}).get("status") == "READY"
     assert server.nodes["Task-A"].get("metadata", {}).get("lease", {}).get("holder") is None
+    assert server.nodes["Task-A"].get("metadata", {}).get("refutation_count") == 1
     refute_links = [l for l in server.links if l["label"] == "REFUTES"]
     assert any(l["source"] == "Task-A" for l in refute_links)
     print("[PASS] swarm_record_verdict FAIL reset task to READY and created REFUTES link.")

@@ -177,7 +177,7 @@ Created by the **Architect Agent** during task decomposition. Claimed by the **I
       "properties": {
         "context_id": { "type": "string" },
         "name": { "type": "string" },
-        "workflow": { "type": "string", "enum": ["feature", "bugfix", "refactor"] },
+        "workflow": { "type": "string", "enum": ["feature", "bugfix", "refactor", "refactoring"] },
         "target_symbols": {
           "type": "array",
           "items": { "type": "string" },
@@ -409,7 +409,11 @@ Created by the **Verifier Agent** when static analysis, symbolic execution, or t
         "verdict": { "type": "string", "enum": ["FAIL"] },
         "details": {
           "type": "object",
-          "required": ["failure_type", "execution_trace", "suggested_fix"],
+          "required": ["failure_type", "suggested_fix"],
+          "anyOf": [
+            { "required": ["execution_trace"] },
+            { "required": ["trace"] }
+          ],
           "properties": {
             "failure_type": {
               "type": "string",
@@ -423,6 +427,23 @@ Created by the **Verifier Agent** when static analysis, symbolic execution, or t
               ]
             },
             "execution_trace": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["step", "file", "line", "event"],
+                "properties": {
+                  "step": { "type": "integer" },
+                  "file": { "type": "string" },
+                  "line": { "type": "integer" },
+                  "function": { "type": "string" },
+                  "event": { "type": "string" },
+                  "condition": { "type": "string" },
+                  "leak": { "type": "string" }
+                }
+              },
+              "minItems": 1
+            },
+            "trace": {
               "type": "array",
               "items": {
                 "type": "object",

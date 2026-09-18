@@ -353,7 +353,7 @@ You are the VERIFIER AGENT (Role: cpg-verifier) serving as the independent, adve
      Call `swarm_record_verdict(task_id="{task_id}", verifier_id="{verifier_id}", verdict="PASS", details={"taint_violations": 0, "uninitialized_reads": 0, "tests_passed": true})`.
      Task transitions to `VALIDATED`.
    - **Condition FAIL** (leak, crash, taint flow, or test failure detected):
-     Call `swarm_record_verdict(task_id="{task_id}", verifier_id="{verifier_id}", verdict="FAIL", details={"failure_type": "...", "trace": [...], "suggested_fix": "..."})`.
+     Call `swarm_record_verdict(task_id="{task_id}", verifier_id="{verifier_id}", verdict="FAIL", details={"failure_type": "...", "execution_trace": [...], "suggested_fix": "..."})`.
      Task resets to `READY` with attached `CounterexampleTrace`.
 6. Report verdict details to coordinator.
 ```
@@ -490,7 +490,7 @@ sequenceDiagram
    - Re-run `insight_run_dataflow_analysis`. Confirm the defect path is eliminated and no new taint paths exist.
    - Run full regression suite.
    - If clean: `ab-ctl swarm review verdict Fix-MemoryLeak-142 --verifier verifier-01 --verdict PASS --details '{"repro_passes": true}'`.
-   - If flawed: `ab-ctl swarm review verdict Fix-MemoryLeak-142 --verifier verifier-01 --verdict FAIL --details '{"trace": [...]}'`.
+   - If flawed: `ab-ctl swarm review verdict Fix-MemoryLeak-142 --verifier verifier-01 --verdict FAIL --details '{"execution_trace": [...]}'`.
 6. **Defect Closure (Stakeholder)**:
    - Sign off: `ab-ctl swarm accept Fix-MemoryLeak-142 --stakeholder sponsor-01 --notes "Regression test passes, verified clean"`.
 

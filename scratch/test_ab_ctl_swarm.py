@@ -442,6 +442,7 @@ def main():
         t1_failed = server.nodes["Task-1"]
         assert t1_failed.get("metadata", {}).get("status") == "READY"
         assert t1_failed.get("metadata", {}).get("lease", {}).get("holder") is None
+        assert t1_failed.get("metadata", {}).get("refutation_count") == 1
         refute_links = [l for l in server.links if l["label"] == "REFUTES"]
         assert len(refute_links) > 0
         assert any(l["source"] == "Task-1" for l in refute_links)

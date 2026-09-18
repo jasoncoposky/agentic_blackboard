@@ -1162,6 +1162,7 @@ def handle_swarm_review_verdict(args, cfg: dict) -> int:
             print(f"Warning: Failed to create REFUTES link from {task_id} to {counter_id}", file=sys.stderr)
 
         task_meta["status"] = "READY"
+        task_meta["refutation_count"] = int(task_meta.get("refutation_count", 0)) + 1
         if "lease" in task_meta and isinstance(task_meta["lease"], dict):
             task_meta["lease"]["holder"] = None
             task_meta["lease"]["expires_at"] = 0
@@ -2199,6 +2200,7 @@ def build_mcp_server(connect_url: str, token: str | None):
                 await _async_create_graph_link(client, task_id, counter_id, "REFUTES", req_h)
 
                 task_meta["status"] = "READY"
+                task_meta["refutation_count"] = int(task_meta.get("refutation_count", 0)) + 1
                 if "lease" in task_meta and isinstance(task_meta["lease"], dict):
                     task_meta["lease"]["holder"] = None
                     task_meta["lease"]["expires_at"] = 0
