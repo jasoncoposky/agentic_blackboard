@@ -736,7 +736,7 @@ git commit -m "feat(cli): add ab-ctl surface pair, approve, list, and revoke sub
 - Consumes: Live daemon, `ab-ctl.py`, multi-surface pairing, atom creation, and focus broadcast.
 - Produces: Complete end-to-end multi-device workflow verification proving 1:1 user-to-agent graph topology and zero graph pollution.
 
-- [ ] **Step 1: Write comprehensive end-to-end integration test**
+- [x] **Step 1: Write comprehensive end-to-end integration test**
 Create `scratch/test_multi_surface_e2e.py` verifying:
 1. Workstation initializes with `ab-ctl init --user jason --generate-agent`, creating `~/.config/agentic-blackboard/identity.json` and provisioning `user:jason -[:DELEGATES_TO]-> agent:jason-agent`.
 2. Workstation pairs virtual Phone (`surface:phone-safari`) and Table (`surface:table-lab`).
@@ -750,11 +750,11 @@ Create `scratch/test_multi_surface_e2e.py` verifying:
    - All atoms have exact `origin.surface_id` matching the creating device.
 7. Revoke Phone surface and verify immediate 401 on Phone while Table and Workstation remain functional.
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 Run: `python3 scratch/test_multi_surface_e2e.py`
 Expected: PASS with full multi-surface lifecycle and graph invariance verified.
 
-- [ ] **Step 3: Run full regression suite**
+- [x] **Step 3: Run full regression suite**
 Run:
 ```bash
 python3 scratch/test_swarm_defaults.py
@@ -767,7 +767,7 @@ python3 scratch/test_deb_packaging.py
 ```
 Expected: 100% test pass rate across all suites.
 
-- [ ] **Step 4: Commit Task 5**
+- [x] **Step 4: Commit Task 5**
 ```bash
 git add scratch/test_multi_surface_e2e.py
 git commit -m "test(e2e): verify multi-surface key access and 1:1 agent identity graph invariants"

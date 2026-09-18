@@ -472,6 +472,18 @@ class TestMultiSurfaceE2E(unittest.TestCase):
                 {
                     "id": "atom-e2e-verdict-1",
                     "type": "VERIFICATION",
+                    "origin": {
+                        "user_id": "user:jason",
+                        "agent_id": "agent:jason-agent",
+                        "surface_id": "surface:workstation",
+                        "surface_type": "workstation",
+                    },
+                    "metadata": {
+                        "role": "verifier",
+                    },
+                    "attributes": {
+                        "role": "verifier",
+                    },
                     "payload": {
                         "statement": "Workstation review: verified requirements and solution architecture",
                         "content": "1:1 user-agent identity invariance confirmed across mobile and tabletop surfaces.",
@@ -498,6 +510,11 @@ class TestMultiSurfaceE2E(unittest.TestCase):
         self.assertEqual(st, 200)
         self.assertEqual(verdict_node.get("origin", {}).get("user_id"), "user:jason")
         self.assertEqual(verdict_node.get("origin", {}).get("agent_id"), "agent:jason-agent")
+        self.assertEqual(verdict_node.get("origin", {}).get("surface_id"), "surface:workstation")
+        self.assertEqual(verdict_node.get("origin", {}).get("surface_type"), "workstation")
+        verdict_role = verdict_node.get("metadata", {}).get("role") or verdict_node.get("attributes", {}).get("role")
+        self.assertEqual(verdict_role, "verifier")
+        self.assertEqual(verdict_node.get("attributes", {}).get("role"), "verifier")
 
         # -----------------------------------------------------------------
         # Step 4: Graph Invariance & Anti-Pollution Assertions
@@ -566,6 +583,23 @@ class TestMultiSurfaceE2E(unittest.TestCase):
             if l.get("source") == "user:jason" and l.get("relation") == "DELEGATES_TO"
         ]
         self.assertTrue(len(inbound_delegations) >= 1, f"Missing inbound DELEGATES_TO on agent:jason-agent: {inbound_links}")
+
+        # Invariant 5 / Requirement 6: Surface origin provenance across distinct devices
+        # Assert that across the 3 distinct surfaces:
+        # - Requirement atom has origin.surface_id == "surface:phone-safari"
+        # - Solution atom has origin.surface_id == "surface:table-lab"
+        # - Verdict atom has origin.surface_id == "surface:workstation"
+        st_req, req_node = http_request(f"{self.base_url}/api/v1/node/atom-e2e-req-1", token=self.admin_token)
+        self.assertEqual(st_req, 200)
+        self.assertEqual(req_node.get("origin", {}).get("surface_id"), "surface:phone-safari")
+
+        st_sol, sol_node = http_request(f"{self.base_url}/api/v1/node/atom-e2e-sol-1", token=self.admin_token)
+        self.assertEqual(st_sol, 200)
+        self.assertEqual(sol_node.get("origin", {}).get("surface_id"), "surface:table-lab")
+
+        st_verdict, v_node = http_request(f"{self.base_url}/api/v1/node/atom-e2e-verdict-1", token=self.admin_token)
+        self.assertEqual(st_verdict, 200)
+        self.assertEqual(v_node.get("origin", {}).get("surface_id"), "surface:workstation")
 
         # -----------------------------------------------------------------
         # Step 5: Revocation Verification
