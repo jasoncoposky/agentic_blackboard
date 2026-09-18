@@ -542,28 +542,33 @@ def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, activ
 
 def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: str, metadata: dict) -> tuple[bool, str]:
     """Commit or update a node in the blackboard substrate with bundle fallback."""
-    node_url = f"{connect_url}/api/v1/graph/node"
-    payload = {
-        "type": node_type,
-        "id": node_id,
-        "metadata": metadata
-    }
-    status, res = http_request_json(node_url, method="POST", payload=payload, headers=headers)
-    if status in (200, 201):
-        if not (isinstance(res, dict) and res.get("status") == "EXISTS"):
-            return True, ""
+    last_err = ""
+    if node_type.upper() in ("PROJECT", "IDENTITY"):
+        node_url = f"{connect_url}/api/v1/graph/node"
+        payload = {
+            "type": node_type,
+            "id": node_id,
+            "metadata": metadata
+        }
+        status, res = http_request_json(node_url, method="POST", payload=payload, headers=headers)
+        if status in (200, 201):
+            if not (isinstance(res, dict) and res.get("status") == "EXISTS"):
+                return True, ""
+        last_err = str(res)
 
-    # Fallback to /api/v1/graph/bundle for daemons requiring atomic bundle format or updating existing atoms
+    # Post directly to /api/v1/graph/bundle for non-PROJECT/IDENTITY atoms or bundle fallback
     bundle_url = f"{connect_url}/api/v1/graph/bundle"
     project_id = metadata.get("context_id") or "default-swarm"
     agent_id = metadata.get("agent_id") or headers.get("X-Active-Agent") or "cpg-swarm-agent"
     user_id = headers.get("X-Active-User") or "cpg-swarm-user"
 
-    if "type" not in metadata:
-        metadata = dict(metadata)
-        metadata["type"] = node_type
+    meta_copy = dict(metadata)
+    if "type" not in meta_copy:
+        meta_copy["type"] = node_type
 
     atom = {
+        "id": node_id,
+        "type": node_type,
         "uuid": node_id,
         "header": {
             "uuid": node_id,
@@ -571,14 +576,15 @@ def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: 
                 "project_id": project_id,
                 "agent_id": agent_id,
                 "user_id": user_id,
-                "context_id": metadata.get("context_id", ""),
+                "context_id": meta_copy.get("context_id", ""),
             }
         },
         "payload": {
-            "statement": metadata.get("name") or metadata.get("statement") or node_id,
-            "content": json.dumps(metadata)
+            "statement": meta_copy.get("name") or meta_copy.get("statement") or node_id,
+            "content": json.dumps(meta_copy)
         },
-        "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in metadata.items()}
+        "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in meta_copy.items()},
+        "metadata": meta_copy
     }
     b_payload = {
         "project_id": project_id,
@@ -589,7 +595,7 @@ def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: 
     if b_status in (200, 201):
         return True, ""
 
-    return False, str(res)
+    return False, str(b_res) if b_res else last_err
 
 
 def fetch_graph_node(connect_url: str, headers: dict, node_id: str) -> tuple[int, dict | None]:
@@ -794,12 +800,12 @@ def handle_swarm_task_list(args, cfg: dict) -> int:
     tasks_map = {}
 
     def _is_task_node(item_id: str, item_data: dict, meta: dict) -> bool:
+        node_type = str(meta.get("type") or item_data.get("type") or "").lower()
+        if node_type in ("requirement", "solution", "verification_proof", "counterexample_trace", "acceptance"):
+            return False
         if str(item_id).startswith(("req-", "sol-", "proof-", "counter-", "acc-")):
             return False
-        node_type = item_data.get("type") or meta.get("type")
-        if node_type == "requirement":
-            return False
-        return True
+        return node_type == "task" or "task" in str(item_id).lower()
 
     def _extract_search_items(search_resp: dict) -> list:
         if not isinstance(search_resp, dict):
@@ -829,7 +835,7 @@ def handle_swarm_task_list(args, cfg: dict) -> int:
                     tasks_map[tid] = item
 
     # Query search endpoint by context
-    search_url = f"{connect_url}/api/v1/search?q={urllib.parse.quote(context_id)}"
+    search_url = f"{connect_url}/api/v1/search?q={urllib.parse.quote(context_id)}&limit=1000"
     st, search_data = http_request_json(search_url, method="GET", headers=headers)
     if st == 200 and isinstance(search_data, dict):
         for item in _extract_search_items(search_data):
@@ -842,7 +848,7 @@ def handle_swarm_task_list(args, cfg: dict) -> int:
 
     # General search fallback if empty
     if not tasks_map:
-        all_url = f"{connect_url}/api/v1/search?q="
+        all_url = f"{connect_url}/api/v1/search?q=&limit=1000"
         st, all_data = http_request_json(all_url, method="GET", headers=headers)
         if st == 200 and isinstance(all_data, dict):
             for item in _extract_search_items(all_data):
@@ -906,17 +912,17 @@ def handle_swarm_task_list(args, cfg: dict) -> int:
         print(f"No tasks found for context: {context_id}")
         return 0
 
-    col_id = max(max(len(r["id"]) for r in task_rows), 16)
-    col_name = max(max(len(r["name"]) for r in task_rows), 20)
-    col_status = max(max(len(r["status"]) for r in task_rows), 14)
-    col_holder = max(max(len(r["lease_holder"]) for r in task_rows), 14)
-    col_details = max(max(len(r["details"]) for r in task_rows), 25)
+    col_id = max(max(len(str(r["id"])) for r in task_rows), 16)
+    col_name = max(max(len(str(r["name"])) for r in task_rows), 20)
+    col_status = max(max(len(str(r["status"])) for r in task_rows), 14)
+    col_holder = max(max(len(str(r["lease_holder"])) for r in task_rows), 14)
+    col_details = max(max(len(str(r["details"])) for r in task_rows), 25)
 
     header = f"{'ID':<{col_id}}  {'Name':<{col_name}}  {'Status':<{col_status}}  {'Lease Holder':<{col_holder}}  {'Dependencies / Verdicts':<{col_details}}"
     print(header)
     print("-" * len(header))
     for r in task_rows:
-        print(f"{r['id']:<{col_id}}  {r['name']:<{col_name}}  {r['status']:<{col_status}}  {r['lease_holder']:<{col_holder}}  {r['details']:<{col_details}}")
+        print(f"{str(r['id']):<{col_id}}  {str(r['name']):<{col_name}}  {str(r['status']):<{col_status}}  {str(r['lease_holder']):<{col_holder}}  {str(r['details']):<{col_details}}")
     return 0
 
 
@@ -936,7 +942,7 @@ def handle_swarm_lease_claim(args, cfg: dict) -> int:
     metadata = extract_node_metadata(node_data)
 
     current_status = metadata.get("status", "").upper()
-    if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING"):
+    if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING", "ESCALATED"):
         print(f"[BLOCKED] Cannot claim task {task_id}: task is already {current_status}", file=sys.stderr)
         return 1
 
@@ -1161,8 +1167,12 @@ def handle_swarm_review_verdict(args, cfg: dict) -> int:
         if not create_graph_link(connect_url, headers, task_id, counter_id, "REFUTES"):
             print(f"Warning: Failed to create REFUTES link from {task_id} to {counter_id}", file=sys.stderr)
 
-        task_meta["status"] = "READY"
-        task_meta["refutation_count"] = int(task_meta.get("refutation_count", 0)) + 1
+        new_refutation_count = int(task_meta.get("refutation_count", 0)) + 1
+        task_meta["refutation_count"] = new_refutation_count
+        if new_refutation_count > 3:
+            task_meta["status"] = "ESCALATED"
+        else:
+            task_meta["status"] = "READY"
         if "lease" in task_meta and isinstance(task_meta["lease"], dict):
             task_meta["lease"]["holder"] = None
             task_meta["lease"]["expires_at"] = 0
@@ -1174,7 +1184,7 @@ def handle_swarm_review_verdict(args, cfg: dict) -> int:
             print(f"Error updating task status: {err}", file=sys.stderr)
             return 1
 
-        print(f"Verdict recorded for task {task_id}: FAIL by {args.verifier} (Refutation: {counter_id}, Status: READY)")
+        print(f"Verdict recorded for task {task_id}: FAIL by {args.verifier} (Refutation: {counter_id}, Status: {task_meta['status']})")
         return 0
 
     else:
@@ -1631,21 +1641,24 @@ def build_mcp_server(connect_url: str, token: str | None):
         return h
 
     async def _async_commit_graph_node(client: httpx.AsyncClient, node_type: str, node_id: str, metadata: dict, req_headers: dict) -> tuple[bool, str]:
-        node_url = f"{api_url}/graph/node"
-        payload = {
-            "type": node_type,
-            "id": node_id,
-            "metadata": metadata
-        }
+        last_err = ""
         try:
-            resp = await client.post(node_url, json=payload, headers=req_headers)
-            if resp.status_code in (200, 201):
-                try:
-                    res_json = resp.json()
-                    if not (isinstance(res_json, dict) and res_json.get("status") == "EXISTS"):
+            if node_type.upper() in ("PROJECT", "IDENTITY"):
+                node_url = f"{api_url}/graph/node"
+                payload = {
+                    "type": node_type,
+                    "id": node_id,
+                    "metadata": metadata
+                }
+                resp = await client.post(node_url, json=payload, headers=req_headers)
+                if resp.status_code in (200, 201):
+                    try:
+                        res_json = resp.json()
+                        if not (isinstance(res_json, dict) and res_json.get("status") == "EXISTS"):
+                            return True, ""
+                    except Exception:
                         return True, ""
-                except Exception:
-                    return True, ""
+                last_err = resp.text
 
             bundle_url = f"{api_url}/graph/bundle"
             project_id = metadata.get("context_id") or "default-swarm"
@@ -1655,6 +1668,8 @@ def build_mcp_server(connect_url: str, token: str | None):
             if "type" not in meta_copy:
                 meta_copy["type"] = node_type
             atom = {
+                "id": node_id,
+                "type": node_type,
                 "uuid": node_id,
                 "header": {
                     "uuid": node_id,
@@ -1669,7 +1684,8 @@ def build_mcp_server(connect_url: str, token: str | None):
                     "statement": metadata.get("name") or metadata.get("statement") or node_id,
                     "content": json.dumps(meta_copy)
                 },
-                "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in meta_copy.items()}
+                "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in meta_copy.items()},
+                "metadata": meta_copy
             }
             b_payload = {
                 "project_id": project_id,
@@ -1679,7 +1695,7 @@ def build_mcp_server(connect_url: str, token: str | None):
             b_resp = await client.post(bundle_url, json=b_payload, headers=req_headers)
             if b_resp.status_code in (200, 201):
                 return True, ""
-            return False, resp.text
+            return False, b_resp.text or last_err
         except Exception as e:
             return False, str(e)
 
@@ -1779,6 +1795,7 @@ def build_mcp_server(connect_url: str, token: str | None):
     async def swarm_create_task(
         context_id: str,
         name: str,
+        task_id: str | None = None,
         workflow: str = "feature",
         target_symbols: list[str] | None = None,
         depends_on: list[str] | None = None,
@@ -1797,10 +1814,11 @@ def build_mcp_server(connect_url: str, token: str | None):
         else:
             deps = list(depends_on) if depends_on else []
 
-        if re.match(r"^[a-zA-Z0-9_\-]+$", name):
-            task_id = name
-        else:
-            task_id = f"task-{secrets.token_hex(4)}"
+        if not task_id:
+            if re.match(r"^[a-zA-Z0-9_\-]+$", name):
+                task_id = name
+            else:
+                task_id = f"task-{secrets.token_hex(4)}"
 
         task_meta = {
             "type": "task",
@@ -1844,12 +1862,12 @@ def build_mcp_server(connect_url: str, token: str | None):
         tasks_map = {}
 
         def _is_task_node(item_id: str, item_data: dict, meta: dict) -> bool:
+            node_type = str(meta.get("type") or item_data.get("type") or "").lower()
+            if node_type in ("requirement", "solution", "verification_proof", "counterexample_trace", "acceptance"):
+                return False
             if str(item_id).startswith(("req-", "sol-", "proof-", "counter-", "acc-")):
                 return False
-            node_type = item_data.get("type") or meta.get("type")
-            if node_type == "requirement":
-                return False
-            return True
+            return node_type == "task" or "task" in str(item_id).lower()
 
         def _extract_search_items(search_resp: dict) -> list:
             if not isinstance(search_resp, dict):
@@ -1885,7 +1903,7 @@ def build_mcp_server(connect_url: str, token: str | None):
                 pass
 
             # Query search endpoint by context
-            search_url = f"{api_url}/search?q={urllib.parse.quote(context_id)}"
+            search_url = f"{api_url}/search?q={urllib.parse.quote(context_id)}&limit=1000"
             try:
                 s_resp = await client.get(search_url, headers=req_h)
                 if s_resp.status_code == 200:
@@ -1904,7 +1922,7 @@ def build_mcp_server(connect_url: str, token: str | None):
             # General search fallback if empty
             if not tasks_map:
                 try:
-                    all_resp = await client.get(f"{api_url}/search?q=", headers=req_h)
+                    all_resp = await client.get(f"{api_url}/search?q=&limit=1000", headers=req_h)
                     if all_resp.status_code == 200:
                         all_data = all_resp.json()
                         if isinstance(all_data, dict):
@@ -1970,7 +1988,7 @@ def build_mcp_server(connect_url: str, token: str | None):
 
             metadata = extract_node_metadata(node_data)
             current_status = metadata.get("status", "").upper()
-            if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING"):
+            if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING", "ESCALATED"):
                 return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot claim task {task_id}: task is already {current_status}"})
 
             links_data = await _async_fetch_node_links(client, task_id, req_h, direction="both")
@@ -2199,8 +2217,12 @@ def build_mcp_server(connect_url: str, token: str | None):
 
                 await _async_create_graph_link(client, task_id, counter_id, "REFUTES", req_h)
 
-                task_meta["status"] = "READY"
-                task_meta["refutation_count"] = int(task_meta.get("refutation_count", 0)) + 1
+                new_refutation_count = int(task_meta.get("refutation_count", 0)) + 1
+                task_meta["refutation_count"] = new_refutation_count
+                if new_refutation_count > 3:
+                    task_meta["status"] = "ESCALATED"
+                else:
+                    task_meta["status"] = "READY"
                 if "lease" in task_meta and isinstance(task_meta["lease"], dict):
                     task_meta["lease"]["holder"] = None
                     task_meta["lease"]["expires_at"] = 0
@@ -2217,7 +2239,7 @@ def build_mcp_server(connect_url: str, token: str | None):
                     "verdict": "FAIL",
                     "counter_id": counter_id,
                     "verifier_id": verifier_id,
-                    "status_value": "READY"
+                    "status_value": task_meta["status"]
                 })
 
     @mcp.tool()

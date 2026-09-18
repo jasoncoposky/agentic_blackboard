@@ -158,6 +158,15 @@ class MockBlackboardHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(201, {"status": "CREATED", "id": node_id})
             return
 
+        if path == "/api/v1/graph/bundle":
+            atoms = body.get("atoms", [])
+            for atom in atoms:
+                aid = atom.get("uuid") or atom.get("id")
+                if aid:
+                    self.server.nodes[aid] = atom
+            self._send_json(201, {"status": "COMMITTED", "count": len(atoms)})
+            return
+
         if path == "/api/v1/link":
             src = body.get("source")
             dst = body.get("target")
@@ -562,6 +571,76 @@ def main():
         assert t2_claimed.get("metadata", {}).get("status") == "IN_PROGRESS"
         assert t2_claimed.get("metadata", {}).get("lease", {}).get("holder") == "worker-beta"
         print("[PASS] swarm lease claim on Task-2 succeeded after prerequisite completion.")
+
+        # Test 14: Dialectic loop bounding to ESCALATED (refutation_count > 3)
+        print("\n--- Test 14: ab-ctl swarm review verdict FAIL (dialectic loop bounding to ESCALATED) ---")
+        run_cli([
+            "swarm", "task", "create",
+            "--context", "ctx-test-swarm",
+            "--name", "Task-FailLoop",
+            "--workflow", "feature",
+            "--symbols", "sym_loop",
+            "--agent", "cpg-architect",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ])
+
+        for r in range(1, 5):
+            # Claim lease
+            run_cli([
+                "swarm", "lease", "claim", "Task-FailLoop",
+                "--agent", "worker-fail",
+                f"--connect={base_url}",
+                f"--token={token}"
+            ])
+            # Submit review
+            run_cli([
+                "swarm", "review", "submit", "Task-FailLoop",
+                "--agent", "worker-fail",
+                "--patch", f"Fix attempt {r}",
+                f"--connect={base_url}",
+                f"--token={token}"
+            ])
+            # Record verdict FAIL
+            proc_vf = run_cli([
+                "swarm", "review", "verdict", "Task-FailLoop",
+                "--verifier", "cpg-verifier-01",
+                "--verdict", "FAIL",
+                "--details", json.dumps({"reason": f"counterexample {r}"}),
+                f"--connect={base_url}",
+                f"--token={token}"
+            ])
+            expected_status = "ESCALATED" if r > 3 else "READY"
+            assert f"Status: {expected_status}" in (proc_vf.stdout + proc_vf.stderr)
+            t_fl = server.nodes["Task-FailLoop"]
+            assert t_fl.get("metadata", {}).get("status") == expected_status
+            assert t_fl.get("metadata", {}).get("refutation_count") == r
+
+        # Lease claim on ESCALATED task must be rejected
+        proc_claim_esc = run_cli([
+            "swarm", "lease", "claim", "Task-FailLoop",
+            "--agent", "worker-fail",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_claim_esc.returncode != 0
+        err_out = proc_claim_esc.stderr + proc_claim_esc.stdout
+        assert "BLOCKED" in err_out
+        assert "ESCALATED" in err_out
+        print("[PASS] Dialectic loop bounded to ESCALATED and lease claim strictly blocked.")
+
+        # Test 15: Search requests use limit=1000
+        print("\n--- Test 15: Verify search limit=1000 in CLI ---")
+        run_cli([
+            "swarm", "task", "list",
+            "--context", "ctx-test-swarm",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ])
+        search_reqs = [r for r in server.request_history if "/api/v1/search" in r.get("path", "")]
+        assert len(search_reqs) > 0
+        assert all("limit=1000" in r["path"] for r in search_reqs), f"Missing limit=1000 in search: {search_reqs}"
+        print("[PASS] CLI task list search requests include &limit=1000.")
 
         print("\n=== All ab-ctl Swarm CLI Tests Passed Successfully! ===")
 

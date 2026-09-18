@@ -493,6 +493,69 @@ async def run_swarm_mcp_tests(mcp, server, base_url: str, token: str):
     assert server.nodes["Task-B"].get("metadata", {}).get("lease", {}).get("holder") == "worker-beta"
     print("[PASS] Task-B lease claimed successfully after prerequisite completed.")
 
+    # Test 14: swarm_create_task with explicit task_id parameter (FastMCP parity)
+    print("\n--- Test 14: swarm_create_task with explicit task_id ---")
+    res = await call_tool("swarm_create_task", {
+        "context_id": "ctx-mcp-swarm",
+        "name": "Custom Task Name With Spaces",
+        "task_id": "custom-task-explicit-99",
+        "workflow": "feature"
+    })
+    assert res.get("status") == "SUCCESS", f"swarm_create_task with explicit task_id failed: {res}"
+    assert res.get("task_id") == "custom-task-explicit-99"
+    assert "custom-task-explicit-99" in server.nodes
+    print("[PASS] swarm_create_task respected explicit task_id parameter.")
+
+    # Test 15: Dialectic Loop Bounding (refutation_count > 3 -> ESCALATED)
+    print("\n--- Test 15: ESCALATED Dialectic Loop Bounding ---")
+    res = await call_tool("swarm_create_task", {
+        "context_id": "ctx-mcp-swarm",
+        "name": "Task-Loop",
+        "task_id": "Task-Loop",
+        "workflow": "bugfix"
+    })
+    assert res.get("status") == "SUCCESS"
+
+    for fail_round in range(1, 5):
+        # Claim lease
+        res_claim = await call_tool("swarm_claim_lease", {"task_id": "Task-Loop", "agent_id": "worker-loop"})
+        assert res_claim.get("status") == "SUCCESS", f"Round {fail_round} claim failed: {res_claim}"
+        # Submit review
+        res_sub = await call_tool("swarm_submit_review", {
+            "task_id": "Task-Loop",
+            "agent_id": "worker-loop",
+            "patch_content": f"Attempt #{fail_round}"
+        })
+        assert res_sub.get("status") == "SUCCESS"
+        # Record FAIL verdict
+        res_verd = await call_tool("swarm_record_verdict", {
+            "task_id": "Task-Loop",
+            "verifier_id": "cpg-verifier-01",
+            "verdict": "FAIL",
+            "details": {"round": fail_round}
+        })
+        assert res_verd.get("status") == "SUCCESS"
+        expected_status = "ESCALATED" if fail_round > 3 else "READY"
+        assert res_verd.get("status_value") == expected_status, f"Expected {expected_status}, got {res_verd}"
+        assert server.nodes["Task-Loop"].get("metadata", {}).get("status") == expected_status
+        assert server.nodes["Task-Loop"].get("metadata", {}).get("refutation_count") == fail_round
+
+    # Attempt to claim lease on ESCALATED task -> MUST FAIL
+    res_claim_esc = await call_tool("swarm_claim_lease", {"task_id": "Task-Loop", "agent_id": "worker-loop"})
+    assert res_claim_esc.get("status") == "ERROR", f"Expected lease claim to fail on ESCALATED task: {res_claim_esc}"
+    assert "escalated" in res_claim_esc.get("message", "").lower()
+    print("[PASS] Dialectic loop bounded to ESCALATED after 4 failures and lease claim strictly rejected.")
+
+    # Test 16: Verify search limit=1000 and _is_task_node filtering
+    print("\n--- Test 16: Search limit=1000 & Task discovery filtering ---")
+    res_list = await call_tool("swarm_list_tasks", {"context_id": "ctx-mcp-swarm"})
+    assert res_list.get("status") == "SUCCESS"
+    # Ensure search requests used limit=1000
+    search_reqs = [r for r in server.request_history if "/api/v1/search" in r.get("path", "")]
+    assert len(search_reqs) > 0, "No search requests found"
+    assert all("limit=1000" in r["path"] for r in search_reqs), f"Missing limit=1000 in search: {search_reqs}"
+    print("[PASS] Search requests include &limit=1000 parameter.")
+
 
 def main():
     print("=== Testing ab-ctl FastMCP Swarm Tool Expansion ===")

@@ -158,7 +158,7 @@ Created and owned by the **Stakeholder Agent**. Defines the functional, architec
 ## Schema 2: Task Atom (`type: task`)
 
 ### Purpose & Role
-Created by the **Architect Agent** during task decomposition. Claimed by the **Implementer Agent** via exclusive lease. Holds the state machine status (`READY`, `IN_PROGRESS`, `REVIEW_PENDING`, `VALIDATED`, `COMPLETED`).
+Created by the **Architect Agent** during task decomposition. Claimed by the **Implementer Agent** via exclusive lease. Holds the state machine status (`PROPOSED`, `READY`, `IN_PROGRESS`, `REVIEW_PENDING`, `VALIDATED`, `COMPLETED`, `ESCALATED`).
 
 ### JSON Schema (Draft-07)
 ```json
@@ -186,7 +186,7 @@ Created by the **Architect Agent** during task decomposition. Claimed by the **I
         "blast_radius_k": { "type": "integer", "minimum": 1, "maximum": 5 },
         "status": {
           "type": "string",
-          "enum": ["READY", "IN_PROGRESS", "REVIEW_PENDING", "VALIDATED", "COMPLETED"]
+          "enum": ["PROPOSED", "READY", "IN_PROGRESS", "REVIEW_PENDING", "VALIDATED", "COMPLETED", "ESCALATED"]
         },
         "lease": {
           "type": "object",
