@@ -34,7 +34,7 @@ Every atom committed via `POST /api/v1/graph/node` adheres to the following enve
 {
   "id": "<string: unique atom identifier>",
   "type": "<string: atom type enum>",
-  "statement": "<string: human-readable summary statement>",
+  "statement": "<string: optional human-readable summary statement>",
   "metadata": {
     "context_id": "<string: swarm execution context ID>",
     "created_at": "<integer: unix timestamp in seconds>",
@@ -42,6 +42,27 @@ Every atom committed via `POST /api/v1/graph/node` adheres to the following enve
   }
 }
 ```
+
+Top-level Envelope JSON Schema (Draft-07):
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AtomEnvelope",
+  "type": "object",
+  "required": ["id", "type", "metadata"],
+  "properties": {
+    "id": { "type": "string" },
+    "type": { "type": "string" },
+    "statement": { "type": "string" },
+    "metadata": {
+      "type": "object",
+      "required": ["context_id", "created_at"]
+    }
+  }
+}
+```
+
+> **Statement Optionality & Synthesis**: In the top-level envelope schema and all atom schemas, `statement` is optional in `required` (`"required": ["id", "type", "metadata"]`). The summary statement can either be provided directly as a top-level `statement` field or synthesized by tooling and UI surfaces from `metadata.name` / `metadata.statement`.
 
 ---
 
@@ -74,14 +95,14 @@ Created and owned by the **Stakeholder Agent**. Defines the functional, architec
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "RequirementAtom",
   "type": "object",
-  "required": ["id", "type", "statement", "metadata"],
+  "required": ["id", "type", "metadata"],
   "properties": {
     "id": { "type": "string", "pattern": "^req-[a-zA-Z0-9_-]+$" },
     "type": { "type": "string", "enum": ["requirement"] },
     "statement": { "type": "string", "minLength": 5 },
     "metadata": {
       "type": "object",
-      "required": ["context_id", "scope", "acceptance_criteria", "priority", "created_at"],
+      "required": ["context_id", "created_at"],
       "properties": {
         "context_id": { "type": "string" },
         "name": { "type": "string" },
@@ -96,7 +117,7 @@ Created and owned by the **Stakeholder Agent**. Defines the functional, architec
           "type": "array",
           "items": { "type": "string" }
         },
-        "status": { "type": "string", "enum": ["OPEN", "IN_ANALYSIS", "IMPLEMENTED", "ACCEPTED", "REJECTED"] },
+        "status": { "type": "string", "enum": ["PROPOSED", "OPEN", "IN_ANALYSIS", "IMPLEMENTED", "ACCEPTED", "REJECTED"] },
         "stakeholder_user": { "type": "string" },
         "created_at": { "type": "integer" }
       }
@@ -145,7 +166,7 @@ Created by the **Architect Agent** during task decomposition. Claimed by the **I
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "TaskAtom",
   "type": "object",
-  "required": ["id", "type", "statement", "metadata"],
+  "required": ["id", "type", "metadata"],
   "properties": {
     "id": { "type": "string" },
     "type": { "type": "string", "enum": ["task"] },
@@ -221,7 +242,7 @@ Created by the **Implementer Agent** when work is ready for review. Linked to th
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SolutionAtom",
   "type": "object",
-  "required": ["id", "type", "statement", "metadata"],
+  "required": ["id", "type", "metadata"],
   "properties": {
     "id": { "type": "string", "pattern": "^sol-[a-zA-Z0-9_-]+$" },
     "type": { "type": "string", "enum": ["solution"] },
@@ -285,7 +306,7 @@ Created by the **Verifier Agent** when static analysis, SMT path verification, a
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "VerificationProofAtom",
   "type": "object",
-  "required": ["id", "type", "statement", "metadata"],
+  "required": ["id", "type", "metadata"],
   "properties": {
     "id": { "type": "string", "pattern": "^proof-[a-zA-Z0-9_-]+$" },
     "type": { "type": "string", "enum": ["verification_proof"] },
@@ -299,7 +320,7 @@ Created by the **Verifier Agent** when static analysis, SMT path verification, a
         "verdict": { "type": "string", "enum": ["PASS"] },
         "details": {
           "type": "object",
-          "required": ["zero_leak_proof", "taint_violations"],
+          "required": ["taint_violations"],
           "properties": {
             "static_analysis_metrics": {
               "type": "object",
@@ -374,7 +395,7 @@ Created by the **Verifier Agent** when static analysis, symbolic execution, or t
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "CounterexampleTraceAtom",
   "type": "object",
-  "required": ["id", "type", "statement", "metadata"],
+  "required": ["id", "type", "metadata"],
   "properties": {
     "id": { "type": "string", "pattern": "^counter-[a-zA-Z0-9_-]+$" },
     "type": { "type": "string", "enum": ["counterexample_trace"] },
@@ -488,7 +509,7 @@ Created by the **Stakeholder Agent** upon verifying that the validated task sati
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "AcceptanceAtom",
   "type": "object",
-  "required": ["id", "type", "statement", "metadata"],
+  "required": ["id", "type", "metadata"],
   "properties": {
     "id": { "type": "string", "pattern": "^acc-[a-zA-Z0-9_-]+$" },
     "type": { "type": "string", "enum": ["acceptance"] },
@@ -598,7 +619,17 @@ The `ab-ctl` FastMCP stdio server implements native primitives mapping directly 
 }
 ```
 
-### 3. Claiming Lease (`swarm_claim_lease`)
+### 3. Listing Swarm Tasks (`swarm_list_tasks`)
+```json
+{
+  "name": "swarm_list_tasks",
+  "arguments": {
+    "context_id": "ctx-tls-security-sprint"
+  }
+}
+```
+
+### 4. Claiming Lease (`swarm_claim_lease`)
 ```json
 {
   "name": "swarm_claim_lease",
@@ -610,7 +641,18 @@ The `ab-ctl` FastMCP stdio server implements native primitives mapping directly 
 }
 ```
 
-### 4. Submitting Review (`swarm_submit_review`)
+### 5. Releasing Lease (`swarm_release_lease`)
+```json
+{
+  "name": "swarm_release_lease",
+  "arguments": {
+    "task_id": "task-tls-validate-version",
+    "agent_id": "agent:cpg-worker-01"
+  }
+}
+```
+
+### 6. Submitting Review (`swarm_submit_review`)
 ```json
 {
   "name": "swarm_submit_review",
@@ -622,7 +664,7 @@ The `ab-ctl` FastMCP stdio server implements native primitives mapping directly 
 }
 ```
 
-### 5. Recording Dialectic Verdict (`swarm_record_verdict`)
+### 7. Recording Dialectic Verdict (`swarm_record_verdict`)
 ```json
 {
   "name": "swarm_record_verdict",
@@ -639,7 +681,7 @@ The `ab-ctl` FastMCP stdio server implements native primitives mapping directly 
 }
 ```
 
-### 6. Stakeholder Acceptance (`swarm_accept_task`)
+### 8. Stakeholder Acceptance (`swarm_accept_task`)
 ```json
 {
   "name": "swarm_accept_task",
