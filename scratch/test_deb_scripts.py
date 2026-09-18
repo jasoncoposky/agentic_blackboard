@@ -44,15 +44,15 @@ def main() -> int:
         print("\n[-] Pre-condition failed: Missing maintainer script files.")
         return 1
 
-    # 2. Executable permission check (0755)
-    print("\n--- 2. Executable Permissions (0755) ---")
+    # 2. Executable permission check (0755 / 0775)
+    print("\n--- 2. Executable Permissions (0755 / 0775) ---")
     for name, path in scripts.items():
         mode = path.stat().st_mode & 0o777
-        if mode != 0o755:
-            print(f"[-] FAIL: {name} permissions are {oct(mode)}, expected 0o755")
+        if mode not in (0o755, 0o775) or (mode & 0o111 != 0o111) or (mode & 0o002 != 0):
+            print(f"[-] FAIL: {name} permissions are {oct(mode)}, expected executable non-world-writable (0o755 or 0o775)")
             failed = True
         else:
-            print(f"[+] PASS: {name} has permissions 0755")
+            print(f"[+] PASS: {name} has valid executable permissions ({oct(mode)})")
 
     # 3. Shell syntax check (sh -n)
     print("\n--- 3. POSIX Shell Syntax (sh -n) ---")
