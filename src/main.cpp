@@ -220,7 +220,8 @@ int main(int argc, char* argv[]) {
         
         // 2. Start Distributed Connectivity
         std::string loc = (node_id == 1) ? "Apex_NC" : "Pittsburgh_PA";
-        agentic_blackboard::Orchestrator::instance().start(&bb, loc, 8090, 8090);
+        int zmq_port = (port != 8085) ? (port + 5) : 8090;
+        agentic_blackboard::Orchestrator::instance().start(&bb, loc, zmq_port, zmq_port);
         
         // 3. Start Observability & API
         agentic_blackboard::Monitor::instance().start(&bb);

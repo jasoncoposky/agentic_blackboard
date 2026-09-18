@@ -60,6 +60,8 @@ private:
     void listen_loop();
 
     std::string location_id_;
+    int pub_port_ = 8090;
+    int sub_port_ = 8090;
     std::atomic<bool> running_;
     std::atomic<State> state_;
     

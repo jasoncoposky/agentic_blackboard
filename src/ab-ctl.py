@@ -50,15 +50,21 @@ def load_config(config_path: str | None = None) -> dict:
     target_file = None
     if config_path:
         p = Path(config_path)
-        if p.is_file():
-            target_file = p
-    else:
-        for p in DEFAULT_CONFIG_PATHS:
+        try:
             if p.is_file():
                 target_file = p
-                break
+        except (PermissionError, OSError):
+            pass
+    else:
+        for p in DEFAULT_CONFIG_PATHS:
+            try:
+                if p.is_file():
+                    target_file = p
+                    break
+            except (PermissionError, OSError):
+                continue
 
-    if target_file and target_file.is_file():
+    if target_file:
         try:
             parser = configparser.ConfigParser()
             content = target_file.read_text(encoding="utf-8")
@@ -549,13 +555,13 @@ def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, activ
             active_user or
             os.environ.get("AB_ACTIVE_USER") or
             os.environ.get("AB_USER") or
-            "cpg-swarm-user")
+            "swarm-user")
     agent = (getattr(args, "active_agent", None) or
              getattr(args, "agent", None) or
              active_agent or
              os.environ.get("AB_ACTIVE_AGENT") or
              os.environ.get("AB_AGENT") or
-             "cpg-swarm-agent")
+             "swarm-agent")
     return get_auth_headers(token, active_user=user, active_agent=agent)
 
 
@@ -578,8 +584,8 @@ def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: 
     # Post directly to /api/v1/graph/bundle for non-PROJECT/IDENTITY atoms or bundle fallback
     bundle_url = f"{connect_url}/api/v1/graph/bundle"
     project_id = metadata.get("context_id") or "default-swarm"
-    agent_id = metadata.get("agent_id") or headers.get("X-Active-Agent") or "cpg-swarm-agent"
-    user_id = headers.get("X-Active-User") or "cpg-swarm-user"
+    agent_id = metadata.get("agent_id") or headers.get("X-Active-Agent") or "swarm-agent"
+    user_id = headers.get("X-Active-User") or "swarm-user"
 
     meta_copy = dict(metadata)
     if "type" not in meta_copy:
@@ -753,7 +759,7 @@ def handle_swarm_init(args, cfg: dict) -> int:
 def handle_swarm_task_create(args, cfg: dict) -> int:
     """Create task atom and establish DEPENDS_ON links."""
     connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
-    agent_id = getattr(args, "agent", None) or "cpg-architect"
+    agent_id = getattr(args, "agent", None) or "architect"
     headers = resolve_swarm_headers(args, cfg, active_agent=agent_id)
 
     context_id = args.context
@@ -1681,8 +1687,8 @@ def build_mcp_server(connect_url: str, token: str | None):
 
             bundle_url = f"{api_url}/graph/bundle"
             project_id = metadata.get("context_id") or "default-swarm"
-            agent_id = metadata.get("agent_id") or req_headers.get("X-Active-Agent") or "cpg-swarm-agent"
-            user_id = req_headers.get("X-Active-User") or "cpg-swarm-user"
+            agent_id = metadata.get("agent_id") or req_headers.get("X-Active-Agent") or "swarm-agent"
+            user_id = req_headers.get("X-Active-User") or "swarm-user"
             meta_copy = dict(metadata)
             if "type" not in meta_copy:
                 meta_copy["type"] = node_type
@@ -1819,9 +1825,9 @@ def build_mcp_server(connect_url: str, token: str | None):
         target_symbols: list[str] | None = None,
         depends_on: list[str] | None = None,
         blast_radius_k: int = 2,
-        agent_id: str = "cpg-architect"
+        agent_id: str = "architect"
     ) -> str:
-        """Create a swarm task atom with target CPG symbols, workflow, and DEPENDS_ON links."""
+        """Create a swarm task atom with target symbols, workflow, and DEPENDS_ON links."""
         req_h = _make_headers(active_user="human", active_agent=agent_id)
         if isinstance(target_symbols, str):
             symbols = [s.strip() for s in target_symbols.split(",") if s.strip()]
@@ -1877,7 +1883,7 @@ def build_mcp_server(connect_url: str, token: str | None):
     @mcp.tool()
     async def swarm_list_tasks(context_id: str) -> str:
         """List all tasks in a swarm context with status, lease holder, dependencies, and verdicts."""
-        req_h = _make_headers(active_user="human", active_agent="cpg-swarm-agent")
+        req_h = _make_headers(active_user="human", active_agent="swarm-agent")
         tasks_map = {}
 
         def _is_task_node(item_id: str, item_data: dict, meta: dict) -> bool:
@@ -2268,7 +2274,7 @@ def build_mcp_server(connect_url: str, token: str | None):
         notes: str = ""
     ) -> str:
         """Record stakeholder acceptance and advance task from VALIDATED to COMPLETED."""
-        req_h = _make_headers(active_user=stakeholder_id, active_agent="cpg-swarm-agent")
+        req_h = _make_headers(active_user=stakeholder_id, active_agent="swarm-agent")
         async with httpx.AsyncClient(timeout=client_timeout) as client:
             status, node_data = await _async_fetch_graph_node(client, task_id, req_h)
             if status != 200 or not node_data:
@@ -2501,8 +2507,8 @@ def main():
     task_create_p.add_argument("--workflow", default="feature", help="Workflow type (feature, bugfix, refactoring)")
     task_create_p.add_argument("--symbols", default="", help="Comma-separated target symbols")
     task_create_p.add_argument("--depends-on", default="", help="Comma-separated prerequisite task IDs")
-    task_create_p.add_argument("--blast-radius", "-k", type=int, default=2, help="CPG blast radius k-hop distance")
-    task_create_p.add_argument("--agent", default="cpg-architect", help="Author agent ID (default: cpg-architect)")
+    task_create_p.add_argument("--blast-radius", "-k", type=int, default=2, help="Blast radius k-hop distance")
+    task_create_p.add_argument("--agent", default="architect", help="Author agent ID (default: architect)")
     add_net_args(task_create_p)
 
     # task list
