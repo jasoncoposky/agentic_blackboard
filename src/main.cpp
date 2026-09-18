@@ -90,6 +90,7 @@ int main(int argc, char* argv[]) {
             std::string arg = argv[i];
             if (isdigit(arg[0])) node_id = std::stoi(arg);
             else if (arg.find("--db=") == 0) db_path = arg.substr(5);
+            else if (arg.find("--data-dir=") == 0) db_path = arg.substr(11) + "/ab_db";
             else if (arg.find("--auth-mode=") == 0) auth_mode = arg.substr(12);
             else if (arg.find("--admin-token=") == 0) admin_token = arg.substr(14);
             else if (arg.find("--port=") == 0) port = std::stoi(arg.substr(7));
