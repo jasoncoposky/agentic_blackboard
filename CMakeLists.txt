@@ -10,7 +10,7 @@ add_compile_definitions(__GLIBC_USE_C2X_STRTOL=0)
 set(L3KVG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../l3kvg)
 
 # Include L3KVG, which transitively includes L3KV, lite3-cpp, libzmq, and cppzmq
-add_subdirectory(${L3KVG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/l3kvg)
+add_subdirectory(${L3KVG_DIR} ${CMAKE_CURRENT_BINARY_DIR}/l3kvg EXCLUDE_FROM_ALL)
 
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
@@ -186,5 +186,6 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
 
 set(CPACK_SET_DESTDIR ON)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/")
+set(CPACK_INSTALL_PREFIX "/")
 
 include(CPack)

@@ -8,14 +8,19 @@ Validates:
    - Package: agentic-blackboard
    - Version: 0.4.0-1 (or Version: 0.4.0)
    - Maintainer: Agentic Blackboard Team <team@agentic-blackboard.org>
-   - Depends: contains systemd, python3, and resolved shared libraries (libc6, libzmq5, etc.).
+   - Depends: contains systemd, python3, openssl (libssl3/libssl3t64), and resolved shared libraries (libc6, libzmq5, etc.).
 4. Queries file list via `dpkg-deb -c <file>.deb`:
    - /usr/bin/agentic-blackboardd
    - /usr/bin/ab-ctl
    - /usr/lib/systemd/system/agentic-blackboard.service
    - /etc/agentic-blackboard/blackboard.conf
    - /usr/share/agentic-blackboard/skills/
-5. Extracts control archive via `dpkg-deb -e <file>.deb <temp_dir>` and checks that postinst, prerm, and postrm exist and have executable permissions (0755).
+   - /usr/include/agentic_blackboard
+   - /usr/include/ab
+   - Negative audit: no files under /usr/local
+5. Extracts control archive via `dpkg-deb -e <file>.deb <temp_dir>` and checks:
+   - postinst, prerm, and postrm exist and have executable permissions (0755).
+   - postinst, prerm, and postrm pass POSIX syntax validation (`sh -n`).
 """
 
 import os
@@ -163,6 +168,13 @@ def main() -> int:
                 print(f"[-] FAIL: Required dependency '{required_dep}' missing from Depends: {depends_val}")
                 failed = True
 
+        # OpenSSL dependency check
+        if re.search(r"libssl3(t64)?", depends_val):
+            print("[+] PASS: OpenSSL dependency matching 'libssl3(t64)?' present in Depends")
+        else:
+            print(f"[-] FAIL: Required dependency matching 'libssl3(t64)?' missing from Depends: {depends_val}")
+            failed = True
+
     # 4. Manifest / File List Checks via dpkg-deb -c
     print("\n--- 4. Manifest Checks (dpkg-deb -c) ---")
     res_contents = run_command(["dpkg-deb", "-c", str(deb_package)])
@@ -183,12 +195,26 @@ def main() -> int:
         if norm_path.endswith("/") and len(norm_path) > 1:
             installed_files.add(norm_path.rstrip("/"))
 
+    # Hygiene / Negative audit: Assert that NO paths start with /usr/local
+    usr_local_paths = [p for p in installed_files if p.startswith("/usr/local")]
+    if usr_local_paths:
+        print(f"[-] FAIL: Found {len(usr_local_paths)} paths starting with '/usr/local' in package manifest:")
+        for p in usr_local_paths[:10]:
+            print(f"    {p}")
+        if len(usr_local_paths) > 10:
+            print(f"    ... and {len(usr_local_paths) - 10} more")
+        failed = True
+    else:
+        print("[+] PASS: Hygiene check: NO paths in package manifest start with '/usr/local'")
+
     required_entries = [
         "/usr/bin/agentic-blackboardd",
         "/usr/bin/ab-ctl",
         "/usr/lib/systemd/system/agentic-blackboard.service",
         "/etc/agentic-blackboard/blackboard.conf",
         "/usr/share/agentic-blackboard/skills",
+        "/usr/include/agentic_blackboard",
+        "/usr/include/ab",
     ]
 
     for entry in required_entries:
@@ -219,6 +245,14 @@ def main() -> int:
                     failed = True
                 else:
                     print(f"[+] PASS: '{script_name}' found in control archive with permissions 0755")
+
+                # POSIX syntax check via sh -n
+                res_syntax = run_command(["sh", "-n", str(script_path)])
+                if res_syntax.returncode != 0:
+                    print(f"[-] FAIL: '{script_name}' failed POSIX syntax check (sh -n): {res_syntax.stderr.strip()}")
+                    failed = True
+                else:
+                    print(f"[+] PASS: '{script_name}' passed POSIX syntax check (sh -n)")
 
     if failed:
         print("\n[-] Verification failed: One or more package checks failed.")
