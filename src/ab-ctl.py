@@ -249,6 +249,34 @@ def get_auth_headers(token: str | None, active_user: str | None = None, active_a
     return headers
 
 
+def http_request_json(url: str, method: str = "GET", payload: dict | list | None = None,
+                      headers: dict | None = None, timeout: float = 10.0) -> tuple[int, dict | list | str]:
+    """Execute HTTP request and return (status_code, parsed_body_or_raw_str)."""
+    h = dict(headers or {})
+    data_bytes = None
+    if payload is not None:
+        data_bytes = json.dumps(payload).encode("utf-8")
+        if "Content-Type" not in h:
+            h["Content-Type"] = "application/json"
+
+    req = urllib.request.Request(url, data=data_bytes, headers=h, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body_str = resp.read().decode("utf-8", errors="replace")
+            try:
+                return resp.status, json.loads(body_str)
+            except Exception:
+                return resp.status, body_str
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        try:
+            return e.code, json.loads(err_body)
+        except Exception:
+            return e.code, err_body
+    except Exception as e:
+        return 0, str(e)
+
+
 # ----------------------------------------------------------------------
 # CLI Subcommand Handlers
 # ----------------------------------------------------------------------
@@ -677,14 +705,26 @@ def handle_agent(args, cfg: dict):
     return 0
 
 
-def handle_surface(args, cfg: dict):
-    """Surface registration subcommand."""
+def handle_surface(args, cfg: dict) -> int:
+    """Surface device operations (register, pair, approve, list, revoke)."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    token = (getattr(args, "token", None) or
+             cfg.get("token") or
+             cfg.get("user_token") or
+             cfg.get("agent_token"))
+    if not token and getattr(args, "token_file", None):
+        try:
+            token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    active_user = getattr(args, "active_user", None) or cfg.get("user_id")
+    active_agent = getattr(args, "active_agent", None) or cfg.get("agent_id")
+    headers = get_auth_headers(token, active_user=active_user, active_agent=active_agent)
+
     if args.surface_action == "register":
         name = args.name
         stype = args.type
         context_id = args.context
-        connect_url = (args.connect or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
-        token = args.token or cfg.get("token")
 
         cap = {"surface_type": stype}
         if getattr(args, "capabilities", None):
@@ -700,7 +740,6 @@ def handle_surface(args, cfg: dict):
             "capabilities": cap
         }
 
-        headers = get_auth_headers(token)
         req_url = f"{connect_url}/api/v1/context/register"
         data_bytes = json.dumps(payload).encode("utf-8")
         try:
@@ -718,7 +757,141 @@ def handle_surface(args, cfg: dict):
             print(f"Error connecting to {req_url}: {e}", file=sys.stderr)
             return 1
 
-    return 0
+    elif args.surface_action == "pair":
+        req_url = f"{connect_url}/api/v1/surface/pair/request"
+        payload = {"surface_type": args.type}
+        if getattr(args, "name", None):
+            payload["suggested_id"] = args.name
+        if getattr(args, "client_app", None):
+            payload["client_app"] = args.client_app
+
+        st, resp_data = http_request_json(req_url, method="POST", payload=payload, headers=headers)
+        if st not in (200, 201):
+            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
+            print(f"Error requesting surface pairing: HTTP {st}: {err_msg}", file=sys.stderr)
+            return 1
+
+        pairing_id = resp_data.get("pairing_id", "")
+        pin = resp_data.get("pin", "")
+        expires_at = resp_data.get("expires_at", "")
+        pair_url = f"{connect_url}/pair?id={pairing_id}&pin={pin}"
+
+        print("=" * 70)
+        print("AGENTIC BLACKBOARD SURFACE PAIRING")
+        print("=" * 70)
+        print(f"Pairing ID: {pairing_id}")
+        print(f"PIN:        {pin}")
+        print(f"Expires at: {expires_at}")
+        print(f"URL:        {pair_url}")
+        print("=" * 70)
+
+        try:
+            import qrcode
+            import io
+            qr = qrcode.QRCode()
+            qr.add_data(pair_url)
+            f = io.StringIO()
+            qr.print_ascii(out=f, invert=True)
+            print(f.getvalue())
+        except Exception:
+            frame_width = max(len(pair_url) + 4, 70)
+            print("+" + "-" * (frame_width - 2) + "+")
+            print(f"| Scan or open pairing URL on surface device:".ljust(frame_width - 1) + "|")
+            print(f"| {pair_url}".ljust(frame_width - 1) + "|")
+            print(f"| Enter PIN: {pin}".ljust(frame_width - 1) + "|")
+            print("+" + "-" * (frame_width - 2) + "+")
+        return 0
+
+    elif args.surface_action == "approve":
+        req_url = f"{connect_url}/api/v1/surface/pair/approve"
+        payload = {
+            "pairing_id": args.pairing_id,
+            "pin": args.pin,
+            "context_id": getattr(args, "context_id", None) or "ctx-default",
+        }
+        user_id = getattr(args, "user_id", None) or cfg.get("user_id")
+        if user_id:
+            payload["user_id"] = user_id
+        agent_id = getattr(args, "agent_id", None) or cfg.get("agent_id")
+        if agent_id:
+            payload["agent_id"] = agent_id
+        surface_id = getattr(args, "surface_id", None)
+        if surface_id:
+            payload["surface_id"] = surface_id
+
+        st, resp_data = http_request_json(req_url, method="POST", payload=payload, headers=headers)
+        if st not in (200, 201):
+            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
+            print(f"Error approving surface pairing: HTTP {st}: {err_msg}", file=sys.stderr)
+            return 1
+
+        print("Surface pairing approved successfully:")
+        print(f"  Pairing ID: {resp_data.get('pairing_id', args.pairing_id)}")
+        print(f"  Surface ID: {resp_data.get('surface_id', getattr(args, 'surface_id', ''))}")
+        print(f"  Context ID: {resp_data.get('context_id', '')}")
+        if resp_data.get("user_id"):
+            print(f"  User ID:    {resp_data.get('user_id')}")
+        if resp_data.get("agent_id"):
+            print(f"  Agent ID:   {resp_data.get('agent_id')}")
+        return 0
+
+    elif args.surface_action == "list":
+        req_url = f"{connect_url}/api/v1/surface/list"
+        st, resp_data = http_request_json(req_url, method="GET", headers=headers)
+        if st != 200:
+            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
+            print(f"Error listing surfaces: HTTP {st}: {err_msg}", file=sys.stderr)
+            return 1
+
+        output_format = getattr(args, "format", "table") or "table"
+        if output_format == "json":
+            print(json.dumps(resp_data, indent=2))
+            return 0
+
+        surfaces = resp_data.get("surfaces", []) if isinstance(resp_data, dict) else []
+        headers_tbl = ["SURFACE ID", "TYPE", "USER", "AGENT", "CONTEXT", "ENROLLED", "LAST SEEN"]
+        rows = []
+        for s in surfaces:
+            sid = str(s.get("surface_id", ""))
+            stype = str(s.get("surface_type", ""))
+            suser = str(s.get("user_id", ""))
+            sagent = str(s.get("agent_id", ""))
+            sctx = str(s.get("context_id", ""))
+            enrolled_ts = s.get("enrolled_at", 0)
+            last_ts = s.get("last_seen", 0)
+            senrolled = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(enrolled_ts))) if enrolled_ts else "never"
+            slast = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(last_ts))) if last_ts else "never"
+            rows.append([sid, stype, suser, sagent, sctx, senrolled, slast])
+
+        col_widths = [len(h) for h in headers_tbl]
+        for r in rows:
+            for i, val in enumerate(r):
+                col_widths[i] = max(col_widths[i], len(val))
+
+        header_line = " | ".join(f"{h:<{w}}" for h, w in zip(headers_tbl, col_widths))
+        sep_line = "-+-".join("-" * w for w in col_widths)
+        print(header_line)
+        print(sep_line)
+        for r in rows:
+            print(" | ".join(f"{val:<{w}}" for val, w in zip(r, col_widths)))
+        return 0
+
+    elif args.surface_action == "revoke":
+        surface_id = args.surface_id
+        encoded_sid = urllib.parse.quote(surface_id, safe=":")
+        req_url = f"{connect_url}/api/v1/surface/{encoded_sid}"
+        st, resp_data = http_request_json(req_url, method="DELETE", headers=headers)
+        if st != 200:
+            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
+            print(f"Error revoking surface '{surface_id}': HTTP {st}: {err_msg}", file=sys.stderr)
+            return 1
+
+        print(f"Surface '{surface_id}' revoked successfully.")
+        return 0
+
+    else:
+        print(f"Unknown surface action: {args.surface_action}", file=sys.stderr)
+        return 1
 
 
 def handle_context(args, cfg: dict):
@@ -775,33 +948,6 @@ def handle_context(args, cfg: dict):
 # ----------------------------------------------------------------------
 # Swarm Coordination & Core Lease Management Helpers and Handlers
 # ----------------------------------------------------------------------
-
-def http_request_json(url: str, method: str = "GET", payload: dict | list | None = None,
-                      headers: dict | None = None, timeout: float = 10.0) -> tuple[int, dict | list | str]:
-    """Execute HTTP request and return (status_code, parsed_body_or_raw_str)."""
-    h = dict(headers or {})
-    data_bytes = None
-    if payload is not None:
-        data_bytes = json.dumps(payload).encode("utf-8")
-        if "Content-Type" not in h:
-            h["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(url, data=data_bytes, headers=h, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body_str = resp.read().decode("utf-8", errors="replace")
-            try:
-                return resp.status, json.loads(body_str)
-            except Exception:
-                return resp.status, body_str
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="replace")
-        try:
-            return e.code, json.loads(err_body)
-        except Exception:
-            return e.code, err_body
-    except Exception as e:
-        return 0, str(e)
 
 
 def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, active_agent: str | None = None) -> dict:
@@ -2722,6 +2868,13 @@ def main():
     agent_create.add_argument("--connect", help="Daemon connect URL")
     agent_create.add_argument("--data-dir", help="Data directory path")
 
+    def add_net_args(p: argparse.ArgumentParser):
+        p.add_argument("--connect", help="Daemon connect URL")
+        p.add_argument("--token", help="Bearer authorization token")
+        p.add_argument("--token-file", help="Path to file containing authorization token")
+        p.add_argument("--active-user", help="X-Active-User header identity")
+        p.add_argument("--active-agent", help="X-Active-Agent header identity")
+
     # 5. surface
     surface_p = subparsers.add_parser("surface", help="Surface device operations")
     surface_sub = surface_p.add_subparsers(dest="surface_action", required=True)
@@ -2734,6 +2887,29 @@ def main():
     surface_reg.add_argument("--token", help="Bearer authorization token")
     surface_reg.add_argument("--token-file", help="Path to file containing authorization token")
     surface_reg.add_argument("--connect", help="Daemon connect URL")
+
+    pair_p = surface_sub.add_parser("pair", help="Request ephemeral PIN pairing for ambient surface device")
+    pair_p.add_argument("--type", required=True, help="Surface device type (e.g. tabletop, tablet, wall, mobile)")
+    pair_p.add_argument("--name", default=None, help="Suggested surface name/id")
+    pair_p.add_argument("--client-app", help="Client application name")
+    add_net_args(pair_p)
+
+    approve_p = surface_sub.add_parser("approve", help="Approve ambient surface device pairing request")
+    approve_p.add_argument("pairing_id", help="Pairing session ID (pair_...)")
+    approve_p.add_argument("--pin", required=True, help="6-digit pairing PIN displayed on surface")
+    approve_p.add_argument("--surface-id", help="Explicit canonical surface ID to assign (e.g. surface:living-table)")
+    approve_p.add_argument("--context-id", default="ctx-default", help="Workspace context ID to bind (default: ctx-default)")
+    approve_p.add_argument("--user-id", help="Authorizing user ID (defaults to active user or config)")
+    approve_p.add_argument("--agent-id", help="Bound agent ID (defaults to active agent or config)")
+    add_net_args(approve_p)
+
+    list_p = surface_sub.add_parser("list", help="List enrolled surface devices")
+    list_p.add_argument("--format", choices=["table", "json"], default="table", help="Output format (table or json)")
+    add_net_args(list_p)
+
+    revoke_p = surface_sub.add_parser("revoke", help="Revoke access and authorization for an enrolled surface")
+    revoke_p.add_argument("surface_id", help="Canonical ID of the surface to revoke (e.g. surface:living-table)")
+    add_net_args(revoke_p)
 
     # 6. context
     context_p = subparsers.add_parser("context", help="Workspace context broker operations")
@@ -2760,13 +2936,6 @@ def main():
     mcp_run.add_argument("--token", help="Bearer authorization token")
     mcp_run.add_argument("--token-file", help="Path to file containing authorization token")
     mcp_run.add_argument("--smoke-test", action="store_true", help="Run self-test of MCP tools and exit 0")
-
-    def add_net_args(p: argparse.ArgumentParser):
-        p.add_argument("--connect", help="Daemon connect URL")
-        p.add_argument("--token", help="Bearer authorization token")
-        p.add_argument("--token-file", help="Path to file containing authorization token")
-        p.add_argument("--active-user", help="X-Active-User header identity")
-        p.add_argument("--active-agent", help="X-Active-Agent header identity")
 
     # 8. swarm
     swarm_p = subparsers.add_parser("swarm", help="Swarm coordination, task DAG, and lease management")
