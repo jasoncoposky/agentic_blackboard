@@ -59,6 +59,7 @@ struct EnrolledSurface {
     std::string context_id;
     std::string token_hash;
     int64_t enrolled_at_sec{0};
+    int64_t last_seen_sec{0};
 };
 
 struct SseClientSession {

@@ -100,6 +100,13 @@ bool ContextBroker::register_surface(const std::string& context_id,
         ContextRecord& ctx = contexts_[context_id];
         ctx.context_id = context_id;
         ctx.surfaces[surface_id] = info;
+
+        auto it = enrolled_surfaces_.find(surface_id);
+        if (it != enrolled_surfaces_.end()) {
+            it->second.last_seen_sec = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            save_enrolled_surfaces_to_store();
+        }
     }
 
     out_resp = {
@@ -159,6 +166,14 @@ bool ContextBroker::update_focus(const std::string& context_id,
         }
         if (!ctx.focus.contains("context_id")) {
             ctx.focus["context_id"] = context_id;
+        }
+        if (!surface_id.empty()) {
+            auto it = enrolled_surfaces_.find(surface_id);
+            if (it != enrolled_surfaces_.end()) {
+                it->second.last_seen_sec = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count();
+                save_enrolled_surfaces_to_store();
+            }
         }
         out_broadcast_payload = ctx.focus;
     }
@@ -257,11 +272,16 @@ void ContextBroker::set_blackboard(Blackboard* bb) {
                     try {
                         js = lite3cpp::lite3_json::to_json_string(buf, 0);
                     } catch (...) {}
-                    if (js.empty()) {
+                    if (js.empty() || js == "[]" || js == "{}" || js == "null") {
                         js = std::string(reinterpret_cast<const char*>(buf.data()), buf.size());
                     }
-                    if (!js.empty()) {
-                        auto arr = nlohmann::json::parse(js);
+                    size_t start = js.find_first_not_of(" \t\r\n");
+                    if (start != std::string::npos) {
+                        js = js.substr(start);
+                    }
+                    if (!js.empty() && (js[0] == '[' || js[0] == '{')) {
+                        auto parsed = nlohmann::json::parse(js);
+                        auto arr = parsed.is_array() ? parsed : (parsed.contains("surfaces") && parsed["surfaces"].is_array() ? parsed["surfaces"] : nlohmann::json::array());
                         if (arr.is_array()) {
                             std::lock_guard<std::mutex> lock(mutex_);
                             for (const auto& item : arr) {
@@ -274,6 +294,10 @@ void ContextBroker::set_blackboard(Blackboard* bb) {
                                 s.context_id = item.value("context_id", "");
                                 s.token_hash = item.value("token_hash", "");
                                 s.enrolled_at_sec = item.value("enrolled_at", 0LL);
+                                s.last_seen_sec = item.value("last_seen", 0LL);
+                                if (s.last_seen_sec == 0) {
+                                    s.last_seen_sec = s.enrolled_at_sec;
+                                }
                                 if (!s.surface_id.empty()) {
                                     enrolled_surfaces_[s.surface_id] = s;
                                 }
@@ -300,10 +324,11 @@ void ContextBroker::save_enrolled_surfaces_to_store() {
             {"agent_id", s.agent_id},
             {"context_id", s.context_id},
             {"token_hash", s.token_hash},
-            {"enrolled_at", s.enrolled_at_sec}
+            {"enrolled_at", s.enrolled_at_sec},
+            {"last_seen", s.last_seen_sec}
         });
     }
-    store->put("auth:registry:surfaces", arr.dump());
+    store->put("auth:registry:surfaces", " " + arr.dump());
     store->wait_all_shards();
 }
 
@@ -319,9 +344,11 @@ bool ContextBroker::request_surface_pairing(const std::string& surface_type,
     std::string pin = pin_buf;
 
     std::uniform_int_distribution<uint64_t> hex_dist;
-    uint64_t r_id = hex_dist(gen);
+    uint64_t r1 = hex_dist(gen);
+    uint64_t r2 = hex_dist(gen);
     std::ostringstream pid_oss;
-    pid_oss << "pair-" << std::hex << std::setw(16) << std::setfill('0') << r_id;
+    pid_oss << "pair_" << std::hex << std::setw(16) << std::setfill('0') << r1
+            << std::setw(16) << std::setfill('0') << r2;
     std::string pairing_id = pid_oss.str();
 
     auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -342,6 +369,13 @@ bool ContextBroker::request_surface_pairing(const std::string& surface_type,
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        for (auto it = pairing_sessions_.begin(); it != pairing_sessions_.end(); ) {
+            if (now > it->second.expires_at_sec || it->second.claimed) {
+                it = pairing_sessions_.erase(it);
+            } else {
+                ++it;
+            }
+        }
         pairing_sessions_[pairing_id] = session;
     }
 
@@ -380,9 +414,15 @@ bool ContextBroker::approve_surface_pairing(const std::string& pairing_id,
         }
 
         auto& session = it->second;
+        if (session.claimed) {
+            out_resp = {{"error", "Pairing session already claimed or expired"}};
+            return false;
+        }
+
         now = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         if (now > session.expires_at_sec) {
+            pairing_sessions_.erase(it);
             out_resp = {{"error", "Pairing session expired"}};
             return false;
         }
@@ -442,6 +482,7 @@ bool ContextBroker::approve_surface_pairing(const std::string& pairing_id,
         enrolled.context_id = context_id;
         enrolled.token_hash = token_hash;
         enrolled.enrolled_at_sec = now;
+        enrolled.last_seen_sec = now;
         enrolled_surfaces_[actual_surface_id] = enrolled;
         save_enrolled_surfaces_to_store();
     }
@@ -486,6 +527,11 @@ bool ContextBroker::claim_surface_pairing(const std::string& pairing_id,
     }
 
     auto& session = it->second;
+    if (session.claimed) {
+        out_resp = {{"error", "Pairing session already claimed or expired"}};
+        return false;
+    }
+
     if (!session.approved) {
         out_resp = {{"error", "Pairing session not yet approved"}};
         return false;
@@ -494,6 +540,7 @@ bool ContextBroker::claim_surface_pairing(const std::string& pairing_id,
     auto now = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     if (now > session.expires_at_sec) {
+        pairing_sessions_.erase(it);
         out_resp = {{"error", "Pairing session expired"}};
         return false;
     }
@@ -508,6 +555,7 @@ bool ContextBroker::claim_surface_pairing(const std::string& pairing_id,
         {"agent_id", session.approved_agent_id},
         {"context_id", session.assigned_context_id}
     };
+    pairing_sessions_.erase(it);
     return true;
 }
 
@@ -523,7 +571,8 @@ bool ContextBroker::list_enrolled_surfaces(const std::string& user_id, nlohmann:
                 {"user_id", s.user_id},
                 {"agent_id", s.agent_id},
                 {"context_id", s.context_id},
-                {"enrolled_at", s.enrolled_at_sec}
+                {"enrolled_at", s.enrolled_at_sec},
+                {"last_seen", s.last_seen_sec}
             });
         }
     }
