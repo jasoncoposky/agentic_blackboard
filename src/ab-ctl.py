@@ -550,40 +550,44 @@ def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: 
     }
     status, res = http_request_json(node_url, method="POST", payload=payload, headers=headers)
     if status in (200, 201):
-        return True, ""
-
-    # Fallback to /api/v1/graph/bundle for daemons requiring atomic bundle format
-    if status in (400, 500):
-        bundle_url = f"{connect_url}/api/v1/graph/bundle"
-        project_id = metadata.get("context_id") or "default-swarm"
-        agent_id = metadata.get("agent_id") or headers.get("X-Active-Agent") or "cpg-swarm-agent"
-        user_id = headers.get("X-Active-User") or "cpg-swarm-user"
-
-        atom = {
-            "uuid": node_id,
-            "header": {
-                "uuid": node_id,
-                "origin": {
-                    "project_id": project_id,
-                    "agent_id": agent_id,
-                    "user_id": user_id,
-                    "context_id": metadata.get("context_id", ""),
-                }
-            },
-            "payload": {
-                "statement": metadata.get("name") or metadata.get("statement") or node_id,
-                "content": json.dumps(metadata)
-            },
-            "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in metadata.items()}
-        }
-        b_payload = {
-            "project_id": project_id,
-            "agent_id": agent_id,
-            "atoms": [atom]
-        }
-        b_status, b_res = http_request_json(bundle_url, method="POST", payload=b_payload, headers=headers)
-        if b_status in (200, 201):
+        if not (isinstance(res, dict) and res.get("status") == "EXISTS"):
             return True, ""
+
+    # Fallback to /api/v1/graph/bundle for daemons requiring atomic bundle format or updating existing atoms
+    bundle_url = f"{connect_url}/api/v1/graph/bundle"
+    project_id = metadata.get("context_id") or "default-swarm"
+    agent_id = metadata.get("agent_id") or headers.get("X-Active-Agent") or "cpg-swarm-agent"
+    user_id = headers.get("X-Active-User") or "cpg-swarm-user"
+
+    if "type" not in metadata:
+        metadata = dict(metadata)
+        metadata["type"] = node_type
+
+    atom = {
+        "uuid": node_id,
+        "header": {
+            "uuid": node_id,
+            "origin": {
+                "project_id": project_id,
+                "agent_id": agent_id,
+                "user_id": user_id,
+                "context_id": metadata.get("context_id", ""),
+            }
+        },
+        "payload": {
+            "statement": metadata.get("name") or metadata.get("statement") or node_id,
+            "content": json.dumps(metadata)
+        },
+        "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in metadata.items()}
+    }
+    b_payload = {
+        "project_id": project_id,
+        "agent_id": agent_id,
+        "atoms": [atom]
+    }
+    b_status, b_res = http_request_json(bundle_url, method="POST", payload=b_payload, headers=headers)
+    if b_status in (200, 201):
+        return True, ""
 
     return False, str(res)
 
@@ -608,8 +612,8 @@ def extract_node_metadata(node_data: dict) -> dict:
             meta_copy["status"] = node_data["status"]
         if "lease" not in meta_copy and "lease" in node_data:
             meta_copy["lease"] = node_data["lease"]
-        if "context_id" not in meta_copy and "context_id" in node_data:
-            meta_copy["context_id"] = node_data["context_id"]
+        if "context_id" not in meta_copy:
+            meta_copy["context_id"] = node_data.get("context_id") or node_data.get("project", "")
         return meta_copy
 
     attributes = node_data.get("attributes", {})
@@ -622,14 +626,24 @@ def extract_node_metadata(node_data: dict) -> dict:
                 constructed[k] = v
         if "status" in node_data and "status" not in constructed:
             constructed["status"] = node_data["status"]
+        if "lease" not in constructed and "lease" in node_data:
+            constructed["lease"] = node_data["lease"]
+        if "context_id" not in constructed:
+            constructed["context_id"] = node_data.get("context_id") or node_data.get("project", "")
         if "status" in constructed:
             return constructed
 
     content = node_data.get("content", "")
-    if isinstance(content, str) and content.startswith("{"):
+    if isinstance(content, str) and content.strip().startswith("{"):
         try:
             parsed = json.loads(content)
-            if isinstance(parsed, dict) and "status" in parsed:
+            if isinstance(parsed, dict) and parsed:
+                if "status" not in parsed and "status" in node_data:
+                    parsed["status"] = node_data["status"]
+                if "lease" not in parsed and "lease" in node_data:
+                    parsed["lease"] = node_data["lease"]
+                if "context_id" not in parsed:
+                    parsed["context_id"] = node_data.get("context_id") or node_data.get("project", "")
                 return parsed
         except Exception:
             pass
@@ -641,7 +655,7 @@ def extract_node_metadata(node_data: dict) -> dict:
         "lease": node_data.get("lease", {}),
         "depends_on": node_data.get("depends_on", []),
         "name": node_data.get("label") or node_data.get("statement") or node_data.get("id"),
-        "context_id": node_data.get("context_id", ""),
+        "context_id": node_data.get("context_id") or node_data.get("project", ""),
     }
 
 
@@ -722,6 +736,9 @@ def handle_swarm_task_create(args, cfg: dict) -> int:
     workflow = getattr(args, "workflow", "feature") or "feature"
     symbols_raw = getattr(args, "symbols", "") or ""
     depends_raw = getattr(args, "depends_on", "") or ""
+    blast_radius = getattr(args, "blast_radius", 2)
+    if blast_radius is None:
+        blast_radius = 2
 
     symbols = [s.strip() for s in symbols_raw.split(",") if s.strip()]
     depends_on = [d.strip() for d in depends_raw.split(",") if d.strip()]
@@ -735,12 +752,14 @@ def handle_swarm_task_create(args, cfg: dict) -> int:
             task_id = f"task-{secrets.token_hex(4)}"
 
     task_meta = {
+        "type": "task",
         "name": name,
         "workflow": workflow,
         "target_symbols": symbols,
         "status": "READY",
         "context_id": context_id,
         "agent_id": agent_id,
+        "blast_radius_k": blast_radius,
         "lease": {
             "holder": None,
             "expires_at": 0
@@ -756,7 +775,8 @@ def handle_swarm_task_create(args, cfg: dict) -> int:
 
     # Create DEPENDS_ON edges to prerequisite tasks
     for dep_id in depends_on:
-        create_graph_link(connect_url, headers, task_id, dep_id, "DEPENDS_ON")
+        if not create_graph_link(connect_url, headers, task_id, dep_id, "DEPENDS_ON"):
+            print(f"Warning: Failed to create DEPENDS_ON link from {task_id} to {dep_id}", file=sys.stderr)
 
     print(f"Task created: {task_id} (Name: {name}, Status: READY)")
     if depends_on:
@@ -773,6 +793,24 @@ def handle_swarm_task_list(args, cfg: dict) -> int:
 
     tasks_map = {}
 
+    def _is_task_node(item_id: str, item_data: dict, meta: dict) -> bool:
+        if str(item_id).startswith(("req-", "sol-", "proof-", "counter-", "acc-")):
+            return False
+        node_type = item_data.get("type") or meta.get("type")
+        if node_type == "requirement":
+            return False
+        return True
+
+    def _extract_search_items(search_resp: dict) -> list:
+        if not isinstance(search_resp, dict):
+            return []
+        items = search_resp.get("matches")
+        if items is None:
+            items = search_resp.get("results")
+        if isinstance(items, list):
+            return items
+        return []
+
     # Query context endpoint
     ctx_url = f"{connect_url}/api/v1/context/{urllib.parse.quote(context_id)}"
     st, ctx_data = http_request_json(ctx_url, method="GET", headers=headers)
@@ -780,21 +818,26 @@ def handle_swarm_task_list(args, cfg: dict) -> int:
         for item in ctx_data.get("tasks", []):
             tid = item.get("id") or item.get("uuid")
             if tid:
-                tasks_map[tid] = item
+                meta = extract_node_metadata(item)
+                if _is_task_node(tid, item, meta):
+                    tasks_map[tid] = item
         for item in ctx_data.get("nodes", []):
             tid = item.get("id") or item.get("uuid")
-            if tid and (item.get("type") == "task" or "task" in tid.lower()):
-                tasks_map[tid] = item
+            if tid:
+                meta = extract_node_metadata(item)
+                if _is_task_node(tid, item, meta) and (item.get("type") == "task" or "task" in tid.lower()):
+                    tasks_map[tid] = item
 
     # Query search endpoint by context
     search_url = f"{connect_url}/api/v1/search?q={urllib.parse.quote(context_id)}"
     st, search_data = http_request_json(search_url, method="GET", headers=headers)
     if st == 200 and isinstance(search_data, dict):
-        for item in search_data.get("results", []):
+        for item in _extract_search_items(search_data):
             tid = item.get("id") or item.get("uuid")
             if tid:
-                meta = item.get("metadata", {})
-                if meta.get("context_id") == context_id or item.get("context_id") == context_id:
+                meta = extract_node_metadata(item)
+                item_ctx = meta.get("context_id") or item.get("context_id") or item.get("project")
+                if (not item_ctx or item_ctx == context_id) and _is_task_node(tid, item, meta):
                     tasks_map[tid] = item
 
     # General search fallback if empty
@@ -802,11 +845,13 @@ def handle_swarm_task_list(args, cfg: dict) -> int:
         all_url = f"{connect_url}/api/v1/search?q="
         st, all_data = http_request_json(all_url, method="GET", headers=headers)
         if st == 200 and isinstance(all_data, dict):
-            for item in all_data.get("results", []):
+            for item in _extract_search_items(all_data):
                 tid = item.get("id") or item.get("uuid")
-                meta = item.get("metadata", {})
-                if meta.get("context_id") == context_id or item.get("context_id") == context_id:
-                    tasks_map[tid] = item
+                if tid:
+                    meta = extract_node_metadata(item)
+                    item_ctx = meta.get("context_id") or item.get("context_id") or item.get("project")
+                    if (not item_ctx or item_ctx == context_id) and _is_task_node(tid, item, meta):
+                        tasks_map[tid] = item
 
     task_rows = []
     for tid, node in tasks_map.items():
@@ -889,6 +934,11 @@ def handle_swarm_lease_claim(args, cfg: dict) -> int:
         return 1
 
     metadata = extract_node_metadata(node_data)
+
+    current_status = metadata.get("status", "").upper()
+    if current_status in ("COMPLETED", "VALIDATED"):
+        print(f"[BLOCKED] Cannot claim task {task_id}: task is already {current_status}", file=sys.stderr)
+        return 1
 
     # 2. Fetch links to find prerequisites
     links_data = fetch_node_links(connect_url, headers, task_id, direction="both")
@@ -988,6 +1038,16 @@ def handle_swarm_review_submit(args, cfg: dict) -> int:
     task_meta = extract_node_metadata(node_data)
     context_id = task_meta.get("context_id", "")
 
+    current_status = task_meta.get("status")
+    if current_status != "IN_PROGRESS":
+        print(f"[BLOCKED] Cannot submit review for task {task_id}: status is '{current_status}', expected 'IN_PROGRESS'", file=sys.stderr)
+        return 1
+
+    lease_holder = (task_meta.get("lease") or {}).get("holder")
+    if lease_holder and lease_holder != args.agent:
+        print(f"[BLOCKED] Cannot submit review: Task is leased by '{lease_holder}', not '{args.agent}'", file=sys.stderr)
+        return 1
+
     # 1. Create solution atom
     solution_id = f"sol-{task_id}-{secrets.token_hex(4)}"
     sol_meta = {
@@ -1004,7 +1064,8 @@ def handle_swarm_review_submit(args, cfg: dict) -> int:
         return 1
 
     # 2. Link task -> solution via HAS_SOLUTION
-    create_graph_link(connect_url, headers, task_id, solution_id, "HAS_SOLUTION")
+    if not create_graph_link(connect_url, headers, task_id, solution_id, "HAS_SOLUTION"):
+        print(f"Warning: Failed to create HAS_SOLUTION link from {task_id} to {solution_id}", file=sys.stderr)
 
     # 3. Update task status = REVIEW_PENDING
     task_meta["status"] = "REVIEW_PENDING"
@@ -1055,9 +1116,16 @@ def handle_swarm_review_verdict(args, cfg: dict) -> int:
             print(f"Error creating verification proof atom: {err}", file=sys.stderr)
             return 1
 
-        create_graph_link(connect_url, headers, task_id, proof_id, "VALIDATED_BY")
+        if not create_graph_link(connect_url, headers, task_id, proof_id, "VALIDATED_BY"):
+            print(f"Warning: Failed to create VALIDATED_BY link from {task_id} to {proof_id}", file=sys.stderr)
 
         task_meta["status"] = "VALIDATED"
+        if "lease" in task_meta and isinstance(task_meta["lease"], dict):
+            task_meta["lease"]["holder"] = None
+            task_meta["lease"]["expires_at"] = 0
+        else:
+            task_meta["lease"] = {"holder": None, "expires_at": 0}
+
         ok, err = commit_graph_node(connect_url, headers, "task", task_id, task_meta)
         if not ok:
             print(f"Error updating task status: {err}", file=sys.stderr)
@@ -1081,7 +1149,8 @@ def handle_swarm_review_verdict(args, cfg: dict) -> int:
             print(f"Error creating counterexample trace atom: {err}", file=sys.stderr)
             return 1
 
-        create_graph_link(connect_url, headers, task_id, counter_id, "REFUTES")
+        if not create_graph_link(connect_url, headers, task_id, counter_id, "REFUTES"):
+            print(f"Warning: Failed to create REFUTES link from {task_id} to {counter_id}", file=sys.stderr)
 
         task_meta["status"] = "READY"
         if "lease" in task_meta and isinstance(task_meta["lease"], dict):
@@ -1115,6 +1184,11 @@ def handle_swarm_accept(args, cfg: dict) -> int:
         return 1
 
     task_meta = extract_node_metadata(node_data)
+    task_status = task_meta.get("status")
+    if task_status != "VALIDATED":
+        print(f"[BLOCKED] Cannot accept task {task_id}: status is '{task_status}', expected 'VALIDATED'", file=sys.stderr)
+        return 1
+
     context_id = task_meta.get("context_id", "")
 
     acc_id = f"acc-{task_id}-{secrets.token_hex(4)}"
@@ -1130,7 +1204,8 @@ def handle_swarm_accept(args, cfg: dict) -> int:
         print(f"Error creating acceptance record: {err}", file=sys.stderr)
         return 1
 
-    create_graph_link(connect_url, headers, task_id, acc_id, "ACCEPTS")
+    if not create_graph_link(connect_url, headers, task_id, acc_id, "ACCEPTS"):
+        print(f"Warning: Failed to create ACCEPTS link from {task_id} to {acc_id}", file=sys.stderr)
 
     task_meta["status"] = "COMPLETED"
     ok, err = commit_graph_node(connect_url, headers, "task", task_id, task_meta)
@@ -1720,6 +1795,7 @@ def main():
     task_create_p.add_argument("--workflow", default="feature", help="Workflow type (feature, bugfix, refactoring)")
     task_create_p.add_argument("--symbols", default="", help="Comma-separated target symbols")
     task_create_p.add_argument("--depends-on", default="", help="Comma-separated prerequisite task IDs")
+    task_create_p.add_argument("--blast-radius", "-k", type=int, default=2, help="CPG blast radius k-hop distance")
     task_create_p.add_argument("--agent", default="cpg-architect", help="Author agent ID (default: cpg-architect)")
     add_net_args(task_create_p)
 

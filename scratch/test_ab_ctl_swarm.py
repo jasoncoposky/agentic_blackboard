@@ -68,11 +68,6 @@ class MockBlackboardHandler(http.server.BaseHTTPRequestHandler):
                 "active_surfaces": [],
                 "focus": {"selected": []}
             })
-            # Also attach tasks in this context
-            tasks = [n for n in self.server.nodes.values()
-                     if n.get("metadata", {}).get("context_id") == context_id
-                     or n.get("context_id") == context_id]
-            ctx["tasks"] = tasks
             self._send_json(200, ctx)
             return
 
@@ -115,14 +110,16 @@ class MockBlackboardHandler(http.server.BaseHTTPRequestHandler):
 
         if path == "/api/v1/search":
             q = query.get("q", [""])[0].lower()
-            results = []
+            matches = []
             for n in self.server.nodes.values():
                 name = str(n.get("metadata", {}).get("name", "")).lower()
                 nid = str(n.get("id", "")).lower()
                 stmt = str(n.get("statement", "")).lower()
-                if not q or q in name or q in nid or q in stmt:
-                    results.append(n)
-            self._send_json(200, {"results": results, "count": len(results)})
+                cid = str(n.get("metadata", {}).get("context_id", "")).lower()
+                content = str(n.get("content", "")).lower()
+                if not q or q in name or q in nid or q in stmt or q in cid or q in content:
+                    matches.append(n)
+            self._send_json(200, {"matches": matches, "count": len(matches)})
             return
 
         self._send_text(404, f"Unknown GET route: {path}")
@@ -266,9 +263,10 @@ def main():
         assert meta1.get("status") == "READY"
         assert meta1.get("workflow") == "feature"
         assert "tls_init" in meta1.get("target_symbols", [])
-        print("[PASS] swarm task create created Task-1 in READY state.")
+        assert meta1.get("blast_radius_k") == 2
+        print("[PASS] swarm task create created Task-1 in READY state with default blast-radius=2.")
 
-        # Step 4: ab-ctl swarm task create (Task-2 depending on Task-1)
+        # Step 4: ab-ctl swarm task create (Task-2 depending on Task-1 with -k 3)
         print("\n--- Test 4: ab-ctl swarm task create Task-2 with depends-on Task-1 ---")
         proc = run_cli([
             "swarm", "task", "create",
@@ -277,17 +275,20 @@ def main():
             "--workflow", "feature",
             "--symbols", "tls_client_connect",
             "--depends-on", "Task-1",
+            "-k", "3",
             "--agent", "cpg-architect",
             f"--connect={base_url}",
             f"--token={token}"
         ])
         assert proc.returncode == 0
         assert "Task-2" in server.nodes
+        meta2 = server.nodes["Task-2"].get("metadata", {})
+        assert meta2.get("blast_radius_k") == 3
         # Verify DEPENDS_ON link was created
         dep_links = [l for l in server.links if l["label"] == "DEPENDS_ON"]
         assert len(dep_links) > 0
         assert any(l["source"] == "Task-2" and l["target"] == "Task-1" for l in dep_links)
-        print("[PASS] swarm task create created Task-2 and linked DEPENDS_ON Task-1.")
+        print("[PASS] swarm task create created Task-2 and linked DEPENDS_ON Task-1 with blast-radius=3.")
 
         # Step 5: ab-ctl swarm task list (table & json format)
         print("\n--- Test 5: ab-ctl swarm task list ---")
@@ -357,14 +358,39 @@ def main():
         assert meta_rel.get("lease", {}).get("holder") is None
         print("[PASS] swarm lease release reset status=READY and cleared lease holder.")
 
-        # Step 9: Re-claim Task-1 and submit review
-        print("\n--- Test 9: ab-ctl swarm review submit Task-1 ---")
+        # Step 9: Invariant checks & submit review
+        print("\n--- Test 9: ab-ctl swarm review submit Task-1 (precondition checks & submit) ---")
+        # Precondition check 1: submit review when task is READY (must fail)
+        proc_premature_rev = run_cli([
+            "swarm", "review", "submit", "Task-1",
+            "--agent", "worker-alpha",
+            "--patch", "Premature patch",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_premature_rev.returncode != 0
+        assert "expected 'IN_PROGRESS'" in (proc_premature_rev.stderr + proc_premature_rev.stdout)
+
+        # Claim Task-1 with worker-alpha
         run_cli([
             "swarm", "lease", "claim", "Task-1",
             "--agent", "worker-alpha",
             f"--connect={base_url}",
             f"--token={token}"
         ])
+
+        # Precondition check 2: submit review by non-holder worker-gamma (must fail)
+        proc_wrong_agent = run_cli([
+            "swarm", "review", "submit", "Task-1",
+            "--agent", "worker-gamma",
+            "--patch", "Wrong agent patch",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_wrong_agent.returncode != 0
+        assert "leased by 'worker-alpha', not 'worker-gamma'" in (proc_wrong_agent.stderr + proc_wrong_agent.stdout)
+
+        # Submit review by worker-alpha (must succeed)
         proc_review = run_cli([
             "swarm", "review", "submit", "Task-1",
             "--agent", "worker-alpha",
@@ -379,7 +405,7 @@ def main():
         sol_links = [l for l in server.links if l["label"] == "HAS_SOLUTION"]
         assert len(sol_links) > 0
         assert any(l["source"] == "Task-1" for l in sol_links)
-        print("[PASS] swarm review submit marked status=REVIEW_PENDING and created solution atom.")
+        print("[PASS] swarm review submit preconditions and submission verified.")
 
         # Step 10: Dialectic Verdict FAIL
         print("\n--- Test 10: ab-ctl swarm review verdict FAIL ---")
@@ -426,13 +452,35 @@ def main():
         assert proc_pass.returncode == 0
         t1_passed = server.nodes["Task-1"]
         assert t1_passed.get("metadata", {}).get("status") == "VALIDATED"
+        assert t1_passed.get("metadata", {}).get("lease", {}).get("holder") is None
+        assert t1_passed.get("metadata", {}).get("lease", {}).get("expires_at") == 0
         val_links = [l for l in server.links if l["label"] == "VALIDATED_BY"]
         assert len(val_links) > 0
         assert any(l["source"] == "Task-1" for l in val_links)
-        print("[PASS] swarm review verdict PASS attached VALIDATED_BY and marked status=VALIDATED.")
+
+        # Precondition check: Cannot claim lease on VALIDATED task
+        proc_claim_val = run_cli([
+            "swarm", "lease", "claim", "Task-1",
+            "--agent", "worker-alpha",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_claim_val.returncode != 0
+        assert "task is already VALIDATED" in (proc_claim_val.stderr + proc_claim_val.stdout)
+        print("[PASS] swarm review verdict PASS cleared lease, set VALIDATED, and blocked re-claim.")
 
         # Step 12: Stakeholder acceptance
         print("\n--- Test 12: ab-ctl swarm accept Task-1 ---")
+        # Precondition check: Cannot accept unvalidated task (Task-2 is READY)
+        proc_premature_acc = run_cli([
+            "swarm", "accept", "Task-2",
+            "--stakeholder", "cpg-stakeholder-01",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_premature_acc.returncode != 0
+        assert "status is 'READY', expected 'VALIDATED'" in (proc_premature_acc.stderr + proc_premature_acc.stdout)
+
         proc_acc = run_cli([
             "swarm", "accept", "Task-1",
             "--stakeholder", "cpg-stakeholder-01",
@@ -446,7 +494,17 @@ def main():
         acc_links = [l for l in server.links if l["label"] == "ACCEPTS"]
         assert len(acc_links) > 0
         assert any(l["source"] == "Task-1" or l["target"] == "Task-1" for l in acc_links)
-        print("[PASS] swarm accept marked status=COMPLETED and attached ACCEPTS link.")
+
+        # Precondition check: Cannot claim lease on COMPLETED task
+        proc_claim_comp = run_cli([
+            "swarm", "lease", "claim", "Task-1",
+            "--agent", "worker-alpha",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_claim_comp.returncode != 0
+        assert "task is already COMPLETED" in (proc_claim_comp.stderr + proc_claim_comp.stdout)
+        print("[PASS] swarm accept marked status=COMPLETED and enforced validation invariants.")
 
         # Step 13: Claim Task-2 (MUST SUCCEED NOW that Task-1 is COMPLETED)
         print("\n--- Test 13: ab-ctl swarm lease claim Task-2 (unblocked now) ---")
