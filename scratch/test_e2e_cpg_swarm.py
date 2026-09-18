@@ -50,8 +50,8 @@ spec.loader.exec_module(ab_ctl)
 def find_free_port() -> int:
     """Allocate an unused ephemeral TCP port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("", 0))
         return s.getsockname()[1]
 
 
@@ -78,10 +78,22 @@ def run_cli(args: list[str], check: bool = True, env: dict | None = None) -> sub
     return proc
 
 
-def wait_for_daemon(base_url: str, timeout_secs: float = 15.0) -> bool:
+def wait_for_daemon(
+    base_url: str,
+    daemon_proc: subprocess.Popen | None = None,
+    log_path: str | None = None,
+    timeout_secs: float = 15.0,
+) -> bool:
     """Poll daemon schema discovery endpoint until responsive."""
     start = time.time()
     while time.time() - start < timeout_secs:
+        if daemon_proc and daemon_proc.poll() is not None:
+            log_content = ""
+            if log_path and os.path.isfile(log_path):
+                with open(log_path, "r", errors="replace") as f:
+                    log_content = f.read()
+            print(f"[DAEMON CRASHED] Exit code {daemon_proc.returncode}:\n{log_content}")
+            raise RuntimeError(f"Daemon process terminated prematurely with code {daemon_proc.returncode}:\n{log_content}")
         try:
             req = urllib.request.Request(f"{base_url}/api/v1/schema")
             with urllib.request.urlopen(req, timeout=1.0) as resp:
@@ -89,6 +101,9 @@ def wait_for_daemon(base_url: str, timeout_secs: float = 15.0) -> bool:
                     return True
         except Exception:
             time.sleep(0.2)
+    if log_path and os.path.isfile(log_path):
+        with open(log_path, "r", errors="replace") as f:
+            print(f"[DAEMON LOG ON TIMEOUT]:\n{f.read()}")
     return False
 
 
@@ -203,6 +218,7 @@ def main():
     test_port = int(os.environ.get("AB_TEST_PORT", 0)) or find_free_port()
     base_url = f"http://127.0.0.1:{test_port}"
     daemon_proc = None
+    daemon_log_file = None
 
     try:
         # =====================================================================
@@ -231,14 +247,16 @@ def main():
             f"--port={test_port}"
         ]
         print(f"[DAEMON] Spawning: {' '.join(daemon_cmd)}")
+        daemon_log_path = os.path.join(temp_dir, "daemon.log")
+        daemon_log_file = open(daemon_log_path, "w")
         daemon_proc = subprocess.Popen(
             daemon_cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=daemon_log_file,
+            stderr=subprocess.STDOUT,
         )
 
         # Wait for daemon readiness
-        if not wait_for_daemon(base_url, timeout_secs=15.0):
+        if not wait_for_daemon(base_url, daemon_proc=daemon_proc, log_path=daemon_log_path, timeout_secs=15.0):
             raise RuntimeError(f"Daemon failed to initialize on {base_url}")
         print(f"[PASS] Live daemon operational on {base_url} (pid: {daemon_proc.pid})")
 
@@ -317,6 +335,10 @@ def main():
         user_status = run_cli(["status", f"--connect={base_url}", f"--token={user_jason_token}"])
         assert "OPERATIONAL" in user_status.stdout
         print("[PASS] Stakeholder user token successfully authenticated against live daemon.")
+
+        agent_status = run_cli(["status", f"--connect={base_url}", f"--token={worker1_token}"])
+        assert "OPERATIONAL" in agent_status.stdout
+        print("[PASS] Agent token (worker1_token) successfully authenticated against live daemon.")
 
         # =====================================================================
         # Phase 1: Stakeholder Agent (Requirements & Context Initiation)
@@ -639,7 +661,7 @@ def main():
 
         daemon_proc.terminate()
         try:
-            daemon_proc.wait(timeout=3)
+            daemon_proc.wait(timeout=7)
         except Exception:
             daemon_proc.kill()
         daemon_proc = None
@@ -654,9 +676,11 @@ def main():
             print("[CLEANUP] Terminating residual daemon process...")
             daemon_proc.terminate()
             try:
-                daemon_proc.wait(timeout=2)
+                daemon_proc.wait(timeout=7)
             except Exception:
                 daemon_proc.kill()
+        if daemon_log_file is not None and not daemon_log_file.closed:
+            daemon_log_file.close()
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 

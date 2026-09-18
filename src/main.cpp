@@ -90,7 +90,7 @@ int main(int argc, char* argv[]) {
             std::string arg = argv[i];
             if (isdigit(arg[0])) node_id = std::stoi(arg);
             else if (arg.find("--db=") == 0) db_path = arg.substr(5);
-            else if (arg.find("--data-dir=") == 0) db_path = arg.substr(11) + "/ab_db";
+            else if (arg.find("--data-dir=") == 0) db_path = (std::filesystem::path(arg.substr(11)) / "ab_db").string();
             else if (arg.find("--auth-mode=") == 0) auth_mode = arg.substr(12);
             else if (arg.find("--admin-token=") == 0) admin_token = arg.substr(14);
             else if (arg.find("--port=") == 0) port = std::stoi(arg.substr(7));
@@ -238,7 +238,10 @@ int main(int argc, char* argv[]) {
 
         // 5. Governor Loop (System Health Monitoring)
         while (g_running) {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            for (int i = 0; i < 50 && g_running; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            if (!g_running) break;
             
             // Periodically check Swarm Health
             auto raw = store->get(std::string(l3kvg::KeyBuilder::node_key(bb.get_engine()->get_resolver().parse_uuid("governance:swarm_health"))));
