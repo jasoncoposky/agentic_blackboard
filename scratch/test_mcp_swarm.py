@@ -283,6 +283,19 @@ async def run_swarm_mcp_tests(mcp, server, base_url: str, token: str):
     assert any(l["source"] == "Task-B" and l["target"] == "Task-A" for l in dep_links)
     print("[PASS] swarm_create_task Task-B created with DEPENDS_ON link to Task-A.")
 
+    # Test 3b: swarm_create_task with default None lists
+    print("\n--- Test 3b: swarm_create_task Task-Defaults ---")
+    res = await call_tool("swarm_create_task", {
+        "context_id": "ctx-mcp-swarm",
+        "name": "Task-Defaults"
+    })
+    assert res.get("status") == "SUCCESS", f"swarm_create_task Task-Defaults failed: {res}"
+    assert "Task-Defaults" in server.nodes
+    t_def = server.nodes["Task-Defaults"]
+    assert t_def.get("metadata", {}).get("target_symbols") == []
+    assert t_def.get("metadata", {}).get("depends_on") == []
+    print("[PASS] swarm_create_task Task-Defaults created with default empty lists.")
+
     # Test 4: swarm_list_tasks
     print("\n--- Test 4: swarm_list_tasks ---")
     res = await call_tool("swarm_list_tasks", {"context_id": "ctx-mcp-swarm"})
@@ -362,6 +375,17 @@ async def run_swarm_mcp_tests(mcp, server, base_url: str, token: str):
     assert server.nodes["Task-A"].get("metadata", {}).get("status") == "REVIEW_PENDING"
     sol_links = [l for l in server.links if l["label"] == "HAS_SOLUTION"]
     assert any(l["source"] == "Task-A" for l in sol_links)
+
+    # Invariant: cannot claim lease on REVIEW_PENDING task
+    res = await call_tool("swarm_claim_lease", {"task_id": "Task-A", "agent_id": "worker-alpha"})
+    assert res.get("status") == "ERROR", f"Expected error claiming lease on REVIEW_PENDING task: {res}"
+    assert "review_pending" in res.get("message", "").lower()
+
+    # Invariant: cannot release lease on REVIEW_PENDING task
+    res = await call_tool("swarm_release_lease", {"task_id": "Task-A", "agent_id": "worker-alpha"})
+    assert res.get("status") == "ERROR", f"Expected error releasing lease on REVIEW_PENDING task: {res}"
+    assert "review_pending" in res.get("message", "").lower()
+
     print("[PASS] swarm_submit_review verified and marked REVIEW_PENDING.")
 
     # Test 9: Invariant check - cannot record verdict when task is not REVIEW_PENDING
@@ -402,19 +426,26 @@ async def run_swarm_mcp_tests(mcp, server, base_url: str, token: str):
         "task_id": "Task-A",
         "verifier_id": "cpg-verifier-01",
         "verdict": "PASS",
-        "details": '{"violations": 0}'
+        "details": {"violations": 0}
     })
     assert res.get("status") == "SUCCESS", f"swarm_record_verdict PASS failed: {res}"
     assert server.nodes["Task-A"].get("metadata", {}).get("status") == "VALIDATED"
     assert server.nodes["Task-A"].get("metadata", {}).get("lease", {}).get("holder") is None
     val_links = [l for l in server.links if l["label"] == "VALIDATED_BY"]
     assert any(l["source"] == "Task-A" for l in val_links)
+    proof_nodes = [n for n in server.nodes.values() if n.get("type") == "verification_proof"]
+    assert any(n.get("metadata", {}).get("details") == {"violations": 0} for n in proof_nodes)
 
     # Invariant: cannot claim lease on VALIDATED task
     res = await call_tool("swarm_claim_lease", {"task_id": "Task-A", "agent_id": "worker-alpha"})
     assert res.get("status") == "ERROR", f"Expected error claiming lease on VALIDATED task: {res}"
     assert "validated" in res.get("message", "").lower()
-    print("[PASS] swarm_record_verdict PASS validated task and prevented re-claim.")
+
+    # Invariant: cannot release lease on VALIDATED task
+    res = await call_tool("swarm_release_lease", {"task_id": "Task-A", "agent_id": "worker-alpha"})
+    assert res.get("status") == "ERROR", f"Expected error releasing lease on VALIDATED task: {res}"
+    assert "validated" in res.get("message", "").lower()
+    print("[PASS] swarm_record_verdict PASS validated task and prevented re-claim and release.")
 
     # Test 12: swarm_accept_task
     print("\n--- Test 12: swarm_accept_task ---")
@@ -441,6 +472,11 @@ async def run_swarm_mcp_tests(mcp, server, base_url: str, token: str):
     # Invariant: cannot claim lease on COMPLETED task
     res = await call_tool("swarm_claim_lease", {"task_id": "Task-A", "agent_id": "worker-alpha"})
     assert res.get("status") == "ERROR", f"Expected error claiming lease on COMPLETED task: {res}"
+    assert "completed" in res.get("message", "").lower()
+
+    # Invariant: cannot release lease on COMPLETED task
+    res = await call_tool("swarm_release_lease", {"task_id": "Task-A", "agent_id": "worker-alpha"})
+    assert res.get("status") == "ERROR", f"Expected error releasing lease on COMPLETED task: {res}"
     assert "completed" in res.get("message", "").lower()
     print("[PASS] swarm_accept_task accepted Task-A into COMPLETED.")
 

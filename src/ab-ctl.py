@@ -936,7 +936,7 @@ def handle_swarm_lease_claim(args, cfg: dict) -> int:
     metadata = extract_node_metadata(node_data)
 
     current_status = metadata.get("status", "").upper()
-    if current_status in ("COMPLETED", "VALIDATED"):
+    if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING"):
         print(f"[BLOCKED] Cannot claim task {task_id}: task is already {current_status}", file=sys.stderr)
         return 1
 
@@ -999,6 +999,11 @@ def handle_swarm_lease_release(args, cfg: dict) -> int:
         return 1
 
     metadata = extract_node_metadata(node_data)
+    current_status = metadata.get("status", "").upper()
+    if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING"):
+        print(f"[BLOCKED] Cannot release lease on task {task_id}: status is already '{current_status}'", file=sys.stderr)
+        return 1
+
     lease = metadata.get("lease") or {}
     holder = lease.get("holder")
     expires_at = lease.get("expires_at") or 0
@@ -1774,8 +1779,8 @@ def build_mcp_server(connect_url: str, token: str | None):
         context_id: str,
         name: str,
         workflow: str = "feature",
-        target_symbols: list[str] = [],
-        depends_on: list[str] = [],
+        target_symbols: list[str] | None = None,
+        depends_on: list[str] | None = None,
         blast_radius_k: int = 2,
         agent_id: str = "cpg-architect"
     ) -> str:
@@ -1783,17 +1788,13 @@ def build_mcp_server(connect_url: str, token: str | None):
         req_h = _make_headers(active_user="human", active_agent=agent_id)
         if isinstance(target_symbols, str):
             symbols = [s.strip() for s in target_symbols.split(",") if s.strip()]
-        elif target_symbols is None:
-            symbols = []
         else:
-            symbols = list(target_symbols)
+            symbols = list(target_symbols) if target_symbols else []
 
         if isinstance(depends_on, str):
             deps = [d.strip() for d in depends_on.split(",") if d.strip()]
-        elif depends_on is None:
-            deps = []
         else:
-            deps = list(depends_on)
+            deps = list(depends_on) if depends_on else []
 
         if re.match(r"^[a-zA-Z0-9_\-]+$", name):
             task_id = name
@@ -1968,7 +1969,7 @@ def build_mcp_server(connect_url: str, token: str | None):
 
             metadata = extract_node_metadata(node_data)
             current_status = metadata.get("status", "").upper()
-            if current_status in ("COMPLETED", "VALIDATED"):
+            if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING"):
                 return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot claim task {task_id}: task is already {current_status}"})
 
             links_data = await _async_fetch_node_links(client, task_id, req_h, direction="both")
@@ -2028,6 +2029,10 @@ def build_mcp_server(connect_url: str, token: str | None):
                 return json.dumps({"status": "ERROR", "message": f"Task '{task_id}' not found (HTTP {status})"})
 
             metadata = extract_node_metadata(node_data)
+            current_status = metadata.get("status", "").upper()
+            if current_status in ("COMPLETED", "VALIDATED", "REVIEW_PENDING"):
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot release lease on task {task_id}: status is already '{current_status}'"})
+
             lease = metadata.get("lease") or {}
             holder = lease.get("holder")
             expires_at = lease.get("expires_at") or 0
@@ -2112,7 +2117,7 @@ def build_mcp_server(connect_url: str, token: str | None):
         task_id: str,
         verifier_id: str,
         verdict: str,
-        details: str = ""
+        details: dict | str = ""
     ) -> str:
         """Record dialectic verification verdict (PASS/FAIL), linking proof or counterexample trace."""
         req_h = _make_headers(active_user="human", active_agent=verifier_id)

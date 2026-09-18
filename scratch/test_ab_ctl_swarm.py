@@ -405,6 +405,27 @@ def main():
         sol_links = [l for l in server.links if l["label"] == "HAS_SOLUTION"]
         assert len(sol_links) > 0
         assert any(l["source"] == "Task-1" for l in sol_links)
+
+        # Precondition check: Cannot claim lease on REVIEW_PENDING task
+        proc_claim_rev = run_cli([
+            "swarm", "lease", "claim", "Task-1",
+            "--agent", "worker-beta",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_claim_rev.returncode != 0
+        assert "task is already REVIEW_PENDING" in (proc_claim_rev.stderr + proc_claim_rev.stdout)
+
+        # Precondition check: Cannot release lease on REVIEW_PENDING task
+        proc_rel_rev = run_cli([
+            "swarm", "lease", "release", "Task-1",
+            "--agent", "worker-alpha",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_rel_rev.returncode != 0
+        assert "status is already 'REVIEW_PENDING'" in (proc_rel_rev.stderr + proc_rel_rev.stdout)
+
         print("[PASS] swarm review submit preconditions and submission verified.")
 
         # Step 10: Dialectic Verdict FAIL
@@ -467,7 +488,17 @@ def main():
         ], check=False)
         assert proc_claim_val.returncode != 0
         assert "task is already VALIDATED" in (proc_claim_val.stderr + proc_claim_val.stdout)
-        print("[PASS] swarm review verdict PASS cleared lease, set VALIDATED, and blocked re-claim.")
+
+        # Precondition check: Cannot release lease on VALIDATED task
+        proc_rel_val = run_cli([
+            "swarm", "lease", "release", "Task-1",
+            "--agent", "worker-alpha",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_rel_val.returncode != 0
+        assert "status is already 'VALIDATED'" in (proc_rel_val.stderr + proc_rel_val.stdout)
+        print("[PASS] swarm review verdict PASS cleared lease, set VALIDATED, and blocked re-claim and release.")
 
         # Step 12: Stakeholder acceptance
         print("\n--- Test 12: ab-ctl swarm accept Task-1 ---")
@@ -504,6 +535,16 @@ def main():
         ], check=False)
         assert proc_claim_comp.returncode != 0
         assert "task is already COMPLETED" in (proc_claim_comp.stderr + proc_claim_comp.stdout)
+
+        # Precondition check: Cannot release lease on COMPLETED task
+        proc_rel_comp = run_cli([
+            "swarm", "lease", "release", "Task-1",
+            "--agent", "worker-alpha",
+            f"--connect={base_url}",
+            f"--token={token}"
+        ], check=False)
+        assert proc_rel_comp.returncode != 0
+        assert "status is already 'COMPLETED'" in (proc_rel_comp.stderr + proc_rel_comp.stdout)
         print("[PASS] swarm accept marked status=COMPLETED and enforced validation invariants.")
 
         # Step 13: Claim Task-2 (MUST SUCCEED NOW that Task-1 is COMPLETED)
