@@ -33,6 +33,25 @@ DEFAULT_CONNECT_URL = "http://localhost:8085"
 TOKEN_SALT = "ab_salt_token_v1:"
 
 
+def get_default_identity_paths() -> list[Path]:
+    """Return candidate paths for identity.json honoring XDG base directory specification."""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base_xdg = Path(xdg) if xdg else Path.home() / ".config"
+    return [
+        base_xdg / "agentic-blackboard" / "identity.json",
+        Path.home() / ".agentic-blackboard" / "identity.json",
+        Path("/etc/agentic-blackboard/identity.json"),
+    ]
+
+
+DEFAULT_IDENTITY_PATHS = [
+    Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "agentic-blackboard" / "identity.json",
+    Path.home() / ".agentic-blackboard" / "identity.json",
+    Path("/etc/agentic-blackboard/identity.json"),
+]
+
+
+
 def hash_token(token: str) -> str:
     """Hash token with Agentic Blackboard salt using SHA-256."""
     return hashlib.sha256((TOKEN_SALT + token).encode("utf-8")).hexdigest()
@@ -94,9 +113,52 @@ def load_config(config_path: str | None = None) -> dict:
         except Exception:
             pass
 
+    # Look for identity.json to auto-fill credentials
+    identity_file = None
+    search_paths = get_default_identity_paths()
+    for p in DEFAULT_IDENTITY_PATHS:
+        if p not in search_paths:
+            search_paths.append(p)
+    if "AB_IDENTITY_FILE" in os.environ:
+        search_paths.insert(0, Path(os.environ["AB_IDENTITY_FILE"]))
+
+    for ip in search_paths:
+        try:
+            if ip.is_file():
+                identity_file = ip
+                break
+        except (PermissionError, OSError):
+            continue
+
+    if identity_file:
+        try:
+            idata = json.loads(identity_file.read_text(encoding="utf-8"))
+            cfg["identity_file"] = str(identity_file)
+            cfg["user_id"] = idata.get("user", {}).get("id", "")
+            cfg["agent_id"] = idata.get("agent", {}).get("id", "")
+            cfg["user_token"] = idata.get("user", {}).get("token", "")
+            cfg["agent_token"] = idata.get("agent", {}).get("token", "")
+            if not cfg.get("token"):
+                cfg["token"] = cfg["user_token"] or cfg["agent_token"]
+            if idata.get("connect") and cfg.get("connect") == DEFAULT_CONNECT_URL:
+                cfg["connect"] = idata["connect"]
+            if idata.get("default_surface"):
+                cfg["surface_id"] = idata["default_surface"].get("id", "surface:workstation")
+                cfg["surface_type"] = idata["default_surface"].get("type", "workstation")
+        except Exception:
+            pass
+
     # Environment variable overrides
     if "AB_URL" in os.environ:
         cfg["connect"] = os.environ["AB_URL"]
+    if "AB_USER_TOKEN" in os.environ:
+        cfg["user_token"] = os.environ["AB_USER_TOKEN"]
+    if "AB_AGENT_TOKEN" in os.environ:
+        cfg["agent_token"] = os.environ["AB_AGENT_TOKEN"]
+    if "AB_USER_ID" in os.environ:
+        cfg["user_id"] = os.environ["AB_USER_ID"]
+    if "AB_AGENT_ID" in os.environ:
+        cfg["agent_id"] = os.environ["AB_AGENT_ID"]
     if "AB_TOKEN" in os.environ:
         cfg["token"] = os.environ["AB_TOKEN"]
     elif "AB_TOKEN_FILE" in os.environ:
@@ -181,32 +243,192 @@ def get_auth_headers(token: str | None, active_user: str | None = None, active_a
 # ----------------------------------------------------------------------
 
 def handle_init(args, cfg: dict):
-    """Generate directory structure, initialize credentials DB, create bootstrap admin token."""
-    data_dir_str = args.data_dir or cfg.get("data_dir", DEFAULT_DATA_DIR)
-    data_dir = Path(data_dir_str).resolve()
-    data_dir.mkdir(parents=True, exist_ok=True)
+    """Generate directory structure, initialize credentials DB, provision user identity keystore and substrate graph."""
+    data_dir_str = getattr(args, "data_dir", None)
+    if not data_dir_str and not getattr(args, "user", None):
+        data_dir_str = cfg.get("data_dir", DEFAULT_DATA_DIR)
+    elif not data_dir_str and cfg.get("data_dir"):
+        candidate = Path(cfg["data_dir"])
+        if candidate.is_dir() and os.access(candidate, os.W_OK):
+            data_dir_str = str(candidate)
 
-    creds_db = data_dir / "credentials.db"
-    init_credentials_db(creds_db)
+    creds_db = None
+    admin_token = None
+    token_file = None
+    data_dir = None
 
-    # Generate bootstrap admin token
-    admin_token = f"ab_adm_{secrets.token_hex(16)}"
-    insert_token_to_db(
-        creds_db,
-        token=admin_token,
-        username="admin",
-        role="admin",
-        token_type="admin",
-        metadata={"bootstrap": True}
-    )
+    if data_dir_str:
+        try:
+            data_dir = Path(data_dir_str).resolve()
+            data_dir.mkdir(parents=True, exist_ok=True)
+            creds_db = data_dir / "credentials.db"
+            init_credentials_db(creds_db)
 
-    # Write admin token file
-    token_file = data_dir / "admin.token"
-    try:
-        token_file.write_text(f"{admin_token}\n", encoding="utf-8")
-        token_file.chmod(0o600)
-    except Exception as e:
-        print(f"[WARN] Could not write token file {token_file}: {e}", file=sys.stderr)
+            # Generate bootstrap admin token
+            admin_token = f"ab_adm_{secrets.token_hex(16)}"
+            insert_token_to_db(
+                creds_db,
+                token=admin_token,
+                username="admin",
+                role="admin",
+                token_type="admin",
+                metadata={"bootstrap": True}
+            )
+
+            # Write admin token file
+            token_file = data_dir / "admin.token"
+            try:
+                token_file.write_text(f"{admin_token}\n", encoding="utf-8")
+                token_file.chmod(0o600)
+            except Exception as e:
+                print(f"[WARN] Could not write token file {token_file}: {e}", file=sys.stderr)
+        except Exception as e:
+            if getattr(args, "data_dir", None) or not getattr(args, "user", None):
+                print(f"Error initializing data directory {data_dir_str}: {e}", file=sys.stderr)
+                return 1
+
+    # User & agent identity keystore provisioning
+    if getattr(args, "user", None):
+        username = args.user.strip()
+        pure_username = username.split(":", 1)[1] if username.startswith("user:") else username
+        user_id = f"user:{pure_username}"
+        user_token = f"ab_usr_{secrets.token_hex(16)}"
+
+        agent_info = None
+        if getattr(args, "generate_agent", False):
+            agent_name = f"{pure_username}-agent"
+            agent_id = f"agent:{agent_name}"
+            agent_token = f"ab_agt_{secrets.token_hex(16)}"
+            agent_info = {
+                "id": agent_id,
+                "name": agent_name,
+                "token": agent_token,
+                "role": "agent",
+            }
+
+        connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+
+        identity_data = {
+            "version": "1.0",
+            "connect": connect_url,
+            "user": {
+                "id": user_id,
+                "name": pure_username,
+                "token": user_token,
+                "role": "curator"
+            },
+            "agent": agent_info or {
+                "id": "",
+                "name": "",
+                "token": "",
+                "role": ""
+            },
+            "default_surface": {
+                "id": "surface:workstation",
+                "type": "workstation"
+            }
+        }
+
+        # Resolve destination path for identity.json
+        if getattr(args, "identity_file", None):
+            identity_path = Path(args.identity_file).resolve()
+        else:
+            xdg = os.environ.get("XDG_CONFIG_HOME")
+            base_config = Path(xdg) if xdg else Path.home() / ".config"
+            identity_path = (base_config / "agentic-blackboard" / "identity.json").resolve()
+
+        try:
+            identity_path.parent.mkdir(parents=True, exist_ok=True)
+            content = json.dumps(identity_data, indent=2) + "\n"
+            # Write with 0600 mode
+            fd = os.open(identity_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with open(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            identity_path.chmod(0o600)
+            print(f"[INIT] Created {identity_path}")
+            print(f"[USER] {user_id} (token: {user_token})")
+            if agent_info:
+                print(f"[AGENT] {agent_info['id']} (token: {agent_info['token']})")
+        except Exception as e:
+            print(f"Error creating identity file {identity_path}: {e}", file=sys.stderr)
+            return 1
+
+        # Record in SQLite credentials database if available
+        if creds_db and creds_db.exists():
+            insert_token_to_db(
+                creds_db,
+                token=user_token,
+                username=pure_username,
+                role="curator",
+                token_type="user",
+                metadata={"id": user_id, "name": pure_username}
+            )
+            if agent_info:
+                insert_token_to_db(
+                    creds_db,
+                    token=agent_info["token"],
+                    username=agent_info["name"],
+                    role="agent",
+                    token_type="agent",
+                    metadata={"id": agent_info["id"], "name": agent_info["name"], "user": user_id}
+                )
+
+        # Attempt to provision substrate graph and register credentials if daemon is available
+        auth_tok = getattr(args, "token", None) or cfg.get("token") or admin_token
+        req_headers = get_auth_headers(auth_tok, active_user=user_id, active_agent=agent_info["id"] if agent_info else None)
+
+        # Register user and agent credentials with daemon
+        http_request_json(
+            f"{connect_url}/api/v1/admin/users",
+            method="POST",
+            payload={"username": pure_username, "role": "curator", "token": user_token},
+            headers=req_headers,
+            timeout=3.0
+        )
+        if agent_info:
+            http_request_json(
+                f"{connect_url}/api/v1/admin/users",
+                method="POST",
+                payload={"username": agent_info["name"], "role": "agent", "token": agent_info["token"]},
+                headers=req_headers,
+                timeout=3.0
+            )
+
+        # Commit user and agent IDENTITY nodes
+        user_meta = {
+            "role": "user",
+            "name": pure_username,
+            "display_name": pure_username.capitalize(),
+            "status": "ACTIVE"
+        }
+        commit_graph_node(connect_url, req_headers, "IDENTITY", user_id, user_meta)
+
+        if agent_info:
+            agent_meta = {
+                "role": "agent",
+                "user": user_id,
+                "name": agent_info["name"],
+                "status": "ACTIVE"
+            }
+            commit_graph_node(connect_url, req_headers, "IDENTITY", agent_info["id"], agent_meta)
+
+            # Provision DELEGATES_TO edge
+            link_url = f"{connect_url}/api/v1/link"
+            link_payload = {
+                "source": user_id,
+                "target": agent_info["id"],
+                "label": "DELEGATES_TO",
+                "weight": 1.0,
+                "metadata": {
+                    "granted_at": int(time.time()),
+                    "status": "PERMANENT"
+                }
+            }
+            l_status, _ = http_request_json(link_url, method="POST", payload=link_payload, headers=req_headers, timeout=3.0)
+            if l_status in (200, 201):
+                print("[SUBSTRATE] Substrate identity graph provisioned with 1:1 DELEGATES_TO relation.")
+
+        return 0
 
     print(f"Initialized Agentic Blackboard substrate at {data_dir}")
     print(f"Created credentials database: {creds_db}")
@@ -555,12 +777,14 @@ def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, activ
             active_user or
             os.environ.get("AB_ACTIVE_USER") or
             os.environ.get("AB_USER") or
+            cfg.get("user_id") or
             "swarm-user")
     agent = (getattr(args, "active_agent", None) or
              getattr(args, "agent", None) or
              active_agent or
              os.environ.get("AB_ACTIVE_AGENT") or
              os.environ.get("AB_AGENT") or
+             cfg.get("agent_id") or
              "swarm-agent")
     return get_auth_headers(token, active_user=user, active_agent=agent)
 
@@ -2402,6 +2626,12 @@ def main():
     init_p = subparsers.add_parser("init", help="Initialize substrate directories and credentials database")
     init_p.add_argument("--bootstrap", action="store_true", help="Create bootstrap cluster administrator credentials")
     init_p.add_argument("--data-dir", help="Data directory path")
+    init_p.add_argument("--user", help="User identifier to provision")
+    init_p.add_argument("--generate-agent", action="store_true", help="Generate 1:1 agent identity proxy")
+    init_p.add_argument("--identity-file", help="Path to write identity keystore JSON file")
+    init_p.add_argument("--connect", help="Daemon connect URL")
+    init_p.add_argument("--token", help="Admin authorization token")
+    init_p.add_argument("--token-file", help="Path to file containing authorization token")
 
     # 2. status
     status_p = subparsers.add_parser("status", help="Query daemon operational status and metrics")
