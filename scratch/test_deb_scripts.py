@@ -5,9 +5,10 @@ Validates:
 1. All three files exist (packaging/debian/postinst, prerm, postrm).
 2. All three files have executable permissions (0755).
 3. All three files pass syntax checking (sh -n <file>).
-4. postinst contains addgroup / groupadd, adduser / useradd, chown -R blackboard:blackboard, and ab-ctl init --bootstrap.
+4. postinst contains addgroup / groupadd, adduser / useradd, chown -R blackboard:blackboard, ab-ctl init --bootstrap, and permission modes (0750, 0640).
 5. prerm stops agentic-blackboard.service.
 6. postrm reloads systemd on remove/purge.
+7. All three scripts exit with status 1 on unknown argument.
 """
 
 import os
@@ -95,6 +96,18 @@ def main() -> int:
     else:
         print("[+] PASS: postinst contains 'ab-ctl init --bootstrap'")
 
+    if "0750" not in postinst_content:
+        print("[-] FAIL: postinst missing '0750'")
+        failed = True
+    else:
+        print("[+] PASS: postinst contains '0750'")
+
+    if "0640" not in postinst_content:
+        print("[-] FAIL: postinst missing '0640'")
+        failed = True
+    else:
+        print("[+] PASS: postinst contains '0640'")
+
     # 5. Content checks: prerm
     print("\n--- 5. prerm Content Checks ---")
     prerm_content = scripts["prerm"].read_text()
@@ -115,6 +128,21 @@ def main() -> int:
         failed = True
     else:
         print("[+] PASS: postrm reloads systemd on remove/purge")
+
+    # 7. Unknown argument handling check (exit code 1)
+    print("\n--- 7. Unknown Argument Handling (exit 1) ---")
+    for name, path in scripts.items():
+        res = subprocess.run(
+            ["sh", str(path), "invalid_arg"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if res.returncode != 1:
+            print(f"[-] FAIL: {name} with 'invalid_arg' returned code {res.returncode}, expected 1")
+            failed = True
+        else:
+            print(f"[+] PASS: {name} correctly exited with code 1 on unknown argument")
 
     if failed:
         print("\n[-] Verification failed: One or more checks failed.")

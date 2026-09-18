@@ -11,14 +11,18 @@ case "$1" in
         # Create blackboard user if not present
         if ! getent passwd blackboard >/dev/null; then
             adduser --system --ingroup blackboard --home /var/lib/agentic-blackboard \
+                --gecos "Agentic Blackboard daemon" \
                 --no-create-home --shell /usr/sbin/nologin blackboard 2>/dev/null || \
-            useradd -r -g blackboard -d /var/lib/agentic-blackboard -s /usr/sbin/nologin blackboard 2>/dev/null || true
+            useradd -r -g blackboard -d /var/lib/agentic-blackboard -s /usr/sbin/nologin \
+                -c "Agentic Blackboard daemon" blackboard 2>/dev/null || true
         fi
 
         # Ensure directories exist and have proper permissions
         mkdir -p /var/lib/agentic-blackboard /var/log/agentic-blackboard /etc/agentic-blackboard
         chown -R blackboard:blackboard /var/lib/agentic-blackboard /var/log/agentic-blackboard
         chmod 0750 /var/lib/agentic-blackboard /var/log/agentic-blackboard
+        chown root:blackboard /etc/agentic-blackboard
+        chmod 0750 /etc/agentic-blackboard
 
         if [ -f /etc/agentic-blackboard/blackboard.conf ]; then
             chown root:blackboard /etc/agentic-blackboard/blackboard.conf
@@ -28,8 +32,8 @@ case "$1" in
         # Idempotent bootstrap initialization
         if [ ! -f /var/lib/agentic-blackboard/initialized ]; then
             if [ -x /usr/bin/ab-ctl ]; then
-                /usr/bin/ab-ctl init --bootstrap --data-dir=/var/lib/agentic-blackboard || true
-                touch /var/lib/agentic-blackboard/initialized 2>/dev/null || true
+                /usr/bin/ab-ctl init --bootstrap --data-dir=/var/lib/agentic-blackboard && \
+                    touch /var/lib/agentic-blackboard/initialized || true
             fi
             chown -R blackboard:blackboard /var/lib/agentic-blackboard
         fi
@@ -37,6 +41,7 @@ case "$1" in
         # Reload systemd daemon if running
         if [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null 2>&1 || true
+            systemctl try-restart agentic-blackboard.service >/dev/null 2>&1 || true
         fi
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)
