@@ -25,7 +25,7 @@ while [[ $# -gt 0 ]]; do
         --skip-build) SKIP_BUILD=true; shift ;;
         --no-start) NO_START=true; shift ;;
         -h|--help) print_usage; exit 0 ;;
-        *) echo "Unknown option: $1" >&2; print_usage; exit 1 ;;
+        *) echo "Unknown option: $1" >&2; print_usage >&2; exit 1 ;;
     esac
 done
 
@@ -50,7 +50,7 @@ if [ "$IS_DEBIAN_FAMILY" != "true" ]; then
     exit 1
 fi
 
-echo "=== Bootstrapping Agentic Blackboard on ${PRETTY_NAME} ==="
+echo "=== Bootstrapping Agentic Blackboard on ${PRETTY_NAME:-${NAME:-Debian/Ubuntu}} ==="
 
 # Helper for elevated commands
 SUDO=""
@@ -68,8 +68,8 @@ fi
 # 2. Prerequisites
 if [ "$SKIP_BUILD" != "true" ] && [ "$PACKAGE_ONLY" != "true" ]; then
     echo "[*] Ensuring build & runtime prerequisites are installed..."
-    DEBIAN_FRONTEND=noninteractive $SUDO apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq \
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         build-essential cmake libzmq3-dev libssl-dev dpkg-dev python3
 fi
 
@@ -89,7 +89,7 @@ if [ "$SKIP_BUILD" != "true" ]; then
 fi
 
 # Locate generated package
-DEB_PACKAGE="$(find "${BUILD_DIR}" -maxdepth 1 -name "agentic-blackboard_*.deb" | head -n 1)"
+DEB_PACKAGE="$(find "${BUILD_DIR}" -maxdepth 1 -name "agentic-blackboard_*.deb" | sort -V | tail -n 1)"
 if [ -z "${DEB_PACKAGE}" ] || [ ! -f "${DEB_PACKAGE}" ]; then
     echo "[ERROR] No agentic-blackboard_*.deb found in ${BUILD_DIR}." >&2
     exit 1
@@ -104,7 +104,7 @@ fi
 
 # 4. Installation
 echo "[*] Installing package via apt-get..."
-DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq "${DEB_PACKAGE}"
+$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${DEB_PACKAGE}"
 
 # 5. Service Lifecycle
 if [ "$NO_START" != "true" ] && [ -d /run/systemd/system ]; then
@@ -117,14 +117,14 @@ echo ""
 echo "================================================================="
 echo "  Agentic Blackboard Bootstrapped Successfully!"
 echo "================================================================="
-if [ -f /var/lib/agentic-blackboard/admin.token ]; then
+if [ -f /var/lib/agentic-blackboard/admin.token ] || { [ -n "$SUDO" ] && $SUDO test -f /var/lib/agentic-blackboard/admin.token; }; then
     echo "  Admin Token File: /var/lib/agentic-blackboard/admin.token"
     echo "  Daemon URL:       http://localhost:8085"
     echo ""
     echo "  To verify status:"
-    echo "    ab-ctl status --token-file=/var/lib/agentic-blackboard/admin.token"
+    echo "    ${SUDO:+$SUDO }ab-ctl status --token-file=/var/lib/agentic-blackboard/admin.token"
     echo ""
     echo "  To initialize a swarm workspace context:"
-    echo "    ab-ctl swarm init --context project-alpha --name \"Alpha Project\""
+    echo "    ${SUDO:+$SUDO }ab-ctl swarm init --context project-alpha --name \"Alpha Project\""
 fi
 echo "================================================================="

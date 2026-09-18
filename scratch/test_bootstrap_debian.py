@@ -5,13 +5,14 @@ Validates:
 1. scripts/bootstrap-debian.sh exists and is executable (0755).
 2. Running with --help / -h prints usage instructions and exits with code 0.
 3. Running with an unknown option exits with code 1 and prints an error message.
-4. Running with --package-only:
+4. Running with --skip-build fails cleanly with code 1 when no .deb package exists.
+5. Running with --package-only:
    - Compiles targets and runs build/ab_verify.
    - Generates Debian package via CPack.
    - Exits with code 0 without modifying /usr or /etc.
    - Confirms that the built .deb package exists in build/.
    - Validates that the generated .deb package contains expected metadata (Package: agentic-blackboard).
-5. Running with --skip-build --package-only finds the existing package and exits with code 0.
+6. Running with --skip-build --package-only finds the existing package and exits with code 0.
 """
 
 import os
@@ -93,16 +94,16 @@ def main() -> int:
     if res_unknown.returncode != 1:
         print(f"[-] FAIL: Expected exit code 1 for unknown option, got {res_unknown.returncode}")
         failed = True
-    elif "Unknown option" not in res_unknown.stderr:
-        print("[-] FAIL: Expected 'Unknown option' in stderr")
+    elif "Unknown option" not in res_unknown.stderr or "Usage:" not in res_unknown.stderr:
+        print("[-] FAIL: Expected 'Unknown option' and usage in stderr")
         failed = True
     else:
-        print("[+] PASS: Unknown option rejected with code 1 and error message")
+        print("[+] PASS: Unknown option rejected with code 1 and error message on stderr")
 
     # ---------------------------------------------------------
-    # 4. Package-only Build Execution (--package-only)
+    # 4. Skip-Build Failure When No Package Exists
     # ---------------------------------------------------------
-    print("\n--- 4. Package-Only Build Execution ---")
+    print("\n--- 4. Skip-Build Failure When No Package Exists ---")
     # Clean any pre-existing deb files in build directory
     for deb in BUILD_DIR.glob("agentic-blackboard*.deb"):
         try:
@@ -110,7 +111,20 @@ def main() -> int:
         except OSError as e:
             print(f"[-] Warning: could not remove existing deb {deb}: {e}")
 
-    # Record mtime of system directories if accessible to verify no alteration
+    res_skip_empty = run_command([str(BOOTSTRAP_SCRIPT), "--skip-build", "--package-only"])
+    if res_skip_empty.returncode != 1:
+        print(f"[-] FAIL: Expected exit code 1 for --skip-build with no deb, got {res_skip_empty.returncode}")
+        failed = True
+    elif "No agentic-blackboard_*.deb found" not in res_skip_empty.stderr:
+        print(f"[-] FAIL: Expected 'No agentic-blackboard_*.deb found' in stderr, got: {res_skip_empty.stderr}")
+        failed = True
+    else:
+        print("[+] PASS: --skip-build cleanly failed with code 1 when no deb package exists")
+
+    # ---------------------------------------------------------
+    # 5. Package-only Build Execution (--package-only)
+    # ---------------------------------------------------------
+    print("\n--- 5. Package-Only Build Execution ---")
     res_pkg = run_command([str(BOOTSTRAP_SCRIPT), "--package-only"])
     if res_pkg.returncode != 0:
         print(f"[-] FAIL: --package-only exited with code {res_pkg.returncode}")
@@ -168,9 +182,9 @@ def main() -> int:
             failed = True
 
     # ---------------------------------------------------------
-    # 5. Skip-Build with Package-Only (--skip-build --package-only)
+    # 6. Skip-Build with Package-Only (--skip-build --package-only)
     # ---------------------------------------------------------
-    print("\n--- 5. Skip-Build with Package-Only ---")
+    print("\n--- 6. Skip-Build with Package-Only ---")
     res_skip = run_command([str(BOOTSTRAP_SCRIPT), "--skip-build", "--package-only"])
     if res_skip.returncode != 0:
         print(f"[-] FAIL: --skip-build --package-only failed with code {res_skip.returncode}")
