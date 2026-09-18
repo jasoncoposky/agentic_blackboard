@@ -112,6 +112,29 @@ Both servers expose:
 *   **Enterprise Linux 9 RPM**: Packaged via CPack and RPM spec (`packaging/rpm/agentic-blackboard.spec`) providing `/usr/bin/agentic-blackboardd`, `/usr/bin/ab-ctl`, `/usr/lib/systemd/system/agentic-blackboard.service`, `/etc/agentic-blackboard/blackboard.conf`, `/etc/security/limits.d/99-blackboard.conf`, and `/usr/share/agentic-blackboard/skills`.
 *   **Canonical Container (UBI 9 Minimal)**: `Dockerfile` builds a production Red Hat Universal Base Image 9 container running as unprivileged `blackboard` user with volume auto-initialization via `entrypoint.sh`.
 
+### 8. Code Property Graph (CPG) Swarm Coordination (Project Insight Bridge)
+Agentic Blackboard provides first-class swarm coordination for codebases indexed by **Project Insight** (the C++20 dual Control Flow & Data Flow Graph analysis platform):
+*   **Clean Separation of Concerns**: Project Insight acts as the stateless, read-only code intelligence engine (openCypher queries, ModRef state clustering, $k$-hop blast radius slicing, and interprocedural IFDS/IDE static analysis). Agentic Blackboard acts as the coordination substrate (task DAGs, exclusive TTL leases, dual-identity provenance, and dialectic review).
+*   **SWEBOK & PMBOK 4-Agent Topology**:
+    *   **Stakeholder Agent (`cpg-stakeholder`)**: Elicits requirements and testable Acceptance Criteria (AC), authorized digital proxy for the human user (`user:<id>`), performs final value validation (`ACCEPTS` / `REQUESTS_CHANGE`).
+    *   **Architect Agent (`cpg-architect`)**: Explores CPG topology via openCypher, computes blast radius, and builds the hierarchical Task DAG with strict `DEPENDS_ON` and `SUBTASK_OF` dependencies.
+    *   **Implementer Agent (`cpg-worker`)**: Claims exclusive TTL leases, mines localized interface contracts, performs safe TDD construction, and submits solutions (`HAS_SOLUTION`).
+    *   **Verifier Agent (`cpg-verifier`)**: Audits submitted code with Project Insight's IFDS/IDE static checkers (taint analysis, uninitialized variables, typestate invariants), committing formal proofs (`VALIDATED_BY`) or counterexample execution traces (`REFUTES`).
+*   **`ab-ctl swarm` CLI & FastMCP Tools**:
+    *   `ab-ctl swarm init --context <id> --name <str> [--requirement <str>]`
+    *   `ab-ctl swarm task create --context <id> --name <str> [--workflow feature|bugfix|refactor] [-k <radius>] [--depends-on <id>]`
+    *   `ab-ctl swarm task list --context <id> [--format table|json]`
+    *   `ab-ctl swarm lease claim <task_id> --agent <agent_id> [--ttl <sec>]`
+    *   `ab-ctl swarm lease release <task_id> --agent <agent_id>`
+    *   `ab-ctl swarm review submit <task_id> --agent <agent_id> [--patch <summary>]`
+    *   `ab-ctl swarm review verdict <task_id> --verifier <agent_id> --verdict PASS|FAIL [--details <json>]`
+    *   `ab-ctl swarm accept <task_id> --stakeholder <user_id> [--notes <str>]`
+*   **Dialectic State Machine & Loop Bounding**: Enforces topological dependency barriers (downstream tasks are blocked until prerequisites are `COMPLETED` or `VALIDATED`). Re-routes failed reviews to `READY` with counterexample traces, and locks runaway loops into `ESCALATED` if a task fails verification more than 3 times.
+*   **Antigravity Skill & Catalog**: Guided by the [`cpg-swarm-coordination`](skills/cpg-swarm-coordination/SKILL.md) skill with companion references:
+    *   [`openCypher Recipes`](skills/cpg-swarm-coordination/references/opencypher_recipes.md): 5 categories of tested CPG graph traversal queries.
+    *   [`Blackboard Schemas`](skills/cpg-swarm-coordination/references/blackboard_schemas.md): Draft-07 JSON schemas for all 6 atoms and 7 relationship links.
+    *   [`SWEBOK & PMBOK Mapping`](skills/cpg-swarm-coordination/references/swebok_pmbok_mapping.md): Formal theoretical alignment and verification vs. validation matrices.
+
 ---
 
 ## 🚀 Quick Start
