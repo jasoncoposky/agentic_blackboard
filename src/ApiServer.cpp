@@ -77,6 +77,21 @@ std::string extract_token(const httplib::Request& req) {
     return "";
 }
 
+static inline std::string pure_user_id(const std::string& u) {
+    if (u.rfind("user:", 0) == 0) return u.substr(5);
+    return u;
+}
+
+static inline std::string canonical_user_id(const std::string& u) {
+    if (u.rfind("user:", 0) == 0) return u;
+    return "user:" + u;
+}
+
+static inline std::string canonical_surface_id(const std::string& s) {
+    if (s.rfind("surface:", 0) == 0) return s;
+    return "surface:" + s;
+}
+
 } // anonymous namespace
 
 namespace agentic_blackboard {
@@ -169,10 +184,12 @@ bool ContextBroker::update_focus(const std::string& context_id,
         }
         if (!surface_id.empty()) {
             auto it = enrolled_surfaces_.find(surface_id);
+            if (it == enrolled_surfaces_.end()) {
+                it = enrolled_surfaces_.find(canonical_surface_id(surface_id));
+            }
             if (it != enrolled_surfaces_.end()) {
                 it->second.last_seen_sec = std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count();
-                save_enrolled_surfaces_to_store();
             }
         }
         out_broadcast_payload = ctx.focus;
@@ -262,6 +279,10 @@ void ContextBroker::shutdown() {
 
 void ContextBroker::set_blackboard(Blackboard* bb) {
     blackboard_ = bb;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        enrolled_surfaces_.clear();
+    }
     if (blackboard_) {
         try {
             auto* store = blackboard_->get_engine()->get_store();
@@ -284,6 +305,7 @@ void ContextBroker::set_blackboard(Blackboard* bb) {
                         auto arr = parsed.is_array() ? parsed : (parsed.contains("surfaces") && parsed["surfaces"].is_array() ? parsed["surfaces"] : nlohmann::json::array());
                         if (arr.is_array()) {
                             std::lock_guard<std::mutex> lock(mutex_);
+                            enrolled_surfaces_.clear();
                             for (const auto& item : arr) {
                                 EnrolledSurface s;
                                 s.surface_id = item.value("surface_id", "");
@@ -419,6 +441,11 @@ bool ContextBroker::approve_surface_pairing(const std::string& pairing_id,
             return false;
         }
 
+        if (session.approved) {
+            out_resp = {{"error", "Pairing session already approved"}};
+            return false;
+        }
+
         now = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         if (now > session.expires_at_sec) {
@@ -450,24 +477,32 @@ bool ContextBroker::approve_surface_pairing(const std::string& pairing_id,
         surface_token = tok_oss.str();
         token_hash = hash_token_sha256(surface_token);
 
-        actual_surface_id = surface_id;
-        if (actual_surface_id.empty()) {
-            if (!session.suggested_id.empty()) {
-                if (session.suggested_id.rfind("surface:", 0) == 0) {
-                    actual_surface_id = session.suggested_id;
-                } else {
-                    actual_surface_id = "surface:" + session.suggested_id;
+        if (!surface_id.empty()) {
+            actual_surface_id = canonical_surface_id(surface_id);
+        } else if (!session.suggested_id.empty()) {
+            actual_surface_id = canonical_surface_id(session.suggested_id);
+        } else {
+            actual_surface_id = "surface:" + session.pairing_id;
+        }
+
+        auto existing_it = enrolled_surfaces_.find(actual_surface_id);
+        if (existing_it != enrolled_surfaces_.end()) {
+            std::string old_token_hash = existing_it->second.token_hash;
+            if (!old_token_hash.empty() && blackboard_) {
+                auto* store = blackboard_->get_engine()->get_store();
+                if (store) {
+                    store->del("auth:token:" + old_token_hash);
+                    store->wait_all_shards();
                 }
-            } else {
-                actual_surface_id = "surface:" + session.pairing_id;
             }
         }
 
         surface_type = session.surface_type;
         client_app = session.client_app;
+        std::string canon_user = canonical_user_id(user_id);
 
         session.approved = true;
-        session.approved_user_id = user_id;
+        session.approved_user_id = canon_user;
         session.approved_agent_id = agent_id;
         session.assigned_surface_id = actual_surface_id;
         session.assigned_context_id = context_id;
@@ -477,7 +512,7 @@ bool ContextBroker::approve_surface_pairing(const std::string& pairing_id,
         enrolled.surface_id = actual_surface_id;
         enrolled.surface_type = surface_type;
         enrolled.client_app = client_app;
-        enrolled.user_id = user_id;
+        enrolled.user_id = canon_user;
         enrolled.agent_id = agent_id;
         enrolled.context_id = context_id;
         enrolled.token_hash = token_hash;
@@ -488,12 +523,16 @@ bool ContextBroker::approve_surface_pairing(const std::string& pairing_id,
     }
 
     if (blackboard_) {
-        blackboard_->register_user_credentials(user_id, user_id + "-key");
+        std::string canon_user = canonical_user_id(user_id);
+        blackboard_->register_user_credentials(canon_user, canon_user + "-key");
+        if (pure_user_id(canon_user) != canon_user) {
+            blackboard_->register_user_credentials(pure_user_id(canon_user), pure_user_id(canon_user) + "-key");
+        }
         auto* store = blackboard_->get_engine()->get_store();
         if (store) {
             std::string db_key = "auth:token:" + token_hash;
             nlohmann::json meta = {
-                {"username", user_id},
+                {"username", canon_user},
                 {"role", "surface"},
                 {"agent", agent_id},
                 {"surface_id", actual_surface_id},
@@ -510,7 +549,7 @@ bool ContextBroker::approve_surface_pairing(const std::string& pairing_id,
         {"status", "APPROVED"},
         {"pairing_id", pairing_id},
         {"surface_id", actual_surface_id},
-        {"user_id", user_id},
+        {"user_id", canonical_user_id(user_id)},
         {"agent_id", agent_id},
         {"context_id", context_id}
     };
@@ -563,7 +602,7 @@ bool ContextBroker::list_enrolled_surfaces(const std::string& user_id, nlohmann:
     std::lock_guard<std::mutex> lock(mutex_);
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& [sid, s] : enrolled_surfaces_) {
-        if (user_id.empty() || user_id == "admin" || s.user_id == user_id) {
+        if (user_id.empty() || pure_user_id(user_id) == "admin" || pure_user_id(s.user_id) == pure_user_id(user_id)) {
             arr.push_back({
                 {"surface_id", s.surface_id},
                 {"surface_type", s.surface_type},
@@ -585,14 +624,19 @@ bool ContextBroker::list_enrolled_surfaces(const std::string& user_id, nlohmann:
 
 bool ContextBroker::revoke_enrolled_surface(const std::string& surface_id, nlohmann::json& out_resp) {
     std::string token_hash;
+    std::string actual_id = surface_id;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = enrolled_surfaces_.find(surface_id);
+        if (it == enrolled_surfaces_.end()) {
+            it = enrolled_surfaces_.find(canonical_surface_id(surface_id));
+        }
         if (it == enrolled_surfaces_.end()) {
             out_resp = {{"error", "Surface not found"}, {"surface_id", surface_id}};
             return false;
         }
 
+        actual_id = it->first;
         token_hash = it->second.token_hash;
         enrolled_surfaces_.erase(it);
         save_enrolled_surfaces_to_store();
@@ -609,7 +653,7 @@ bool ContextBroker::revoke_enrolled_surface(const std::string& surface_id, nlohm
 
     out_resp = {
         {"status", "REVOKED"},
-        {"surface_id", surface_id}
+        {"surface_id", actual_id}
     };
     return true;
 }
@@ -617,6 +661,9 @@ bool ContextBroker::revoke_enrolled_surface(const std::string& surface_id, nlohm
 bool ContextBroker::get_enrolled_surface(const std::string& surface_id, EnrolledSurface& out_surface) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = enrolled_surfaces_.find(surface_id);
+    if (it == enrolled_surfaces_.end()) {
+        it = enrolled_surfaces_.find(canonical_surface_id(surface_id));
+    }
     if (it == enrolled_surfaces_.end()) {
         return false;
     }
@@ -2192,10 +2239,25 @@ void ApiServer::listen_loop() {
                 return;
             }
 
-            if (auth_role != "admin" && user_id != active_user) {
+            if (auth_role != "admin" && pure_user_id(user_id) != pure_user_id(active_user)) {
                 res.status = 403;
                 res.set_content(json({{"error", "Forbidden"}, {"message", "Cannot approve pairing for another user"}}).dump(), "application/json");
                 return;
+            }
+
+            if (auth_role != "admin") {
+                std::string expected_agent = "agent:" + pure_user_id(active_user) + "-agent";
+                if (agent_id.empty()) {
+                    agent_id = expected_agent;
+                } else {
+                    std::string pure_agent = (agent_id.rfind("agent:", 0) == 0) ? agent_id.substr(6) : agent_id;
+                    std::string u = pure_user_id(active_user);
+                    if (agent_id != expected_agent && pure_agent.find(u) == std::string::npos) {
+                        res.status = 403;
+                        res.set_content(json({{"error", "Non-admin cannot bind surface to another user's agent"}}).dump(), "application/json");
+                        return;
+                    }
+                }
             }
 
             json resp;
@@ -2276,7 +2338,7 @@ void ApiServer::listen_loop() {
             if (auth_role != "admin") {
                 EnrolledSurface s;
                 if (context_broker_.get_enrolled_surface(surface_id, s)) {
-                    if (s.user_id != active_user) {
+                    if (pure_user_id(s.user_id) != pure_user_id(active_user)) {
                         res.status = 403;
                         res.set_content(json({{"error", "Forbidden"}, {"message", "Cannot revoke another user's surface"}}).dump(), "application/json");
                         return;

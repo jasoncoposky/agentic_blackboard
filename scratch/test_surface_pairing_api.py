@@ -332,6 +332,245 @@ class TestSurfacePairingApi(unittest.TestCase):
             urllib.request.urlopen(del_req)
         self.assertEqual(ctx.exception.code, 404)
 
+    def test_non_admin_rbac_and_isolation(self):
+        # 0. Ensure admin has an enrolled surface 'surface:lab-table'
+        admin_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/request",
+            data=json.dumps({
+                "surface_type": "tabletop",
+                "client_app": "AdminApp",
+                "suggested_id": "lab-table"
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(admin_req) as resp:
+            self.assertEqual(resp.status, 201)
+            admin_pair_data = json.loads(resp.read().decode("utf-8"))
+            admin_pairing_id = admin_pair_data["pairing_id"]
+            admin_pin = admin_pair_data["pin"]
+
+        admin_approve_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/approve",
+            data=json.dumps({
+                "pairing_id": admin_pairing_id,
+                "pin": admin_pin,
+                "user_id": "user:jason",
+                "agent_id": "agent:jason-agent",
+                "surface_id": "surface:lab-table"
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.admin_token}"
+            }
+        )
+        with urllib.request.urlopen(admin_approve_req) as resp:
+            self.assertEqual(resp.status, 200)
+
+        admin_claim_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/claim",
+            data=json.dumps({"pairing_id": admin_pairing_id}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(admin_claim_req) as resp:
+            self.assertEqual(resp.status, 200)
+
+        # 1. Register standard non-admin user "alice" via POST /api/v1/admin/users
+        alice_token = "ab_usr_alice_token_1234567890abcdef"
+        reg_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/admin/users",
+            data=json.dumps({
+                "username": "alice",
+                "role": "curator",
+                "token": alice_token
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.admin_token}"
+            }
+        )
+        with urllib.request.urlopen(reg_req) as resp:
+            self.assertEqual(resp.status, 200)
+            user_data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(user_data["username"], "alice")
+            self.assertEqual(user_data["token"], alice_token)
+
+        # 2. Alice requests pairing for tablet-alice
+        pair_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/request",
+            data=json.dumps({
+                "surface_type": "tablet",
+                "client_app": "AliceDrawingApp",
+                "suggested_id": "tablet-alice"
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(pair_req) as resp:
+            self.assertEqual(resp.status, 201)
+            pair_data = json.loads(resp.read().decode("utf-8"))
+            alice_pairing_id = pair_data["pairing_id"]
+            alice_pin = pair_data["pin"]
+
+        # 3. Alice tries to approve a pairing session for user:bob -> verify 403 Forbidden
+        bob_approve_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/approve",
+            data=json.dumps({
+                "pairing_id": alice_pairing_id,
+                "pin": alice_pin,
+                "user_id": "user:bob",
+                "agent_id": "agent:alice-agent",
+                "surface_id": "tablet-alice"
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {alice_token}"
+            }
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(bob_approve_req)
+        self.assertEqual(ctx.exception.code, 403)
+
+        # 4. Alice tries to approve with agent_id: "agent:bob-agent" -> verify 403 Forbidden
+        bob_agent_approve_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/approve",
+            data=json.dumps({
+                "pairing_id": alice_pairing_id,
+                "pin": alice_pin,
+                "user_id": "user:alice",
+                "agent_id": "agent:bob-agent",
+                "surface_id": "tablet-alice"
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {alice_token}"
+            }
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(bob_agent_approve_req)
+        self.assertEqual(ctx.exception.code, 403)
+
+        # 5. Alice approves pairing with her user token (alice / user:alice)
+        alice_approve_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/approve",
+            data=json.dumps({
+                "pairing_id": alice_pairing_id,
+                "pin": alice_pin,
+                "user_id": "user:alice",
+                "agent_id": "agent:alice-agent",
+                "context_id": "ctx-alice",
+                "surface_id": "tablet-alice"
+            }).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {alice_token}"
+            }
+        )
+        with urllib.request.urlopen(alice_approve_req) as resp:
+            self.assertEqual(resp.status, 200)
+            appr_data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(appr_data["status"], "APPROVED")
+            self.assertEqual(appr_data["surface_id"], "surface:tablet-alice")
+
+        # 5b. Duplicate approval check -> 400
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(alice_approve_req)
+        self.assertEqual(ctx.exception.code, 400)
+
+        # 6. Alice lists surfaces (GET /api/v1/surface/list) -> verify only tablet-alice is returned, not admin's lab-table
+        alice_list_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/list",
+            headers={"Authorization": f"Bearer {alice_token}"}
+        )
+        with urllib.request.urlopen(alice_list_req) as resp:
+            self.assertEqual(resp.status, 200)
+            surfaces = json.loads(resp.read().decode("utf-8"))["surfaces"]
+            surface_ids = [s["surface_id"] for s in surfaces]
+            self.assertIn("surface:tablet-alice", surface_ids)
+            self.assertNotIn("surface:lab-table", surface_ids)
+            self.assertEqual(len(surfaces), 1)
+
+        # 7. Alice tries to delete admin's surface (DELETE /api/v1/surface/surface:lab-table) -> verify 403 Forbidden
+        alice_del_admin_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/surface:lab-table",
+            headers={"Authorization": f"Bearer {alice_token}"},
+            method="DELETE"
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(alice_del_admin_req)
+        self.assertEqual(ctx.exception.code, 403)
+
+        # 8. Alice successfully claims her surface token and deletes her own surface
+        alice_claim_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/claim",
+            data=json.dumps({"pairing_id": alice_pairing_id}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(alice_claim_req) as resp:
+            self.assertEqual(resp.status, 200)
+            claim_data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(claim_data["surface_token"].startswith("ab_srf_"))
+            self.assertEqual(claim_data["surface_id"], "surface:tablet-alice")
+
+        alice_del_own_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/surface:tablet-alice",
+            headers={"Authorization": f"Bearer {alice_token}"},
+            method="DELETE"
+        )
+        with urllib.request.urlopen(alice_del_own_req) as resp:
+            self.assertEqual(resp.status, 200)
+
+        # Verify Alice's surface list is now empty
+        with urllib.request.urlopen(alice_list_req) as resp:
+            surfaces = json.loads(resp.read().decode("utf-8"))["surfaces"]
+            self.assertFalse(any(s["surface_id"] == "surface:tablet-alice" for s in surfaces))
+
+        # 9. Test default agent_id assignment when omitted for non-admin user
+        pair_req2 = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/request",
+            data=json.dumps({"suggested_id": "tablet-default-agent"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(pair_req2) as resp:
+            p2 = json.loads(resp.read().decode("utf-8"))
+
+        approve_def_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/approve",
+            data=json.dumps({
+                "pairing_id": p2["pairing_id"],
+                "pin": p2["pin"],
+                "user_id": "alice"
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {alice_token}"}
+        )
+        with urllib.request.urlopen(approve_def_req) as resp:
+            self.assertEqual(resp.status, 200)
+            appr2 = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(appr2["agent_id"], "agent:alice-agent")
+
+        claim2_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/pair/claim",
+            data=json.dumps({"pairing_id": p2["pairing_id"]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(claim2_req) as resp:
+            self.assertEqual(resp.status, 200)
+
+        del2_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/surface:tablet-default-agent",
+            headers={"Authorization": f"Bearer {alice_token}"},
+            method="DELETE"
+        )
+        with urllib.request.urlopen(del2_req) as resp:
+            self.assertEqual(resp.status, 200)
+
+        # 10. Clean up admin's surface
+        admin_del_req = urllib.request.Request(
+            f"{BASE_URL}/api/v1/surface/surface:lab-table",
+            headers={"Authorization": f"Bearer {self.admin_token}"},
+            method="DELETE"
+        )
+        with urllib.request.urlopen(admin_del_req) as resp:
+            self.assertEqual(resp.status, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
