@@ -32,6 +32,35 @@ struct ContextRecord {
     nlohmann::json focus = nlohmann::json::object({{"selected", nlohmann::json::array()}});
 };
 
+struct PairingSession {
+    std::string pairing_id;
+    std::string pin;
+    std::string surface_type;
+    std::string client_app;
+    std::string suggested_id;
+    int64_t created_at_sec{0};
+    int64_t expires_at_sec{0};
+    int failed_attempts{0};
+    bool approved{false};
+    std::string approved_user_id;
+    std::string approved_agent_id;
+    std::string assigned_surface_id;
+    std::string assigned_context_id;
+    std::string surface_token;
+    bool claimed{false};
+};
+
+struct EnrolledSurface {
+    std::string surface_id;
+    std::string surface_type;
+    std::string client_app;
+    std::string user_id;
+    std::string agent_id;
+    std::string context_id;
+    std::string token_hash;
+    int64_t enrolled_at_sec{0};
+};
+
 struct SseClientSession {
     static constexpr size_t kMaxQueueSize = 1000;
     uint64_t id{0};
@@ -45,6 +74,8 @@ struct SseClientSession {
 class ContextBroker {
 public:
     ContextBroker() = default;
+
+    void set_blackboard(Blackboard* bb);
 
     bool register_surface(const std::string& context_id,
                           const std::string& surface_id,
@@ -64,11 +95,38 @@ public:
     void broadcast(const std::string& context_id, const std::string& event_name, const std::string& json_data);
     void shutdown();
 
+    bool request_surface_pairing(const std::string& surface_type,
+                                const std::string& client_app,
+                                const std::string& suggested_id,
+                                nlohmann::json& out_resp);
+
+    bool approve_surface_pairing(const std::string& pairing_id,
+                                const std::string& pin,
+                                const std::string& user_id,
+                                const std::string& agent_id,
+                                const std::string& context_id,
+                                const std::string& surface_id,
+                                nlohmann::json& out_resp);
+
+    bool claim_surface_pairing(const std::string& pairing_id,
+                              nlohmann::json& out_resp);
+
+    bool list_enrolled_surfaces(const std::string& user_id, nlohmann::json& out_resp);
+
+    bool revoke_enrolled_surface(const std::string& surface_id, nlohmann::json& out_resp);
+
+    bool get_enrolled_surface(const std::string& surface_id, EnrolledSurface& out_surface);
+
 private:
+    void save_enrolled_surfaces_to_store();
+
     std::mutex mutex_;
+    Blackboard* blackboard_{nullptr};
     std::atomic<uint64_t> next_client_id_{1};
     std::unordered_map<std::string, ContextRecord> contexts_;
     std::unordered_map<std::string, std::unordered_map<uint64_t, std::shared_ptr<SseClientSession>>> subscribers_;
+    std::unordered_map<std::string, PairingSession> pairing_sessions_;
+    std::unordered_map<std::string, EnrolledSurface> enrolled_surfaces_;
 };
 
 /**
