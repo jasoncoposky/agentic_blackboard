@@ -142,17 +142,20 @@ install(DIRECTORY skills/
 )
 
 # CPack Packaging Configuration
-set(CPACK_GENERATOR "RPM")
+if(NOT CPACK_GENERATOR)
+    set(CPACK_GENERATOR "DEB;RPM")
+endif()
 set(CPACK_PACKAGE_NAME "agentic-blackboard")
 set(CPACK_PACKAGE_VERSION "0.4.0")
 set(CPACK_PACKAGE_VERSION_MAJOR "0")
 set(CPACK_PACKAGE_VERSION_MINOR "4")
 set(CPACK_PACKAGE_VERSION_PATCH "0")
-set(CPACK_PACKAGE_RELEASE "1.el9")
+set(CPACK_PACKAGE_RELEASE "1")
 set(CPACK_PACKAGE_VENDOR "Agentic Blackboard Team")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Agentic Blackboard Server & Ambient Substrate Daemon")
 set(CPACK_PACKAGE_LICENSE "Apache-2.0")
 
+# RPM Generator Settings
 set(CPACK_RPM_PACKAGE_NAME "${CPACK_PACKAGE_NAME}")
 set(CPACK_RPM_PACKAGE_VERSION "${CPACK_PACKAGE_VERSION}")
 set(CPACK_RPM_PACKAGE_RELEASE "1.el9")
@@ -162,6 +165,24 @@ set(CPACK_RPM_PACKAGE_ARCHITECTURE "x86_64")
 set(CPACK_RPM_FILE_NAME "agentic-blackboard-0.4.0-1.el9.x86_64.rpm")
 set(CPACK_RPM_PACKAGE_AUTOREQPROV "no")
 set(CPACK_RPM_PACKAGE_REQUIRES "systemd, python3, zeromq, openssl")
+
+# DEB Generator Settings
+set(CPACK_DEBIAN_PACKAGE_NAME "${CPACK_PACKAGE_NAME}")
+set(CPACK_DEBIAN_PACKAGE_VERSION "${CPACK_PACKAGE_VERSION}")
+set(CPACK_DEBIAN_PACKAGE_RELEASE "1")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Agentic Blackboard Team <team@agentic-blackboard.org>")
+set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/jasoncoposky/agentic_blackboard")
+set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "systemd, python3 (>= 3.10), adduser | passwd")
+set(CPACK_DEBIAN_PACKAGE_SUGGESTS "python3-httpx")
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postinst"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/prerm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postrm"
+)
 
 set(CPACK_SET_DESTDIR ON)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/")
