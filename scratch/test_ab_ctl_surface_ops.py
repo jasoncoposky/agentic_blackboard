@@ -44,7 +44,11 @@ class TestAbCtlSurfaceOps(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.proc.terminate()
-        cls.proc.wait()
+        try:
+            cls.proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            cls.proc.kill()
+            cls.proc.wait()
         cls.temp_dir.cleanup()
 
     def run_cli(self, args):
@@ -90,6 +94,24 @@ class TestAbCtlSurfaceOps(unittest.TestCase):
         res_list_after = self.run_cli(["surface", "list", "--format", "json"])
         data_after = json.loads(res_list_after.stdout)
         self.assertFalse(any(s["surface_id"] == "surface:living-table" for s in data_after["surfaces"]))
+
+    def test_cli_approve_invalid_pin_fails(self):
+        # Start a pairing session
+        res = self.run_cli(["surface", "pair", "--type", "tablet", "--name", "bad-pin-test"])
+        self.assertEqual(res.returncode, 0, f"pair request failed: {res.stderr}")
+        lines = res.stdout.splitlines()
+        pairing_id = [l.split("Pairing ID:")[1].strip() for l in lines if "Pairing ID:" in l][0]
+
+        # Attempt to approve with invalid PIN "000000"
+        res_bad = self.run_cli(["surface", "approve", pairing_id, "--pin", "000000", "--surface-id", "surface:bad-pin-test"])
+        self.assertNotEqual(res_bad.returncode, 0)
+        self.assertIn("Error approving surface pairing", res_bad.stderr)
+
+    def test_cli_revoke_nonexistent_surface_fails(self):
+        # Attempt to revoke nonexistent surface
+        res = self.run_cli(["surface", "revoke", "surface:nonexistent-unknown-12345"])
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("Error revoking surface", res.stderr)
 
 
 if __name__ == "__main__":

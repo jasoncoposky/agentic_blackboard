@@ -254,13 +254,13 @@ def http_request_json(url: str, method: str = "GET", payload: dict | list | None
     """Execute HTTP request and return (status_code, parsed_body_or_raw_str)."""
     h = dict(headers or {})
     data_bytes = None
-    if payload is not None:
-        data_bytes = json.dumps(payload).encode("utf-8")
-        if "Content-Type" not in h:
-            h["Content-Type"] = "application/json"
-
-    req = urllib.request.Request(url, data=data_bytes, headers=h, method=method)
     try:
+        if payload is not None:
+            data_bytes = json.dumps(payload).encode("utf-8")
+            if "Content-Type" not in h:
+                h["Content-Type"] = "application/json"
+
+        req = urllib.request.Request(url, data=data_bytes, headers=h, method=method)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body_str = resp.read().decode("utf-8", errors="replace")
             try:
@@ -721,6 +721,20 @@ def handle_surface(args, cfg: dict) -> int:
     active_agent = getattr(args, "active_agent", None) or cfg.get("agent_id")
     headers = get_auth_headers(token, active_user=active_user, active_agent=active_agent)
 
+    def format_err(st, resp_data):
+        if isinstance(resp_data, dict):
+            err = resp_data.get("error")
+            msg = resp_data.get("message") or resp_data.get("detail")
+            if err and msg and err != msg:
+                err_msg = f"{err}: {msg}"
+            else:
+                err_msg = err or msg or str(resp_data)
+        else:
+            err_msg = str(resp_data)
+        if st == 0:
+            return f"Connection error: {err_msg}"
+        return f"HTTP {st}: {err_msg}"
+
     if args.surface_action == "register":
         name = args.name
         stype = args.type
@@ -767,8 +781,7 @@ def handle_surface(args, cfg: dict) -> int:
 
         st, resp_data = http_request_json(req_url, method="POST", payload=payload, headers=headers)
         if st not in (200, 201):
-            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
-            print(f"Error requesting surface pairing: HTTP {st}: {err_msg}", file=sys.stderr)
+            print(f"Error requesting surface pairing: {format_err(st, resp_data)}", file=sys.stderr)
             return 1
 
         pairing_id = resp_data.get("pairing_id", "")
@@ -821,8 +834,7 @@ def handle_surface(args, cfg: dict) -> int:
 
         st, resp_data = http_request_json(req_url, method="POST", payload=payload, headers=headers)
         if st not in (200, 201):
-            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
-            print(f"Error approving surface pairing: HTTP {st}: {err_msg}", file=sys.stderr)
+            print(f"Error approving surface pairing: {format_err(st, resp_data)}", file=sys.stderr)
             return 1
 
         print("Surface pairing approved successfully:")
@@ -839,8 +851,7 @@ def handle_surface(args, cfg: dict) -> int:
         req_url = f"{connect_url}/api/v1/surface/list"
         st, resp_data = http_request_json(req_url, method="GET", headers=headers)
         if st != 200:
-            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
-            print(f"Error listing surfaces: HTTP {st}: {err_msg}", file=sys.stderr)
+            print(f"Error listing surfaces: {format_err(st, resp_data)}", file=sys.stderr)
             return 1
 
         output_format = getattr(args, "format", "table") or "table"
@@ -851,6 +862,15 @@ def handle_surface(args, cfg: dict) -> int:
         surfaces = resp_data.get("surfaces", []) if isinstance(resp_data, dict) else []
         headers_tbl = ["SURFACE ID", "TYPE", "USER", "AGENT", "CONTEXT", "ENROLLED", "LAST SEEN"]
         rows = []
+
+        def _format_ts(ts):
+            if not ts:
+                return "never"
+            try:
+                return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(ts)))
+            except (ValueError, TypeError, OverflowError, OSError):
+                return str(ts) if ts is not None and str(ts).strip() else "-"
+
         for s in surfaces:
             sid = str(s.get("surface_id", ""))
             stype = str(s.get("surface_type", ""))
@@ -859,8 +879,8 @@ def handle_surface(args, cfg: dict) -> int:
             sctx = str(s.get("context_id", ""))
             enrolled_ts = s.get("enrolled_at", 0)
             last_ts = s.get("last_seen", 0)
-            senrolled = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(enrolled_ts))) if enrolled_ts else "never"
-            slast = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(last_ts))) if last_ts else "never"
+            senrolled = _format_ts(enrolled_ts)
+            slast = _format_ts(last_ts)
             rows.append([sid, stype, suser, sagent, sctx, senrolled, slast])
 
         col_widths = [len(h) for h in headers_tbl]
@@ -882,8 +902,7 @@ def handle_surface(args, cfg: dict) -> int:
         req_url = f"{connect_url}/api/v1/surface/{encoded_sid}"
         st, resp_data = http_request_json(req_url, method="DELETE", headers=headers)
         if st != 200:
-            err_msg = resp_data.get("error") if isinstance(resp_data, dict) else str(resp_data)
-            print(f"Error revoking surface '{surface_id}': HTTP {st}: {err_msg}", file=sys.stderr)
+            print(f"Error revoking surface '{surface_id}': {format_err(st, resp_data)}", file=sys.stderr)
             return 1
 
         print(f"Surface '{surface_id}' revoked successfully.")
