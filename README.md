@@ -108,7 +108,28 @@ Both servers expose:
 *   **Dynamic Resources**: `ab://schema`, `ab://skills/{name}`.
 *   **Agent Prompts**: `curate_note`, `author_catalog`, `init_swarm`.
 
-### 7. Enterprise RPM Packaging & Canonical Containerization
+### 7. Deployment & Packaging (Debian / Ubuntu, Enterprise Linux RPM & Containers)
+*   **Debian & Ubuntu Packaging (`.deb`)**: Native packaging for Debian 12 / Ubuntu 24.04 LTS and 22.04 LTS built via CMake CPack (`-DCPACK_GENERATOR="DEB"` or multi-generator `"DEB;RPM"`) with automatic shared library dependency resolution (`CPACK_DEBIAN_PACKAGE_SHLIBDEPS=ON`). Automatically packages `/usr/bin/agentic-blackboardd`, `/usr/bin/ab-ctl`, `/usr/lib/systemd/system/agentic-blackboard.service`, default configuration `/etc/agentic-blackboard/blackboard.conf`, and skills in `/usr/share/agentic-blackboard/skills`. Includes standard Debian maintainer scripts (`postinst`, `prerm`, `postrm`) for non-root `blackboard` system user management and admin token bootstrapping.
+*   **Automated Debian / Ubuntu Bootstrap Script (`scripts/bootstrap-debian.sh`)**: One-command complete environment setup, dependency installation (`build-essential`, `cmake`, `libzmq3-dev`, `libssl-dev`, `dpkg-dev`, `python3`), compilation, verification (`ab_verify`), `.deb` packaging, and local `apt` installation with optional systemd daemon start:
+    *   `--package-only`: Compiles targets, runs test suite, and builds `.deb` package in `build/` without installing it to host system.
+    *   `--skip-build`: Skips compilation and packaging; installs pre-existing `.deb` package from `build/`.
+    *   `--no-start`: Installs the `.deb` package without enabling or immediately starting `agentic-blackboard.service`.
+    *   `-h`, `--help`: Prints command line options and usage help.
+*   **Manual Debian / Ubuntu Package Installation**:
+    ```bash
+    # Install generated .deb via apt (resolves system dependencies automatically):
+    sudo apt install ./build/agentic-blackboard_*.deb
+
+    # Or install via dpkg directly:
+    sudo dpkg -i ./build/agentic-blackboard_*.deb
+    ```
+*   **Dual CPack Package Generation**:
+    ```bash
+    # Configure and generate both DEB and RPM packages simultaneously:
+    cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCPACK_GENERATOR="DEB;RPM"
+    cmake --build build -j$(nproc)
+    cpack --config build/CPackConfig.cmake
+    ```
 *   **Enterprise Linux 9 RPM**: Packaged via CPack and RPM spec (`packaging/rpm/agentic-blackboard.spec`) providing `/usr/bin/agentic-blackboardd`, `/usr/bin/ab-ctl`, `/usr/lib/systemd/system/agentic-blackboard.service`, `/etc/agentic-blackboard/blackboard.conf`, `/etc/security/limits.d/99-blackboard.conf`, and `/usr/share/agentic-blackboard/skills`.
 *   **Canonical Container (UBI 9 Minimal)**: `Dockerfile` builds a production Red Hat Universal Base Image 9 container running as unprivileged `blackboard` user with volume auto-initialization via `entrypoint.sh`.
 
@@ -138,6 +159,18 @@ Agentic Blackboard provides first-class swarm coordination for codebases indexed
 ---
 
 ## 🚀 Quick Start
+
+### Debian / Ubuntu One-Command Bootstrap
+```bash
+# One-command bootstrap on Debian / Ubuntu 24.04 LTS:
+./scripts/bootstrap-debian.sh
+```
+This automated bootstrap script detects host distribution compatibility, installs build and runtime dependencies (`build-essential`, `cmake`, `libzmq3-dev`, `libssl-dev`, `dpkg-dev`, `python3`), compiles targets, runs verification tests (`ab_verify`), packages the native `.deb` via CPack, installs it via `apt`, and enables the `agentic-blackboard` systemd service.
+
+To build the package without installing on the host:
+```bash
+./scripts/bootstrap-debian.sh --package-only
+```
 
 ### Build the Substrate & Run Verifications (C++)
 ```bash
@@ -175,11 +208,24 @@ python3 src/ab-ctl.py surface register --name table-01 --type tabletop --context
 python3 src/ab-ctl.py mcp run --smoke-test
 ```
 
-### Build Enterprise RPM Package
+### Build Packages (CPack: DEB & RPM)
 ```bash
 cd build
+
+# Generate Debian package (.deb)
+cpack -G DEB
+# Generates build/agentic-blackboard_0.4.0-1_amd64.deb
+
+# Generate Enterprise Linux package (.rpm)
 cpack -G RPM
 # Generates build/agentic-blackboard-0.4.0-1.el9.x86_64.rpm
+
+# Or generate both simultaneously
+cpack -G "DEB;RPM"
+
+# Install .deb on Debian / Ubuntu:
+sudo apt install ./agentic-blackboard_*.deb
+# or: sudo dpkg -i ./agentic-blackboard_*.deb
 ```
 
 ### Run Canonical Container (Docker / Podman)
