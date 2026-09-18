@@ -120,8 +120,16 @@ def http_request(
 
 
 class TestMultiSurfaceE2E(unittest.TestCase):
+    daemon_proc: subprocess.Popen | None = None
+    daemon_log_file = None
+
     @classmethod
     def setUpClass(cls):
+        if not DAEMON_BIN.is_file():
+            raise RuntimeError(
+                f"Daemon binary not found at {DAEMON_BIN}. Please build it before running the test (e.g. `make` or `cmake --build build`)."
+            )
+
         cls.temp_dir = tempfile.TemporaryDirectory()
         cls.base_path = Path(cls.temp_dir.name)
         cls.data_dir = cls.base_path / "substrate_data"
@@ -144,6 +152,9 @@ class TestMultiSurfaceE2E(unittest.TestCase):
                 del cls.workstation_env[k]
 
         # 1. Start daemon on isolated port with --auth-mode=token
+        cls.daemon_log_path = cls.base_path / "daemon.log"
+        cls.daemon_log_file = open(cls.daemon_log_path, "w", encoding="utf-8")
+
         daemon_cmd = [
             str(DAEMON_BIN),
             "1",
@@ -154,8 +165,8 @@ class TestMultiSurfaceE2E(unittest.TestCase):
         ]
         cls.daemon_proc = subprocess.Popen(
             daemon_cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=cls.daemon_log_file,
+            stderr=subprocess.STDOUT,
         )
 
         # Poll daemon until online
@@ -172,8 +183,21 @@ class TestMultiSurfaceE2E(unittest.TestCase):
 
         if not daemon_ready:
             cls.daemon_proc.terminate()
-            cls.daemon_proc.wait()
-            raise RuntimeError(f"Daemon failed to start on port {cls.port}")
+            try:
+                cls.daemon_proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                cls.daemon_proc.kill()
+                cls.daemon_proc.wait()
+            cls.daemon_log_file.flush()
+            log_tail = ""
+            if cls.daemon_log_path.is_file():
+                with open(cls.daemon_log_path, "r", encoding="utf-8", errors="replace") as f:
+                    log_lines = f.readlines()
+                    log_tail = "".join(log_lines[-50:])
+            raise RuntimeError(
+                f"Daemon failed to start on port {cls.port}.\n"
+                f"Daemon log ({cls.daemon_log_path}) tail:\n{log_tail}"
+            )
 
     @classmethod
     def tearDownClass(cls):
@@ -186,7 +210,10 @@ class TestMultiSurfaceE2E(unittest.TestCase):
                 cls.daemon_proc.kill()
                 cls.daemon_proc.wait()
             cls.daemon_proc = None
-        cls.temp_dir.cleanup()
+        if hasattr(cls, "daemon_log_file") and cls.daemon_log_file and not cls.daemon_log_file.closed:
+            cls.daemon_log_file.close()
+        if hasattr(cls, "temp_dir") and cls.temp_dir is not None:
+            cls.temp_dir.cleanup()
 
     def test_complete_multi_surface_lifecycle_and_invariants(self):
         """Execute full multi-surface lifecycle and verify 1:1 identity graph invariants."""
@@ -243,7 +270,7 @@ class TestMultiSurfaceE2E(unittest.TestCase):
         self.assertEqual(st, 200)
         outbound = user_links.get("outbound", [])
         delegation_links = [l for l in outbound if l.get("target") == "agent:jason-agent" and l.get("relation") == "DELEGATES_TO"]
-        self.assertTrue(len(delegation_links) >= 1, f"DELEGATES_TO link missing: {outbound}")
+        self.assertEqual(len(delegation_links), 1)
 
         # -----------------------------------------------------------------
         # Step 2: Surface Pairing (Phone and Table)
@@ -527,6 +554,7 @@ class TestMultiSurfaceE2E(unittest.TestCase):
         # Filter all IDENTITY nodes in graph
         identity_nodes = [n for n in nodes if n.get("type") == "IDENTITY"]
         identity_ids = [n.get("id") for n in identity_nodes]
+        self.assertEqual(set(identity_ids), {"user:jason", "agent:jason-agent"})
 
         # Invariant 1: Exactly ONE user:jason identity node exists
         user_identity_nodes = [
@@ -572,7 +600,7 @@ class TestMultiSurfaceE2E(unittest.TestCase):
             l for l in outbound_links
             if l.get("target") == "agent:jason-agent" and l.get("relation") == "DELEGATES_TO"
         ]
-        self.assertTrue(len(delegation_links) >= 1, f"Missing DELEGATES_TO edge from user:jason: {outbound_links}")
+        self.assertEqual(len(delegation_links), 1)
 
         # Also verify inbound delegation on agent:jason-agent
         st_agent_links, agent_links = http_request(f"{self.base_url}/api/v1/node/agent:jason-agent/links?direction=inbound", token=self.admin_token)
@@ -582,7 +610,7 @@ class TestMultiSurfaceE2E(unittest.TestCase):
             l for l in inbound_links
             if l.get("source") == "user:jason" and l.get("relation") == "DELEGATES_TO"
         ]
-        self.assertTrue(len(inbound_delegations) >= 1, f"Missing inbound DELEGATES_TO on agent:jason-agent: {inbound_links}")
+        self.assertEqual(len(inbound_delegations), 1)
 
         # Invariant 5 / Requirement 6: Surface origin provenance across distinct devices
         # Assert that across the 3 distinct surfaces:
