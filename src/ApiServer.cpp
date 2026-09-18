@@ -78,6 +78,8 @@ std::string extract_token(const httplib::Request& req) {
 }
 
 static inline std::string pure_user_id(const std::string& u) {
+    if (u.rfind("n:IDENTITY:", 0) == 0) return pure_user_id(u.substr(11));
+    if (u.rfind("n:identity:", 0) == 0) return pure_user_id(u.substr(11));
     if (u.rfind("user:", 0) == 0) return u.substr(5);
     if (u.rfind("agent:", 0) == 0) return u.substr(6);
     if (u.rfind("identity:", 0) == 0) return u.substr(9);
@@ -917,6 +919,8 @@ void ApiServer::listen_loop() {
             std::string token_surface_type;
             std::string token_context_id;
 
+            std::string agent_owning_user;
+
             if (auth_role == "surface") {
                 token_user = token_meta.value("username", "");
                 if (token_user.empty()) token_user = active_user;
@@ -926,25 +930,61 @@ void ApiServer::listen_loop() {
                 token_surface_id = token_meta.value("surface_id", "");
                 token_surface_type = token_meta.value("surface_type", "");
                 token_context_id = token_meta.value("context_id", "");
+            } else if (auth_role == "agent") {
+                if (token_meta.contains("user") && token_meta["user"].is_string() && !token_meta["user"].get<std::string>().empty()) {
+                    agent_owning_user = token_meta["user"].get<std::string>();
+                } else if (token_meta.contains("user_id") && token_meta["user_id"].is_string() && !token_meta["user_id"].get<std::string>().empty()) {
+                    agent_owning_user = token_meta["user_id"].get<std::string>();
+                } else {
+                    std::string pure_agt = pure_user_id(active_user);
+                    if (pure_agt.length() > 6 && pure_agt.rfind("-agent") == pure_agt.length() - 6) {
+                        agent_owning_user = pure_agt.substr(0, pure_agt.length() - 6);
+                    } else if (token_meta.contains("username") && token_meta["username"].is_string() && !token_meta["username"].get<std::string>().empty()) {
+                        agent_owning_user = token_meta["username"].get<std::string>();
+                    } else {
+                        agent_owning_user = pure_agt;
+                    }
+                }
+                token_agent = token_meta.value("agent", "");
+                if (token_agent.empty()) token_agent = token_meta.value("agent_id", "");
+                if (token_agent.empty()) {
+                    std::string pure_act = pure_user_id(active_user);
+                    if (pure_act.length() > 6 && pure_act.rfind("-agent") == pure_act.length() - 6) {
+                        token_agent = canonical_agent_id(active_user);
+                    } else {
+                        token_agent = "agent:" + pure_user_id(agent_owning_user) + "-agent";
+                    }
+                }
             }
 
             auto get_origin_field = [](const json& item, const std::string& key) -> std::string {
-                if (item.contains("header") && item["header"].is_object() &&
-                    item["header"].contains("origin") && item["header"]["origin"].is_object() &&
-                    item["header"]["origin"].contains(key)) {
-                    return item["header"]["origin"].value(key, "");
+                if (item.contains("header") && item["header"].is_object()) {
+                    const auto& header = item["header"];
+                    if (header.contains("origin") && header["origin"].is_object()) {
+                        const auto& origin = header["origin"];
+                        auto it = origin.find(key);
+                        if (it != origin.end() && it->is_string()) {
+                            return it->get<std::string>();
+                        }
+                    }
                 }
-                if (item.contains("origin") && item["origin"].is_object() &&
-                    item["origin"].contains(key)) {
-                    return item["origin"].value(key, "");
+                if (item.contains("origin") && item["origin"].is_object()) {
+                    const auto& origin = item["origin"];
+                    auto it = origin.find(key);
+                    if (it != origin.end() && it->is_string()) {
+                        return it->get<std::string>();
+                    }
                 }
-                if (item.contains(key) && item[key].is_string()) {
-                    return item.value(key, "");
+                auto it = item.find(key);
+                if (it != item.end() && it->is_string()) {
+                    return it->get<std::string>();
                 }
                 return "";
             };
 
-            int count = 0;
+            std::vector<CpbEntry> validated_entries;
+            validated_entries.reserve(atoms_array.size());
+
             for (auto& item : atoms_array) {
                 CpbEntry e;
                 // Support both flat and nested header structures
@@ -1004,7 +1044,7 @@ void ApiServer::listen_loop() {
                     } else {
                         e.header.origin.project_id = "proj-default";
                     }
-                } else if (auth_role == "user") {
+                } else if (auth_role == "user" || auth_role == "curator") {
                     if (!orig_user_id.empty() && pure_user_id(orig_user_id) != pure_user_id(active_user)) {
                         res.status = 403;
                         res.set_content(json({
@@ -1014,13 +1054,29 @@ void ApiServer::listen_loop() {
                         return;
                     }
 
+                    std::string expected_agent = "agent:" + pure_user_id(active_user) + "-agent";
+                    if (!orig_agent_id.empty() && pure_user_id(orig_agent_id) != pure_user_id(expected_agent)) {
+                        res.status = 403;
+                        res.set_content(json({{"error", "Forbidden"}, {"message", "User cannot author on behalf of another agent: " + orig_agent_id}}).dump(), "application/json");
+                        return;
+                    }
+
+                    if (!orig_surface_id.empty()) {
+                        EnrolledSurface s;
+                        if (context_broker_.get_enrolled_surface(orig_surface_id, s) && pure_user_id(s.user_id) != pure_user_id(active_user)) {
+                            res.status = 403;
+                            res.set_content(json({{"error", "Forbidden"}, {"message", "User cannot author on behalf of another user's surface: " + orig_surface_id}}).dump(), "application/json");
+                            return;
+                        }
+                    }
+
                     e.header.origin.user_id = canonical_user_id(active_user);
                     if (!orig_agent_id.empty()) {
                         e.header.origin.agent_id = orig_agent_id;
                     } else if (!top_agent_id.empty()) {
                         e.header.origin.agent_id = top_agent_id;
                     } else {
-                        e.header.origin.agent_id = "agent:" + pure_user_id(active_user) + "-agent";
+                        e.header.origin.agent_id = expected_agent;
                     }
 
                     e.header.origin.surface_id = orig_surface_id;
@@ -1033,7 +1089,50 @@ void ApiServer::listen_loop() {
                     } else {
                         e.header.origin.project_id = "proj-default";
                     }
-                } else {
+                } else if (auth_role == "agent") {
+                    if (!orig_agent_id.empty() && pure_user_id(orig_agent_id) != pure_user_id(token_agent) && pure_user_id(orig_agent_id) != pure_user_id(active_user)) {
+                        res.status = 403;
+                        res.set_content(json({
+                            {"error", "Forbidden"},
+                            {"message", "Agent cannot author on behalf of another agent: " + orig_agent_id}
+                        }).dump(), "application/json");
+                        return;
+                    }
+
+                    if (!orig_user_id.empty() && pure_user_id(orig_user_id) != pure_user_id(agent_owning_user)) {
+                        res.status = 403;
+                        res.set_content(json({
+                            {"error", "Forbidden"},
+                            {"message", "Agent cannot commit for user: " + orig_user_id}
+                        }).dump(), "application/json");
+                        return;
+                    }
+
+                    if (!orig_surface_id.empty()) {
+                        EnrolledSurface s;
+                        if (context_broker_.get_enrolled_surface(orig_surface_id, s) && pure_user_id(s.user_id) != pure_user_id(agent_owning_user)) {
+                            res.status = 403;
+                            res.set_content(json({
+                                {"error", "Forbidden"},
+                                {"message", "Agent cannot author on behalf of another user's surface: " + orig_surface_id}
+                            }).dump(), "application/json");
+                            return;
+                        }
+                    }
+
+                    e.header.origin.user_id = canonical_user_id(agent_owning_user);
+                    e.header.origin.agent_id = canonical_agent_id(token_agent);
+                    e.header.origin.surface_id = orig_surface_id;
+                    e.header.origin.surface_type = orig_surface_type;
+                    e.header.origin.context_id = orig_context_id;
+                    if (!orig_project_id.empty()) {
+                        e.header.origin.project_id = orig_project_id;
+                    } else if (!top_project_id.empty()) {
+                        e.header.origin.project_id = top_project_id;
+                    } else {
+                        e.header.origin.project_id = "proj-default";
+                    }
+                } else if (auth_role == "admin" || active_user == "admin") {
                     // admin
                     e.header.origin.user_id = orig_user_id.empty() ? canonical_user_id(active_user) : orig_user_id;
                     if (!orig_agent_id.empty()) {
@@ -1054,6 +1153,13 @@ void ApiServer::listen_loop() {
                     } else {
                         e.header.origin.project_id = "proj-default";
                     }
+                } else {
+                    res.status = 403;
+                    res.set_content(json({
+                        {"error", "Forbidden"},
+                        {"message", "Unauthorized role: " + auth_role}
+                    }).dump(), "application/json");
+                    return;
                 }
 
                 if (e.header.origin.project_id.empty() || (e.header.origin.user_id.empty() && e.header.origin.agent_id.empty())) {
@@ -1231,6 +1337,12 @@ void ApiServer::listen_loop() {
                     }
                 }
 
+                validated_entries.push_back(std::move(e));
+            }
+
+            // Pass 2 (Execution): Commit all validated entries atomically
+            int count = 0;
+            for (const auto& e : validated_entries) {
                 std::cout << "[API] Processing Atom Statement: " << e.payload.statement << std::endl;
                 if (blackboard_->commit_cpb_entry(e, principal_id)) {
                     count++;
@@ -1804,7 +1916,10 @@ void ApiServer::listen_loop() {
                                (pure_node_id == pure_active + "-agent") ||
                                (id == "identity:" + pure_active) ||
                                (id == "user:" + pure_active) ||
-                               (id == "agent:" + pure_active + "-agent");
+                               (id == "agent:" + pure_active + "-agent") ||
+                               (id == "n:IDENTITY:user:" + pure_active) ||
+                               (id == "n:IDENTITY:agent:" + pure_active + "-agent") ||
+                               (id == "n:IDENTITY:" + pure_active);
                 if (!allowed) {
                     res.status = 403;
                     res.set_content(json({{"error", "Forbidden"}, {"message", "Cannot create IDENTITY node for another user"}}).dump(), "application/json");
