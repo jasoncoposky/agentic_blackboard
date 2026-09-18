@@ -265,6 +265,37 @@ def main():
         assert mcp_proc.returncode == 0, f"mcp run --smoke-test exited with {mcp_proc.returncode}"
         print("[PASS] Step 7: mcp run --smoke-test passed with exit code 0.")
 
+        # -------------------------------------------------------------
+        # Step 8: Test --token-file support with status and swarm
+        # -------------------------------------------------------------
+        print("\n--- Step 8: ab-ctl --token-file support ---")
+        status_tf_proc = run_cli(["status", f"--connect={BASE_URL}", f"--token-file={token_file}"])
+        assert status_tf_proc.returncode == 0, f"status --token-file failed: {status_tf_proc.stderr}"
+        print("[PASS] Step 8a: status with --token-file succeeded.")
+
+        status_tf_global = run_cli([f"--token-file={token_file}", "status", f"--connect={BASE_URL}"])
+        assert status_tf_global.returncode == 0, f"--token-file status failed: {status_tf_global.stderr}"
+        print("[PASS] Step 8b: global --token-file before subcommand succeeded.")
+
+        swarm_init_proc = run_cli([
+            "swarm", "init",
+            "--context", "ctx-token-file-test",
+            "--name", "Token File Swarm",
+            f"--connect={BASE_URL}",
+            f"--token-file={token_file}"
+        ])
+        assert swarm_init_proc.returncode == 0, f"swarm init --token-file failed: {swarm_init_proc.stderr}"
+        print("[PASS] Step 8c: swarm init with --token-file succeeded.")
+
+        swarm_tasks_proc = run_cli([
+            "swarm", "task", "list",
+            "--context", "ctx-token-file-test",
+            f"--connect={BASE_URL}",
+            f"--token-file={token_file}"
+        ])
+        assert swarm_tasks_proc.returncode == 0, f"swarm task list --token-file failed: {swarm_tasks_proc.stderr}"
+        print("[PASS] Step 8d: swarm task list with --token-file succeeded.")
+
         print("\n=== All ab-ctl CLI Tests Passed Successfully! ===")
 
     finally:

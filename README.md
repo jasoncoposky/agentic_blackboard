@@ -125,6 +125,7 @@ Both servers expose:
     ```
 *   **Dual CPack Package Generation**:
     ```bash
+    # Note: Simultaneous dual packaging (cpack -G "DEB;RPM") on Debian/Ubuntu requires installing the rpm utility (`sudo apt install rpm`).
     # Configure and generate both DEB and RPM packages simultaneously:
     cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCPACK_GENERATOR="DEB;RPM"
     cmake --build build -j$(nproc)

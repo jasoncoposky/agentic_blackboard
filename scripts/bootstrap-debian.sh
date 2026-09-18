@@ -68,8 +68,8 @@ fi
 # 2. Prerequisites
 if [ "$SKIP_BUILD" != "true" ] && [ "$PACKAGE_ONLY" != "true" ]; then
     echo "[*] Ensuring build & runtime prerequisites are installed..."
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get update -qq
-    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         build-essential cmake libzmq3-dev libssl-dev dpkg-dev python3
 fi
 
@@ -104,7 +104,7 @@ fi
 
 # 4. Installation
 echo "[*] Installing package via apt-get..."
-$SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${DEB_PACKAGE}"
+$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${DEB_PACKAGE}"
 
 # 5. Service Lifecycle
 if [ "$NO_START" != "true" ] && [ -d /run/systemd/system ]; then
@@ -125,6 +125,6 @@ if [ -f /var/lib/agentic-blackboard/admin.token ] || { [ -n "$SUDO" ] && $SUDO t
     echo "    ${SUDO:+$SUDO }ab-ctl status --token-file=/var/lib/agentic-blackboard/admin.token"
     echo ""
     echo "  To initialize a swarm workspace context:"
-    echo "    ${SUDO:+$SUDO }ab-ctl swarm init --context project-alpha --name \"Alpha Project\""
+    echo "    ${SUDO:+$SUDO }ab-ctl swarm init --context project-alpha --name \"Alpha Project\" --token-file=/var/lib/agentic-blackboard/admin.token"
 fi
 echo "================================================================="

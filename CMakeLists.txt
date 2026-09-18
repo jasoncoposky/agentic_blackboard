@@ -143,7 +143,11 @@ install(DIRECTORY skills/
 
 # CPack Packaging Configuration
 if(NOT CPACK_GENERATOR)
-    set(CPACK_GENERATOR "DEB;RPM")
+    if(EXISTS "/etc/debian_version")
+        set(CPACK_GENERATOR "DEB")
+    else()
+        set(CPACK_GENERATOR "RPM")
+    endif()
 endif()
 set(CPACK_PACKAGE_NAME "agentic-blackboard")
 set(CPACK_PACKAGE_VERSION "0.4.0")

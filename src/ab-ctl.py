@@ -74,6 +74,13 @@ def load_config(config_path: str | None = None) -> dict:
                         cfg["data_dir"] = v.strip()
                     elif k_lower in ("token", "admin_token"):
                         cfg["token"] = v.strip()
+                    elif k_lower in ("token_file", "tokenfile", "admin_token_file"):
+                        try:
+                            token_p = Path(v.strip())
+                            if token_p.is_file():
+                                cfg["token"] = token_p.read_text(encoding="utf-8").strip()
+                        except Exception:
+                            pass
                     elif k_lower in ("mode", "auth_mode", "authmode"):
                         cfg["auth_mode"] = v.strip()
                     elif k_lower == "port":
@@ -86,6 +93,13 @@ def load_config(config_path: str | None = None) -> dict:
         cfg["connect"] = os.environ["AB_URL"]
     if "AB_TOKEN" in os.environ:
         cfg["token"] = os.environ["AB_TOKEN"]
+    elif "AB_TOKEN_FILE" in os.environ:
+        try:
+            tf = Path(os.environ["AB_TOKEN_FILE"])
+            if tf.is_file():
+                cfg["token"] = tf.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
 
     return cfg
 
@@ -525,6 +539,11 @@ def http_request_json(url: str, method: str = "GET", payload: dict | list | None
 def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, active_agent: str | None = None) -> dict:
     """Resolve authentication and dual-identity headers."""
     token = getattr(args, "token", None) or cfg.get("token")
+    if not token and getattr(args, "token_file", None):
+        try:
+            token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
     user = (getattr(args, "active_user", None) or
             getattr(args, "user", None) or
             active_user or
@@ -2368,6 +2387,7 @@ def main():
     parser.add_argument("--config", help="Path to blackboard.conf configuration file")
     parser.add_argument("--connect", help="Blackboard daemon URL (default: http://localhost:8085)")
     parser.add_argument("--token", help="Bearer authorization token")
+    parser.add_argument("--token-file", help="Path to file containing authorization token")
     parser.add_argument("--data-dir", help="Substrate data directory (default: /var/lib/agentic-blackboard)")
 
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -2381,6 +2401,7 @@ def main():
     status_p = subparsers.add_parser("status", help="Query daemon operational status and metrics")
     status_p.add_argument("--connect", help="Daemon connect URL")
     status_p.add_argument("--token", help="Authentication token")
+    status_p.add_argument("--token-file", help="Path to file containing authorization token")
 
     # 3. user
     user_p = subparsers.add_parser("user", help="User and token credential operations")
@@ -2389,11 +2410,13 @@ def main():
     user_create.add_argument("username", help="Username")
     user_create.add_argument("--role", default="curator", help="User role (default: curator)")
     user_create.add_argument("--token", help="Admin token for authorization")
+    user_create.add_argument("--token-file", help="Path to file containing authorization token")
     user_create.add_argument("--connect", help="Daemon connect URL")
     user_create.add_argument("--data-dir", help="Data directory path")
 
     user_list = user_sub.add_parser("list", help="List registered users")
     user_list.add_argument("--token", help="Admin token")
+    user_list.add_argument("--token-file", help="Path to file containing authorization token")
     user_list.add_argument("--connect", help="Daemon connect URL")
     user_list.add_argument("--data-dir", help="Data directory path")
 
@@ -2405,6 +2428,7 @@ def main():
     agent_create.add_argument("--user", required=True, help="Sovereign user identifier")
     agent_create.add_argument("--project", required=True, help="Anchor project identifier")
     agent_create.add_argument("--token", help="Admin or authorizing user token")
+    agent_create.add_argument("--token-file", help="Path to file containing authorization token")
     agent_create.add_argument("--connect", help="Daemon connect URL")
     agent_create.add_argument("--data-dir", help="Data directory path")
 
@@ -2418,6 +2442,7 @@ def main():
     surface_reg.add_argument("--capabilities", help="Optional JSON string of surface capabilities")
     surface_reg.add_argument("--client-app", help="Client application name")
     surface_reg.add_argument("--token", help="Bearer authorization token")
+    surface_reg.add_argument("--token-file", help="Path to file containing authorization token")
     surface_reg.add_argument("--connect", help="Daemon connect URL")
 
     # 6. context
@@ -2426,6 +2451,7 @@ def main():
     context_show = context_sub.add_parser("show", help="Display active surfaces and focus in context")
     context_show.add_argument("context_id", help="Workspace context ID")
     context_show.add_argument("--token", help="Bearer authorization token")
+    context_show.add_argument("--token-file", help="Path to file containing authorization token")
     context_show.add_argument("--connect", help="Daemon connect URL")
 
     context_focus = context_sub.add_parser("focus", help="Update and broadcast focus selection in context")
@@ -2433,6 +2459,7 @@ def main():
     context_focus.add_argument("--selected", nargs="+", required=True, help="Selected atom IDs")
     context_focus.add_argument("--surface-id", help="Surface ID broadcasting focus")
     context_focus.add_argument("--token", help="Bearer authorization token")
+    context_focus.add_argument("--token-file", help="Path to file containing authorization token")
     context_focus.add_argument("--connect", help="Daemon connect URL")
 
     # 7. mcp
@@ -2441,11 +2468,13 @@ def main():
     mcp_run = mcp_sub.add_parser("run", help="Run FastMCP server bridge forwarding stdio to blackboard")
     mcp_run.add_argument("--connect", help="Blackboard daemon URL")
     mcp_run.add_argument("--token", help="Bearer authorization token")
+    mcp_run.add_argument("--token-file", help="Path to file containing authorization token")
     mcp_run.add_argument("--smoke-test", action="store_true", help="Run self-test of MCP tools and exit 0")
 
     def add_net_args(p: argparse.ArgumentParser):
         p.add_argument("--connect", help="Daemon connect URL")
         p.add_argument("--token", help="Bearer authorization token")
+        p.add_argument("--token-file", help="Path to file containing authorization token")
         p.add_argument("--active-user", help="X-Active-User header identity")
         p.add_argument("--active-agent", help="X-Active-Agent header identity")
 
@@ -2527,6 +2556,15 @@ def main():
 
     parsed_args = parser.parse_args()
     config = load_config(parsed_args.config)
+
+    token_file_path = getattr(parsed_args, "token_file", None)
+    if token_file_path and not getattr(parsed_args, "token", None):
+        try:
+            token = Path(token_file_path).read_text(encoding="utf-8").strip()
+            setattr(parsed_args, "token", token)
+            config["token"] = token
+        except Exception as e:
+            print(f"[WARN] Failed to read token file {token_file_path}: {e}", file=sys.stderr)
 
     # Subcommand routing
     if parsed_args.subcommand == "init":

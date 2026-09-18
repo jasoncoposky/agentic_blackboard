@@ -3,6 +3,9 @@ set -e
 
 case "$1" in
     purge|remove|upgrade|failed-upgrade|abort-install|abort-upgrade)
+        if [ "$1" = "purge" ]; then
+            rm -f /etc/systemd/system/multi-user.target.wants/agentic-blackboard.service 2>/dev/null || true
+        fi
         if [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null 2>&1 || true
         fi

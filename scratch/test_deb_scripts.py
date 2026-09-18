@@ -108,6 +108,12 @@ def main() -> int:
     else:
         print("[+] PASS: postinst contains '0640'")
 
+    if "chown blackboard:blackboard /var/lib/agentic-blackboard" not in postinst_content:
+        print("[-] FAIL: postinst missing top-level non-recursive chown")
+        failed = True
+    else:
+        print("[+] PASS: postinst contains top-level non-recursive chown")
+
     # 5. Content checks: prerm
     print("\n--- 5. prerm Content Checks ---")
     prerm_content = scripts["prerm"].read_text()
@@ -128,6 +134,12 @@ def main() -> int:
         failed = True
     else:
         print("[+] PASS: postrm reloads systemd on remove/purge")
+
+    if "multi-user.target.wants" not in postrm_content or "rm -f" not in postrm_content:
+        print("[-] FAIL: postrm does not clean systemd enablement symlinks on purge")
+        failed = True
+    else:
+        print("[+] PASS: postrm cleans systemd enablement symlinks on purge")
 
     # 7. Unknown argument handling check (exit code 1)
     print("\n--- 7. Unknown Argument Handling (exit 1) ---")

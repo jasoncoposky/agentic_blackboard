@@ -19,7 +19,7 @@ case "$1" in
 
         # Ensure directories exist and have proper permissions
         mkdir -p /var/lib/agentic-blackboard /var/log/agentic-blackboard /etc/agentic-blackboard
-        chown -R blackboard:blackboard /var/lib/agentic-blackboard /var/log/agentic-blackboard
+        chown blackboard:blackboard /var/lib/agentic-blackboard /var/log/agentic-blackboard
         chmod 0750 /var/lib/agentic-blackboard /var/log/agentic-blackboard
         chown root:blackboard /etc/agentic-blackboard
         chmod 0750 /etc/agentic-blackboard
