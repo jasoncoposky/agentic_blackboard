@@ -128,7 +128,7 @@ Both servers expose:
     # Configure and generate both DEB and RPM packages simultaneously:
     cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCPACK_GENERATOR="DEB;RPM"
     cmake --build build -j$(nproc)
-    cpack --config build/CPackConfig.cmake
+    cpack -B build --config build/CPackConfig.cmake
     ```
 *   **Enterprise Linux 9 RPM**: Packaged via CPack and RPM spec (`packaging/rpm/agentic-blackboard.spec`) providing `/usr/bin/agentic-blackboardd`, `/usr/bin/ab-ctl`, `/usr/lib/systemd/system/agentic-blackboard.service`, `/etc/agentic-blackboard/blackboard.conf`, `/etc/security/limits.d/99-blackboard.conf`, and `/usr/share/agentic-blackboard/skills`.
 *   **Canonical Container (UBI 9 Minimal)**: `Dockerfile` builds a production Red Hat Universal Base Image 9 container running as unprivileged `blackboard` user with volume auto-initialization via `entrypoint.sh`.
@@ -214,11 +214,11 @@ cd build
 
 # Generate Debian package (.deb)
 cpack -G DEB
-# Generates build/agentic-blackboard_0.4.0-1_amd64.deb
+# Generates agentic-blackboard_0.4.0-1_amd64.deb in build/ (or current directory after cd build)
 
 # Generate Enterprise Linux package (.rpm)
 cpack -G RPM
-# Generates build/agentic-blackboard-0.4.0-1.el9.x86_64.rpm
+# Generates agentic-blackboard-0.4.0-1.el9.x86_64.rpm in build/ (or current directory after cd build)
 
 # Or generate both simultaneously
 cpack -G "DEB;RPM"

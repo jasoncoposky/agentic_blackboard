@@ -60,7 +60,7 @@ graph TD
 - Consumes: Standard POSIX shell `/bin/sh`, `dpkg` maintainer arguments (`configure`, `remove`, `purge`).
 - Produces: Executable maintainer scripts managing system user `blackboard`, `/var/lib/agentic-blackboard` ownership, `ab-ctl init --bootstrap`, and systemd unit reload.
 
-- [ ] **Step 1: Write verification test for maintainer scripts**
+- [x] **Step 1: Write verification test for maintainer scripts**
 Create `scratch/test_deb_scripts.py` testing:
 1. All three files exist (`packaging/debian/postinst`, `prerm`, `postrm`).
 2. All three files have executable permissions (`0755`).
@@ -69,11 +69,11 @@ Create `scratch/test_deb_scripts.py` testing:
 5. `prerm` stops `agentic-blackboard.service`.
 6. `postrm` reloads systemd on remove/purge.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 Run: `python3 scratch/test_deb_scripts.py`
 Expected: FAIL with missing maintainer scripts.
 
-- [ ] **Step 3: Implement maintainer scripts**
+- [x] **Step 3: Implement maintainer scripts**
 Create `packaging/debian/postinst`:
 ```sh
 #!/bin/sh
@@ -171,11 +171,11 @@ exit 0
 ```
 Set executable bit (`chmod 0755 packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm`).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 Run: `python3 scratch/test_deb_scripts.py`
 Expected: PASS with all script audits succeeded.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 ```bash
 git add packaging/debian/ scratch/test_deb_scripts.py
 git commit -m "feat(packaging): add Debian maintainer scripts postinst, prerm, and postrm"
@@ -193,7 +193,7 @@ git commit -m "feat(packaging): add Debian maintainer scripts postinst, prerm, a
 - Consumes: `packaging/debian/*`, `build/agentic-blackboardd`, `src/ab-ctl.py`, `skills/`.
 - Produces: `build/agentic-blackboard_0.4.0-1_amd64.deb` via `cpack -G DEB`.
 
-- [ ] **Step 1: Write failing packaging integration test**
+- [x] **Step 1: Write failing packaging integration test**
 Create `scratch/test_deb_packaging.py` testing:
 1. CMake configuration accepts `-DCPACK_GENERATOR=DEB`.
 2. Running `cpack -G DEB` creates `build/agentic-blackboard_0.4.0-1_amd64.deb` (or matching name).
@@ -210,11 +210,11 @@ Create `scratch/test_deb_packaging.py` testing:
    - `/usr/share/agentic-blackboard/skills/`
 5. `dpkg-deb -e <file>.deb <extract_dir>` confirms `postinst`, `prerm`, and `postrm` are present with `0755` permissions.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 Run: `python3 scratch/test_deb_packaging.py`
 Expected: FAIL because `CMakeLists.txt` does not yet configure CPack DEB.
 
-- [ ] **Step 3: Update `CMakeLists.txt` with CPack DEB directives**
+- [x] **Step 3: Update `CMakeLists.txt` with CPack DEB directives**
 In [`CMakeLists.txt`](file:///home/darkfell/dev/agentic_blackboard/CMakeLists.txt), update CPack configuration:
 ```cmake
 # CPack Packaging Configuration
@@ -266,11 +266,11 @@ set(CPACK_PACKAGING_INSTALL_PREFIX "/")
 include(CPack)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 Run: `python3 scratch/test_deb_packaging.py`
 Expected: PASS with `.deb` created, valid control metadata, dependencies, manifest, and maintainer scripts verified.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 ```bash
 git add CMakeLists.txt scratch/test_deb_packaging.py
 git commit -m "feat(packaging): add CPack DEB configuration and package generation"
@@ -288,18 +288,18 @@ git commit -m "feat(packaging): add CPack DEB configuration and package generati
 - Consumes: Host OS `/etc/os-release`, `apt-get`, `cmake`, `cpack`, `systemctl`.
 - Produces: Executable `scripts/bootstrap-debian.sh` with options (`--package-only`, `--skip-build`, `--no-start`, `--help`).
 
-- [ ] **Step 1: Write test for `scripts/bootstrap-debian.sh`**
+- [x] **Step 1: Write test for `scripts/bootstrap-debian.sh`**
 Create `scratch/test_bootstrap_debian.py` testing:
 1. `scripts/bootstrap-debian.sh` exists and is executable (`0755`).
 2. Running with `--help` prints usage instructions and exits with code 0.
 3. Running with `--package-only` compiles targets, runs `./build/ab_verify`, builds the `.deb` package via CPack, and exits with code 0 without modifying `/usr` or `/etc`.
 4. Confirms that the built `.deb` exists in `build/`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 Run: `python3 scratch/test_bootstrap_debian.py`
 Expected: FAIL with `scripts/bootstrap-debian.sh` missing.
 
-- [ ] **Step 3: Implement `scripts/bootstrap-debian.sh`**
+- [x] **Step 3: Implement `scripts/bootstrap-debian.sh`**
 Create `scripts/bootstrap-debian.sh`:
 ```bash
 #!/usr/bin/env bash
@@ -433,11 +433,11 @@ echo "================================================================="
 ```
 Set executable bit (`chmod 0755 scripts/bootstrap-debian.sh`).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 Run: `python3 scratch/test_bootstrap_debian.py`
 Expected: PASS with CLI options and package-only mode tested.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 ```bash
 git add scripts/bootstrap-debian.sh scratch/test_bootstrap_debian.py
 git commit -m "feat(bootstrap): add automated bootstrap script for Debian and Ubuntu"
@@ -455,13 +455,13 @@ git commit -m "feat(bootstrap): add automated bootstrap script for Debian and Ub
 - Consumes: Verified Debian package & bootstrap script.
 - Produces: Updated `README.md` documenting Ubuntu / Debian `.deb` installation and `scripts/bootstrap-debian.sh`.
 
-- [ ] **Step 1: Update `README.md`**
+- [x] **Step 1: Update `README.md`**
 Update Section 7 (Deployment & Packaging) and Section 2 (Quick Start) to document:
 - Debian / Ubuntu 24.04/22.04 installation via `agentic-blackboard_*.deb`.
 - One-command bootstrapping via `./scripts/bootstrap-debian.sh`.
 - CPack multi-generator support (`DEB;RPM`).
 
-- [ ] **Step 2: Run all verification test suites**
+- [x] **Step 2: Run all verification test suites**
 Run:
 ```bash
 python3 scratch/test_deb_scripts.py
@@ -475,7 +475,7 @@ python3 scratch/test_e2e_cpg_swarm.py
 ```
 Expected: 100% PASS across all suites.
 
-- [ ] **Step 3: Commit Task 4**
+- [x] **Step 3: Commit Task 4**
 ```bash
 git add README.md
 git commit -m "docs: document Debian and Ubuntu packaging and automated bootstrap in README"

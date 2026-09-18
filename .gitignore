@@ -52,6 +52,9 @@ node_modules/
 graph_dump*.json
 test_payload.json
 knowledge_injection.json
+_CPack_Packages/
+*.deb
+*.rpm
 
 # IDEs
 .vscode/
