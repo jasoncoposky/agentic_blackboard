@@ -233,6 +233,171 @@ class TestIdentityKeystore(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_token_env_precedence_and_swarm_headers(self):
+        """Verify that AB_USER_TOKEN populates cfg['token'] and resolve_swarm_headers(), and precedence rules hold."""
+        orig_token = os.environ.get("AB_TOKEN")
+        orig_user_token = os.environ.get("AB_USER_TOKEN")
+        orig_agent_token = os.environ.get("AB_AGENT_TOKEN")
+        orig_home = os.environ.get("HOME")
+        orig_xdg = os.environ.get("XDG_CONFIG_HOME")
+
+        try:
+            os.environ["HOME"] = str(self.fake_home)
+            os.environ["XDG_CONFIG_HOME"] = str(self.fake_home / ".config")
+
+            # 1. Test AB_USER_TOKEN alone
+            os.environ.pop("AB_TOKEN", None)
+            os.environ.pop("AB_AGENT_TOKEN", None)
+            os.environ["AB_USER_TOKEN"] = "ab_usr_test_user_token_12345"
+
+            ab_ctl = load_ab_ctl_module()
+            cfg = ab_ctl.load_config()
+
+            self.assertEqual(cfg.get("token"), "ab_usr_test_user_token_12345")
+            self.assertEqual(cfg.get("user_token"), "ab_usr_test_user_token_12345")
+
+            class DummyArgs:
+                token = None
+                token_file = None
+                active_user = None
+                user = None
+                active_agent = None
+                agent = None
+
+            headers = ab_ctl.resolve_swarm_headers(DummyArgs(), cfg)
+            self.assertEqual(headers.get("Authorization"), "Bearer ab_usr_test_user_token_12345")
+            self.assertEqual(headers.get("X-AB-Key"), "ab_usr_test_user_token_12345")
+
+            # 2. Test AB_TOKEN precedence over AB_USER_TOKEN
+            os.environ["AB_TOKEN"] = "ab_adm_top_priority_token"
+            cfg = ab_ctl.load_config()
+            self.assertEqual(cfg.get("token"), "ab_adm_top_priority_token")
+            headers = ab_ctl.resolve_swarm_headers(DummyArgs(), cfg)
+            self.assertEqual(headers.get("Authorization"), "Bearer ab_adm_top_priority_token")
+
+            # 3. Test AB_AGENT_TOKEN alone
+            os.environ.pop("AB_TOKEN", None)
+            os.environ.pop("AB_USER_TOKEN", None)
+            os.environ["AB_AGENT_TOKEN"] = "ab_agt_test_agent_token_67890"
+            cfg = ab_ctl.load_config()
+            self.assertEqual(cfg.get("token"), "ab_agt_test_agent_token_67890")
+            headers = ab_ctl.resolve_swarm_headers(DummyArgs(), cfg)
+            self.assertEqual(headers.get("Authorization"), "Bearer ab_agt_test_agent_token_67890")
+        finally:
+            for k, v in [
+                ("AB_TOKEN", orig_token),
+                ("AB_USER_TOKEN", orig_user_token),
+                ("AB_AGENT_TOKEN", orig_agent_token),
+                ("HOME", orig_home),
+                ("XDG_CONFIG_HOME", orig_xdg),
+            ]:
+                if v is not None:
+                    os.environ[k] = v
+                else:
+                    os.environ.pop(k, None)
+
+    def test_identity_json_defensive_null_handling(self):
+        """Verify load_config() defensively handles nulls in identity.json."""
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        identity_file = self.config_dir / "identity.json"
+        identity_file.write_text(json.dumps({
+            "version": "1.0",
+            "user": None,
+            "agent": None,
+            "default_surface": None
+        }), encoding="utf-8")
+
+        orig_home = os.environ.get("HOME")
+        orig_xdg = os.environ.get("XDG_CONFIG_HOME")
+        try:
+            os.environ["HOME"] = str(self.fake_home)
+            os.environ["XDG_CONFIG_HOME"] = str(self.fake_home / ".config")
+            os.environ.pop("AB_TOKEN", None)
+            os.environ.pop("AB_USER_TOKEN", None)
+            os.environ.pop("AB_AGENT_TOKEN", None)
+
+            ab_ctl = load_ab_ctl_module()
+            cfg = ab_ctl.load_config()
+            self.assertEqual(cfg.get("user_id"), "")
+            self.assertEqual(cfg.get("agent_id"), "")
+            self.assertEqual(cfg.get("user_token"), "")
+            self.assertEqual(cfg.get("agent_token"), "")
+            self.assertEqual(cfg.get("token"), "")
+        finally:
+            if orig_home is not None:
+                os.environ["HOME"] = orig_home
+            if orig_xdg is not None:
+                os.environ["XDG_CONFIG_HOME"] = orig_xdg
+
+    def test_empty_username_validation(self):
+        """Verify handle_init rejects empty username with error on stderr."""
+        for invalid_user in ["", "   ", "user:", "user:   "]:
+            cmd = [
+                sys.executable, str(AB_CTL_PY), "init",
+                "--user", invalid_user
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("Error: Username cannot be empty", proc.stderr)
+
+    def test_init_respects_ab_identity_file_env_and_parent_chmod(self):
+        """Verify init honors AB_IDENTITY_FILE environment variable and sets parent directory chmod 0700."""
+        target_dir = self.fake_home / "secure_config"
+        target_file = target_dir / "custom_identity.json"
+        env = os.environ.copy()
+        env["AB_IDENTITY_FILE"] = str(target_file)
+
+        cmd = [
+            sys.executable, str(AB_CTL_PY), "init",
+            "--user", "charlie"
+        ]
+        proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"init failed: {proc.stderr}")
+        self.assertTrue(target_file.is_file())
+
+        dir_mode = target_dir.stat().st_mode & 0o777
+        self.assertEqual(dir_mode, 0o700, f"Parent directory permissions should be 0700, got: {oct(dir_mode)}")
+
+    def test_daemon_provisioning_diagnostic_warnings(self):
+        """Verify diagnostic warnings are emitted when daemon returns non-(0, 200, 201) status."""
+        class FailingDaemonHandler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                pass
+
+            def do_POST(self):
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Internal daemon failure"}).encode("utf-8"))
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), FailingDaemonHandler)
+        port = server.server_address[1]
+        server_thread = threading.Thread(target=server.serve_forever)
+        server_thread.daemon = True
+        server_thread.start()
+
+        try:
+            connect_url = f"http://127.0.0.1:{port}"
+            identity_file = self.fake_home / "failing_identity.json"
+            cmd = [
+                sys.executable, str(AB_CTL_PY), "init",
+                "--user", "dave",
+                "--generate-agent",
+                "--identity-file", str(identity_file),
+                "--connect", connect_url
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0)
+            self.assertIn("[WARN] Failed to register user dave on daemon", proc.stderr)
+            self.assertIn("HTTP 500", proc.stderr)
+            self.assertIn("[WARN] Failed to register agent dave-agent on daemon", proc.stderr)
+            self.assertIn("[WARN] Failed to register node user:dave on daemon", proc.stderr)
+            self.assertIn("[WARN] Failed to register node agent:dave-agent on daemon", proc.stderr)
+            self.assertIn("[WARN] Failed to register link user:dave->agent:dave-agent on daemon", proc.stderr)
+        finally:
+            server.shutdown()
+            server.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

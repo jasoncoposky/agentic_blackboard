@@ -133,41 +133,52 @@ def load_config(config_path: str | None = None) -> dict:
     if identity_file:
         try:
             idata = json.loads(identity_file.read_text(encoding="utf-8"))
-            cfg["identity_file"] = str(identity_file)
-            cfg["user_id"] = idata.get("user", {}).get("id", "")
-            cfg["agent_id"] = idata.get("agent", {}).get("id", "")
-            cfg["user_token"] = idata.get("user", {}).get("token", "")
-            cfg["agent_token"] = idata.get("agent", {}).get("token", "")
-            if not cfg.get("token"):
-                cfg["token"] = cfg["user_token"] or cfg["agent_token"]
-            if idata.get("connect") and cfg.get("connect") == DEFAULT_CONNECT_URL:
-                cfg["connect"] = idata["connect"]
-            if idata.get("default_surface"):
-                cfg["surface_id"] = idata["default_surface"].get("id", "surface:workstation")
-                cfg["surface_type"] = idata["default_surface"].get("type", "workstation")
+            if isinstance(idata, dict):
+                cfg["identity_file"] = str(identity_file)
+                user_obj = idata.get("user") or {}
+                agent_obj = idata.get("agent") or {}
+                cfg["user_id"] = user_obj.get("id", "")
+                cfg["agent_id"] = agent_obj.get("id", "")
+                cfg["user_token"] = user_obj.get("token", "")
+                cfg["agent_token"] = agent_obj.get("token", "")
+                if not cfg.get("token"):
+                    cfg["token"] = cfg.get("user_token") or cfg.get("agent_token") or ""
+                if idata.get("connect") and cfg.get("connect") == DEFAULT_CONNECT_URL:
+                    cfg["connect"] = idata["connect"]
+                surface_obj = idata.get("default_surface") or {}
+                if surface_obj:
+                    cfg["surface_id"] = surface_obj.get("id", "surface:workstation")
+                    cfg["surface_type"] = surface_obj.get("type", "workstation")
         except Exception:
             pass
 
     # Environment variable overrides
     if "AB_URL" in os.environ:
-        cfg["connect"] = os.environ["AB_URL"]
+        cfg["connect"] = os.environ["AB_URL"].strip()
     if "AB_USER_TOKEN" in os.environ:
-        cfg["user_token"] = os.environ["AB_USER_TOKEN"]
+        cfg["user_token"] = os.environ["AB_USER_TOKEN"].strip()
     if "AB_AGENT_TOKEN" in os.environ:
-        cfg["agent_token"] = os.environ["AB_AGENT_TOKEN"]
+        cfg["agent_token"] = os.environ["AB_AGENT_TOKEN"].strip()
     if "AB_USER_ID" in os.environ:
-        cfg["user_id"] = os.environ["AB_USER_ID"]
+        cfg["user_id"] = os.environ["AB_USER_ID"].strip()
     if "AB_AGENT_ID" in os.environ:
-        cfg["agent_id"] = os.environ["AB_AGENT_ID"]
-    if "AB_TOKEN" in os.environ:
-        cfg["token"] = os.environ["AB_TOKEN"]
-    elif "AB_TOKEN_FILE" in os.environ:
+        cfg["agent_id"] = os.environ["AB_AGENT_ID"].strip()
+    if "AB_TOKEN_FILE" in os.environ:
         try:
             tf = Path(os.environ["AB_TOKEN_FILE"])
             if tf.is_file():
                 cfg["token"] = tf.read_text(encoding="utf-8").strip()
         except Exception:
             pass
+
+    if "AB_TOKEN" in os.environ:
+        cfg["token"] = os.environ["AB_TOKEN"].strip()
+    elif "AB_USER_TOKEN" in os.environ:
+        cfg["token"] = os.environ["AB_USER_TOKEN"].strip()
+    elif "AB_AGENT_TOKEN" in os.environ:
+        cfg["token"] = os.environ["AB_AGENT_TOKEN"].strip()
+    elif not cfg.get("token"):
+        cfg["token"] = cfg.get("user_token") or cfg.get("agent_token") or ""
 
     return cfg
 
@@ -244,8 +255,15 @@ def get_auth_headers(token: str | None, active_user: str | None = None, active_a
 
 def handle_init(args, cfg: dict):
     """Generate directory structure, initialize credentials DB, provision user identity keystore and substrate graph."""
+    if getattr(args, "user", None) is not None:
+        raw_user = args.user.strip()
+        pure_user = raw_user.split(":", 1)[1] if raw_user.startswith("user:") else raw_user
+        if not pure_user:
+            print("Error: Username cannot be empty", file=sys.stderr)
+            return 1
+
     data_dir_str = getattr(args, "data_dir", None)
-    if not data_dir_str and not getattr(args, "user", None):
+    if not data_dir_str and getattr(args, "user", None) is None:
         data_dir_str = cfg.get("data_dir", DEFAULT_DATA_DIR)
     elif not data_dir_str and cfg.get("data_dir"):
         candidate = Path(cfg["data_dir"])
@@ -291,6 +309,9 @@ def handle_init(args, cfg: dict):
     if getattr(args, "user", None):
         username = args.user.strip()
         pure_username = username.split(":", 1)[1] if username.startswith("user:") else username
+        if not pure_username:
+            print("Error: Username cannot be empty", file=sys.stderr)
+            return 1
         user_id = f"user:{pure_username}"
         user_token = f"ab_usr_{secrets.token_hex(16)}"
 
@@ -332,6 +353,8 @@ def handle_init(args, cfg: dict):
         # Resolve destination path for identity.json
         if getattr(args, "identity_file", None):
             identity_path = Path(args.identity_file).resolve()
+        elif os.environ.get("AB_IDENTITY_FILE"):
+            identity_path = Path(os.environ["AB_IDENTITY_FILE"]).resolve()
         else:
             xdg = os.environ.get("XDG_CONFIG_HOME")
             base_config = Path(xdg) if xdg else Path.home() / ".config"
@@ -339,6 +362,10 @@ def handle_init(args, cfg: dict):
 
         try:
             identity_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                identity_path.parent.chmod(0o700)
+            except (PermissionError, OSError):
+                pass
             content = json.dumps(identity_data, indent=2) + "\n"
             # Write with 0600 mode
             fd = os.open(identity_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -378,21 +405,26 @@ def handle_init(args, cfg: dict):
         req_headers = get_auth_headers(auth_tok, active_user=user_id, active_agent=agent_info["id"] if agent_info else None)
 
         # Register user and agent credentials with daemon
-        http_request_json(
+        u_status, u_res = http_request_json(
             f"{connect_url}/api/v1/admin/users",
             method="POST",
             payload={"username": pure_username, "role": "curator", "token": user_token},
             headers=req_headers,
             timeout=3.0
         )
+        if u_status not in (0, 200, 201):
+            print(f"[WARN] Failed to register user {pure_username} on daemon at {connect_url}: HTTP {u_status} ({u_res})", file=sys.stderr)
+
         if agent_info:
-            http_request_json(
+            a_status, a_res = http_request_json(
                 f"{connect_url}/api/v1/admin/users",
                 method="POST",
                 payload={"username": agent_info["name"], "role": "agent", "token": agent_info["token"]},
                 headers=req_headers,
                 timeout=3.0
             )
+            if a_status not in (0, 200, 201):
+                print(f"[WARN] Failed to register agent {agent_info['name']} on daemon at {connect_url}: HTTP {a_status} ({a_res})", file=sys.stderr)
 
         # Commit user and agent IDENTITY nodes
         user_meta = {
@@ -401,7 +433,10 @@ def handle_init(args, cfg: dict):
             "display_name": pure_username.capitalize(),
             "status": "ACTIVE"
         }
-        commit_graph_node(connect_url, req_headers, "IDENTITY", user_id, user_meta)
+        u_node_res = commit_graph_node(connect_url, req_headers, "IDENTITY", user_id, user_meta)
+        un_status = getattr(u_node_res, "status", 0)
+        if un_status not in (0, 200, 201):
+            print(f"[WARN] Failed to register node {user_id} on daemon at {connect_url}: HTTP {un_status} ({u_node_res[1]})", file=sys.stderr)
 
         if agent_info:
             agent_meta = {
@@ -410,7 +445,10 @@ def handle_init(args, cfg: dict):
                 "name": agent_info["name"],
                 "status": "ACTIVE"
             }
-            commit_graph_node(connect_url, req_headers, "IDENTITY", agent_info["id"], agent_meta)
+            a_node_res = commit_graph_node(connect_url, req_headers, "IDENTITY", agent_info["id"], agent_meta)
+            an_status = getattr(a_node_res, "status", 0)
+            if an_status not in (0, 200, 201):
+                print(f"[WARN] Failed to register node {agent_info['id']} on daemon at {connect_url}: HTTP {an_status} ({a_node_res[1]})", file=sys.stderr)
 
             # Provision DELEGATES_TO edge
             link_url = f"{connect_url}/api/v1/link"
@@ -424,9 +462,11 @@ def handle_init(args, cfg: dict):
                     "status": "PERMANENT"
                 }
             }
-            l_status, _ = http_request_json(link_url, method="POST", payload=link_payload, headers=req_headers, timeout=3.0)
+            l_status, l_res = http_request_json(link_url, method="POST", payload=link_payload, headers=req_headers, timeout=3.0)
             if l_status in (200, 201):
                 print("[SUBSTRATE] Substrate identity graph provisioned with 1:1 DELEGATES_TO relation.")
+            elif l_status not in (0, 200, 201):
+                print(f"[WARN] Failed to register link {user_id}->{agent_info['id']} on daemon at {connect_url}: HTTP {l_status} ({l_res})", file=sys.stderr)
 
         return 0
 
@@ -766,7 +806,10 @@ def http_request_json(url: str, method: str = "GET", payload: dict | list | None
 
 def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, active_agent: str | None = None) -> dict:
     """Resolve authentication and dual-identity headers."""
-    token = getattr(args, "token", None) or cfg.get("token")
+    token = (getattr(args, "token", None) or
+             cfg.get("token") or
+             cfg.get("user_token") or
+             cfg.get("agent_token"))
     if not token and getattr(args, "token_file", None):
         try:
             token = Path(args.token_file).read_text(encoding="utf-8").strip()
@@ -789,9 +832,18 @@ def resolve_swarm_headers(args, cfg: dict, active_user: str | None = None, activ
     return get_auth_headers(token, active_user=user, active_agent=agent)
 
 
+class CommitResult(tuple):
+    """Result of commit_graph_node as (ok, err) with status attribute."""
+    def __new__(cls, ok: bool, err: str, status: int = 0):
+        instance = super().__new__(cls, (ok, err))
+        instance.status = status
+        return instance
+
+
 def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: str, metadata: dict) -> tuple[bool, str]:
     """Commit or update a node in the blackboard substrate with bundle fallback."""
     last_err = ""
+    last_status = 0
     if node_type.upper() in ("PROJECT", "IDENTITY"):
         node_url = f"{connect_url}/api/v1/graph/node"
         payload = {
@@ -802,8 +854,9 @@ def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: 
         status, res = http_request_json(node_url, method="POST", payload=payload, headers=headers)
         if status in (200, 201):
             if not (isinstance(res, dict) and res.get("status") == "EXISTS"):
-                return True, ""
+                return CommitResult(True, "", status=status)
         last_err = str(res)
+        last_status = status
 
     # Post directly to /api/v1/graph/bundle for non-PROJECT/IDENTITY atoms or bundle fallback
     bundle_url = f"{connect_url}/api/v1/graph/bundle"
@@ -842,9 +895,10 @@ def commit_graph_node(connect_url: str, headers: dict, node_type: str, node_id: 
     }
     b_status, b_res = http_request_json(bundle_url, method="POST", payload=b_payload, headers=headers)
     if b_status in (200, 201):
-        return True, ""
+        return CommitResult(True, "", status=b_status)
 
-    return False, str(b_res) if b_res else last_err
+    final_status = b_status if b_status != 0 else last_status
+    return CommitResult(False, str(b_res) if b_res else last_err, status=final_status)
 
 
 def fetch_graph_node(connect_url: str, headers: dict, node_id: str) -> tuple[int, dict | None]:
