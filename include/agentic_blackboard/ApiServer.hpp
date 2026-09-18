@@ -118,6 +118,8 @@ public:
 
     bool get_enrolled_surface(const std::string& surface_id, EnrolledSurface& out_surface);
 
+    void touch_surface(const std::string& surface_id);
+
 private:
     void save_enrolled_surfaces_to_store();
 
@@ -163,7 +165,8 @@ private:
     void listen_loop();
     bool authenticate_request(const httplib::Request& req, httplib::Response& res,
                               uint32_t& principal_id, std::string& authenticated_user,
-                              std::string& authenticated_role);
+                              std::string& authenticated_role,
+                              nlohmann::json* out_token_meta = nullptr);
 
     std::atomic<bool> running_;
     std::thread thread_;

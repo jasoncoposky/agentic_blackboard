@@ -79,17 +79,27 @@ std::string extract_token(const httplib::Request& req) {
 
 static inline std::string pure_user_id(const std::string& u) {
     if (u.rfind("user:", 0) == 0) return u.substr(5);
+    if (u.rfind("agent:", 0) == 0) return u.substr(6);
+    if (u.rfind("identity:", 0) == 0) return u.substr(9);
     return u;
 }
 
 static inline std::string canonical_user_id(const std::string& u) {
+    if (u.empty()) return "";
     if (u.rfind("user:", 0) == 0) return u;
     return "user:" + u;
 }
 
 static inline std::string canonical_surface_id(const std::string& s) {
+    if (s.empty()) return "";
     if (s.rfind("surface:", 0) == 0) return s;
     return "surface:" + s;
+}
+
+static inline std::string canonical_agent_id(const std::string& a) {
+    if (a.empty()) return "";
+    if (a.rfind("agent:", 0) == 0) return a;
+    return "agent:" + a;
 }
 
 } // anonymous namespace
@@ -671,6 +681,19 @@ bool ContextBroker::get_enrolled_surface(const std::string& surface_id, Enrolled
     return true;
 }
 
+void ContextBroker::touch_surface(const std::string& surface_id) {
+    if (surface_id.empty()) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = enrolled_surfaces_.find(surface_id);
+    if (it == enrolled_surfaces_.end()) {
+        it = enrolled_surfaces_.find(canonical_surface_id(surface_id));
+    }
+    if (it != enrolled_surfaces_.end()) {
+        it->second.last_seen_sec = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+}
+
 ApiServer::~ApiServer() {
     stop();
 }
@@ -699,7 +722,8 @@ void ApiServer::stop() {
 
 bool ApiServer::authenticate_request(const httplib::Request& req, httplib::Response& res,
                                      uint32_t& principal_id, std::string& authenticated_user,
-                                     std::string& authenticated_role) {
+                                     std::string& authenticated_role,
+                                     nlohmann::json* out_token_meta) {
     if (!blackboard_) {
         res.status = 503;
         json err = {
@@ -711,9 +735,10 @@ bool ApiServer::authenticate_request(const httplib::Request& req, httplib::Respo
     }
 
     std::string auth_mode = blackboard_->get_auth_mode();
+    nlohmann::json token_meta;
     if (auth_mode == "token") {
         std::string token = extract_token(req);
-        if (token.empty() || !blackboard_->validate_token(token, authenticated_user, authenticated_role)) {
+        if (token.empty() || !blackboard_->validate_token(token, authenticated_user, authenticated_role, token_meta)) {
             res.status = 401;
             json err = {
                 {"error", "Unauthorized"},
@@ -722,22 +747,50 @@ bool ApiServer::authenticate_request(const httplib::Request& req, httplib::Respo
             res.set_content(err.dump(), "application/json");
             return false;
         }
+        if (out_token_meta) {
+            *out_token_meta = token_meta;
+        }
+        std::string pure_u = pure_user_id(authenticated_user);
+        std::string canon_u = canonical_user_id(authenticated_user);
         blackboard_->register_user_credentials(authenticated_user, authenticated_user + "-key");
+        blackboard_->register_user_credentials(pure_u, pure_u + "-key");
+        blackboard_->register_user_credentials(canon_u, canon_u + "-key");
+
         if (authenticated_user == "admin" || authenticated_role == "admin") {
             principal_id = 0;
+        } else if (authenticated_role == "surface") {
+            principal_id = blackboard_->get_user_uid(pure_u);
+            std::string sid = token_meta.value("surface_id", "");
+            if (!sid.empty()) {
+                context_broker_.touch_surface(sid);
+            }
         } else {
-            principal_id = blackboard_->get_user_uid(authenticated_user);
+            principal_id = blackboard_->get_user_uid(pure_u);
         }
         return true;
     } else {
         // trusted_network mode (fallback)
         std::string token = extract_token(req);
-        if (!token.empty() && blackboard_->validate_token(token, authenticated_user, authenticated_role)) {
+        if (!token.empty() && blackboard_->validate_token(token, authenticated_user, authenticated_role, token_meta)) {
+            if (out_token_meta) {
+                *out_token_meta = token_meta;
+            }
+            std::string pure_u = pure_user_id(authenticated_user);
+            std::string canon_u = canonical_user_id(authenticated_user);
             blackboard_->register_user_credentials(authenticated_user, authenticated_user + "-key");
+            blackboard_->register_user_credentials(pure_u, pure_u + "-key");
+            blackboard_->register_user_credentials(canon_u, canon_u + "-key");
+
             if (authenticated_user == "admin" || authenticated_role == "admin") {
                 principal_id = 0;
+            } else if (authenticated_role == "surface") {
+                principal_id = blackboard_->get_user_uid(pure_u);
+                std::string sid = token_meta.value("surface_id", "");
+                if (!sid.empty()) {
+                    context_broker_.touch_surface(sid);
+                }
             } else {
-                principal_id = blackboard_->get_user_uid(authenticated_user);
+                principal_id = blackboard_->get_user_uid(pure_u);
             }
             return true;
         }
@@ -747,8 +800,12 @@ bool ApiServer::authenticate_request(const httplib::Request& req, httplib::Respo
         authenticated_role = (active_user == "admin") ? "admin" : "user";
         principal_id = 0;
         if (!active_user.empty() && active_user != "admin") {
+            std::string pure_u = pure_user_id(active_user);
+            std::string canon_u = canonical_user_id(active_user);
             blackboard_->register_user_credentials(active_user, active_user + "-key");
-            principal_id = blackboard_->get_user_uid(active_user);
+            blackboard_->register_user_credentials(pure_u, pure_u + "-key");
+            blackboard_->register_user_credentials(canon_u, canon_u + "-key");
+            principal_id = blackboard_->get_user_uid(pure_u);
         }
         return true;
     }
@@ -834,63 +891,175 @@ void ApiServer::listen_loop() {
             std::string active_user;
             std::string auth_role;
             uint32_t principal_id = 0;
-            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+            nlohmann::json token_meta;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role, &token_meta)) {
                 return;
             }
 
             auto j = json::parse(req.body);
-            if (!j.contains("atoms") || !j["atoms"].is_array()) {
+            json atoms_array;
+            if (j.contains("atoms") && j["atoms"].is_array()) {
+                atoms_array = j["atoms"];
+            } else if (j.contains("atom") && j["atom"].is_object()) {
+                atoms_array = json::array({ j["atom"] });
+            } else {
                 res.status = 400;
                 res.set_content("Error: Missing atoms array", "text/plain");
                 return;
             }
 
-            std::string project_id = j.value("project_id", "");
-            std::string agent_id = j.value("agent_id", "");
+            std::string top_project_id = j.value("project_id", "");
+            std::string top_agent_id = j.value("agent_id", "");
 
-            if (project_id.empty() || agent_id.empty()) {
-                res.status = 400;
-                res.set_content("Error: Missing mandatory Project or Identity anchor.", "text/plain");
-                return;
+            std::string token_user;
+            std::string token_agent;
+            std::string token_surface_id;
+            std::string token_surface_type;
+            std::string token_context_id;
+
+            if (auth_role == "surface") {
+                token_user = token_meta.value("username", "");
+                if (token_user.empty()) token_user = active_user;
+                token_agent = token_meta.value("agent", "");
+                if (token_agent.empty()) token_agent = token_meta.value("agent_id", "");
+                if (token_agent.empty() && !token_user.empty()) token_agent = "agent:" + pure_user_id(token_user) + "-agent";
+                token_surface_id = token_meta.value("surface_id", "");
+                token_surface_type = token_meta.value("surface_type", "");
+                token_context_id = token_meta.value("context_id", "");
             }
 
+            auto get_origin_field = [](const json& item, const std::string& key) -> std::string {
+                if (item.contains("header") && item["header"].is_object() &&
+                    item["header"].contains("origin") && item["header"]["origin"].is_object() &&
+                    item["header"]["origin"].contains(key)) {
+                    return item["header"]["origin"].value(key, "");
+                }
+                if (item.contains("origin") && item["origin"].is_object() &&
+                    item["origin"].contains(key)) {
+                    return item["origin"].value(key, "");
+                }
+                if (item.contains(key) && item[key].is_string()) {
+                    return item.value(key, "");
+                }
+                return "";
+            };
+
             int count = 0;
-            for (auto& item : j["atoms"]) {
+            for (auto& item : atoms_array) {
                 CpbEntry e;
                 // Support both flat and nested header structures
-                if (item.contains("header")) {
+                if (item.contains("header") && item["header"].is_object() && item["header"].contains("uuid")) {
                     e.header.uuid = item["header"].value("uuid", "");
-                } else {
+                } else if (item.contains("uuid")) {
                     e.header.uuid = item.value("uuid", "");
+                } else if (item.contains("id")) {
+                    e.header.uuid = item.value("id", "");
                 }
 
-                e.header.origin.agent_id = agent_id;
-                e.header.origin.project_id = project_id;
+                std::string orig_user_id = get_origin_field(item, "user_id");
+                std::string orig_agent_id = get_origin_field(item, "agent_id");
+                std::string orig_surface_id = get_origin_field(item, "surface_id");
+                std::string orig_surface_type = get_origin_field(item, "surface_type");
+                std::string orig_context_id = get_origin_field(item, "context_id");
+                if (orig_context_id.empty() && j.contains("context_id")) {
+                    orig_context_id = j.value("context_id", "");
+                }
+                std::string orig_project_id = get_origin_field(item, "project_id");
 
-                if (item.contains("header") && item["header"].contains("origin") && item["header"]["origin"].contains("context_id")) {
-                    e.header.origin.context_id = item["header"]["origin"].value("context_id", "");
-                } else if (item.contains("origin") && item["origin"].contains("context_id")) {
-                    e.header.origin.context_id = item["origin"].value("context_id", "");
-                } else if (item.contains("context_id")) {
-                    e.header.origin.context_id = item.value("context_id", "");
-                } else if (j.contains("context_id")) {
-                    e.header.origin.context_id = j.value("context_id", "");
+                if (auth_role == "surface") {
+                    if (!orig_user_id.empty() && pure_user_id(orig_user_id) != pure_user_id(token_user)) {
+                        res.status = 403;
+                        res.set_content(json({
+                            {"error", "Forbidden"},
+                            {"message", "Surface token cannot commit for user: " + orig_user_id}
+                        }).dump(), "application/json");
+                        return;
+                    }
+                    if (!orig_surface_id.empty() && canonical_surface_id(orig_surface_id) != canonical_surface_id(token_surface_id)) {
+                        res.status = 403;
+                        res.set_content(json({
+                            {"error", "Forbidden"},
+                            {"message", "Surface token cannot commit for surface: " + orig_surface_id}
+                        }).dump(), "application/json");
+                        return;
+                    }
+                    if (!orig_agent_id.empty() && !token_agent.empty() && pure_user_id(orig_agent_id) != pure_user_id(token_agent)) {
+                        res.status = 403;
+                        res.set_content(json({
+                            {"error", "Forbidden"},
+                            {"message", "Surface token cannot commit for agent: " + orig_agent_id}
+                        }).dump(), "application/json");
+                        return;
+                    }
+
+                    e.header.origin.user_id = canonical_user_id(token_user);
+                    e.header.origin.surface_id = canonical_surface_id(token_surface_id);
+                    e.header.origin.agent_id = token_agent;
+                    e.header.origin.surface_type = orig_surface_type.empty() ? token_surface_type : orig_surface_type;
+                    e.header.origin.context_id = orig_context_id.empty() ? token_context_id : orig_context_id;
+                    if (!orig_project_id.empty()) {
+                        e.header.origin.project_id = orig_project_id;
+                    } else if (!top_project_id.empty()) {
+                        e.header.origin.project_id = top_project_id;
+                    } else {
+                        e.header.origin.project_id = "proj-default";
+                    }
+                } else if (auth_role == "user") {
+                    if (!orig_user_id.empty() && pure_user_id(orig_user_id) != pure_user_id(active_user)) {
+                        res.status = 403;
+                        res.set_content(json({
+                            {"error", "Forbidden"},
+                            {"message", "User cannot commit for user: " + orig_user_id}
+                        }).dump(), "application/json");
+                        return;
+                    }
+
+                    e.header.origin.user_id = canonical_user_id(active_user);
+                    if (!orig_agent_id.empty()) {
+                        e.header.origin.agent_id = orig_agent_id;
+                    } else if (!top_agent_id.empty()) {
+                        e.header.origin.agent_id = top_agent_id;
+                    } else {
+                        e.header.origin.agent_id = "agent:" + pure_user_id(active_user) + "-agent";
+                    }
+
+                    e.header.origin.surface_id = orig_surface_id;
+                    e.header.origin.surface_type = orig_surface_type;
+                    e.header.origin.context_id = orig_context_id;
+                    if (!orig_project_id.empty()) {
+                        e.header.origin.project_id = orig_project_id;
+                    } else if (!top_project_id.empty()) {
+                        e.header.origin.project_id = top_project_id;
+                    } else {
+                        e.header.origin.project_id = "proj-default";
+                    }
+                } else {
+                    // admin
+                    e.header.origin.user_id = orig_user_id.empty() ? canonical_user_id(active_user) : orig_user_id;
+                    if (!orig_agent_id.empty()) {
+                        e.header.origin.agent_id = orig_agent_id;
+                    } else if (!top_agent_id.empty()) {
+                        e.header.origin.agent_id = top_agent_id;
+                    } else {
+                        e.header.origin.agent_id = "agent:admin-agent";
+                    }
+
+                    e.header.origin.surface_id = orig_surface_id;
+                    e.header.origin.surface_type = orig_surface_type;
+                    e.header.origin.context_id = orig_context_id;
+                    if (!orig_project_id.empty()) {
+                        e.header.origin.project_id = orig_project_id;
+                    } else if (!top_project_id.empty()) {
+                        e.header.origin.project_id = top_project_id;
+                    } else {
+                        e.header.origin.project_id = "proj-default";
+                    }
                 }
 
-                if (item.contains("header") && item["header"].contains("origin") && item["header"]["origin"].contains("surface_id")) {
-                    e.header.origin.surface_id = item["header"]["origin"].value("surface_id", "");
-                } else if (item.contains("origin") && item["origin"].contains("surface_id")) {
-                    e.header.origin.surface_id = item["origin"].value("surface_id", "");
-                } else if (item.contains("surface_id")) {
-                    e.header.origin.surface_id = item.value("surface_id", "");
-                }
-
-                if (item.contains("header") && item["header"].contains("origin") && item["header"]["origin"].contains("surface_type")) {
-                    e.header.origin.surface_type = item["header"]["origin"].value("surface_type", "");
-                } else if (item.contains("origin") && item["origin"].contains("surface_type")) {
-                    e.header.origin.surface_type = item["origin"].value("surface_type", "");
-                } else if (item.contains("surface_type")) {
-                    e.header.origin.surface_type = item.value("surface_type", "");
+                if (e.header.origin.project_id.empty() || (e.header.origin.user_id.empty() && e.header.origin.agent_id.empty())) {
+                    res.status = 400;
+                    res.set_content("Error: Missing mandatory Project or Identity anchor.", "text/plain");
+                    return;
                 }
 
                 if (item.contains("payload")) {
@@ -1048,10 +1217,18 @@ void ApiServer::listen_loop() {
                 }
 
                 if (e.header.uuid.empty()) {
-                    uint32_t h = std::hash<std::string>{}(e.payload.statement);
-                    char hex[9];
-                    snprintf(hex, sizeof(hex), "%08x", h);
-                    e.header.uuid = "atom-" + std::string(hex);
+                    if (!e.payload.statement.empty()) {
+                        uint32_t h = std::hash<std::string>{}(e.payload.statement);
+                        char hex[9];
+                        snprintf(hex, sizeof(hex), "%08x", h);
+                        e.header.uuid = "atom-" + std::string(hex);
+                    } else {
+                        auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count();
+                        char hex[17];
+                        snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(now_us));
+                        e.header.uuid = "atom-" + std::string(hex);
+                    }
                 }
 
                 std::cout << "[API] Processing Atom Statement: " << e.payload.statement << std::endl;
@@ -1066,7 +1243,14 @@ void ApiServer::listen_loop() {
                     }
                 }
             }
+
+            if (count == 0) {
+                res.status = 400;
+                res.set_content("Error: Failed to commit any anchored nodes.", "text/plain");
+                return;
+            }
             
+            res.status = 200;
             res.set_content("Successfully committed " + std::to_string(count) + " anchored nodes.", "text/plain");
         } catch (const std::exception& e) {
             res.status = 500;
@@ -1613,6 +1797,29 @@ void ApiServer::listen_loop() {
             std::string id = j.at("id");
             json metadata = j.value("metadata", json::object());
 
+            if (auth_role != "admin" && type == "IDENTITY") {
+                std::string pure_active = pure_user_id(active_user);
+                std::string pure_node_id = pure_user_id(id);
+                bool allowed = (pure_node_id == pure_active) ||
+                               (pure_node_id == pure_active + "-agent") ||
+                               (id == "identity:" + pure_active) ||
+                               (id == "user:" + pure_active) ||
+                               (id == "agent:" + pure_active + "-agent");
+                if (!allowed) {
+                    res.status = 403;
+                    res.set_content(json({{"error", "Forbidden"}, {"message", "Cannot create IDENTITY node for another user"}}).dump(), "application/json");
+                    return;
+                }
+                if (metadata.contains("user_id")) {
+                    std::string meta_user = metadata.value("user_id", "");
+                    if (!meta_user.empty() && pure_user_id(meta_user) != pure_active) {
+                        res.status = 403;
+                        res.set_content(json({{"error", "Forbidden"}, {"message", "Cannot create IDENTITY node for another user"}}).dump(), "application/json");
+                        return;
+                    }
+                }
+            }
+
             auto engine = blackboard_->get_engine();
             auto store = engine->get_store();
 
@@ -1811,6 +2018,30 @@ void ApiServer::listen_loop() {
                     {"content", entry.payload.content},
                     {"project", entry.header.origin.project_id},
                     {"author", entry.header.origin.agent_id},
+                    {"user_id", entry.header.origin.user_id},
+                    {"agent_id", entry.header.origin.agent_id},
+                    {"surface_id", entry.header.origin.surface_id},
+                    {"surface_type", entry.header.origin.surface_type},
+                    {"context_id", entry.header.origin.context_id},
+                    {"origin", {
+                        {"user_id", entry.header.origin.user_id},
+                        {"agent_id", entry.header.origin.agent_id},
+                        {"surface_id", entry.header.origin.surface_id},
+                        {"surface_type", entry.header.origin.surface_type},
+                        {"context_id", entry.header.origin.context_id},
+                        {"project_id", entry.header.origin.project_id}
+                    }},
+                    {"header", {
+                        {"uuid", entry.header.uuid},
+                        {"origin", {
+                            {"user_id", entry.header.origin.user_id},
+                            {"agent_id", entry.header.origin.agent_id},
+                            {"surface_id", entry.header.origin.surface_id},
+                            {"surface_type", entry.header.origin.surface_type},
+                            {"context_id", entry.header.origin.context_id},
+                            {"project_id", entry.header.origin.project_id}
+                        }}
+                    }},
                     {"ka", static_cast<int>(entry.taxonomy.knowledge_area)},
                     {"tags", entry.taxonomy.tags},
                     {"applicability", entry.taxonomy.applicability},

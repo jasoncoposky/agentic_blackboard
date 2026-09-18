@@ -214,6 +214,11 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_registered_user
 }
 
 bool Blackboard::validate_token(const std::string& token, std::string& out_user, std::string& out_role) {
+    nlohmann::json meta;
+    return validate_token(token, out_user, out_role, meta);
+}
+
+bool Blackboard::validate_token(const std::string& token, std::string& out_user, std::string& out_role, nlohmann::json& out_meta) {
     if (token.empty()) return false;
 
     std::string token_hash = hash_token_sha256(token);
@@ -224,20 +229,47 @@ bool Blackboard::validate_token(const std::string& token, std::string& out_user,
     lite3cpp::Buffer buf = store->get(db_key);
     if (buf.size() == 0) return false;
 
-    std::string u;
-    std::string r;
+    nlohmann::json parsed_json;
+
+    // First try converting lite3cpp Buffer to JSON
     try {
-        u = std::string(buf.get_str(0, "username"));
-        r = std::string(buf.get_str(0, "role"));
+        std::string js = lite3cpp::lite3_json::to_json_string(buf, 0);
+        if (!js.empty()) {
+            parsed_json = nlohmann::json::parse(js);
+        }
     } catch (...) {}
 
-    if (u.empty()) {
+    // Fallback: raw buffer as JSON string
+    if (parsed_json.is_null() || !parsed_json.is_object()) {
         try {
-            std::string js = lite3cpp::lite3_json::to_json_string(buf, 0);
-            auto j = nlohmann::json::parse(js);
-            u = j.value("username", "");
-            r = j.value("role", "");
+            std::string raw(reinterpret_cast<const char*>(buf.data()), buf.size());
+            if (!raw.empty()) {
+                parsed_json = nlohmann::json::parse(raw);
+            }
         } catch (...) {}
+    }
+
+    std::string u;
+    std::string r;
+    if (!parsed_json.is_null() && parsed_json.is_object()) {
+        u = parsed_json.value("username", "");
+        r = parsed_json.value("role", "");
+        out_meta = parsed_json;
+    } else {
+        try {
+            u = std::string(buf.get_str(0, "username"));
+            r = std::string(buf.get_str(0, "role"));
+        } catch (...) {}
+        if (!u.empty()) {
+            out_meta = {
+                {"username", u},
+                {"role", r}
+            };
+            try { out_meta["agent"] = std::string(buf.get_str(0, "agent")); } catch (...) {}
+            try { out_meta["surface_id"] = std::string(buf.get_str(0, "surface_id")); } catch (...) {}
+            try { out_meta["surface_type"] = std::string(buf.get_str(0, "surface_type")); } catch (...) {}
+            try { out_meta["context_id"] = std::string(buf.get_str(0, "context_id")); } catch (...) {}
+        }
     }
 
     if (u.empty()) return false;
@@ -313,13 +345,21 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     if (principal_id != 0) {
         bool authorized = false;
         if (!user_name.empty()) {
-            if (get_user_uid(user_name) == principal_id || (!user_id.empty() && get_user_uid(user_id) == principal_id)) {
+            if (get_user_uid(user_name) == principal_id || (!user_id.empty() && get_user_uid(user_id) == principal_id) ||
+                get_user_uid("user:" + user_name) == principal_id) {
                 authorized = true;
             }
         }
         if (!authorized && !author_name.empty()) {
-            if (get_user_uid(author_name) == principal_id || (!author_agent.empty() && get_user_uid(author_agent) == principal_id)) {
+            if (get_user_uid(author_name) == principal_id || (!author_agent.empty() && get_user_uid(author_agent) == principal_id) ||
+                get_user_uid("agent:" + author_name) == principal_id || get_user_uid("user:" + author_name) == principal_id) {
                 authorized = true;
+            }
+            if (!authorized && author_name.ends_with("-agent")) {
+                std::string base = author_name.substr(0, author_name.length() - 6);
+                if (get_user_uid(base) == principal_id || get_user_uid("user:" + base) == principal_id) {
+                    authorized = true;
+                }
             }
         }
 
@@ -370,13 +410,23 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
                     else if (exist_agent.starts_with("agent:")) exist_agent_name = exist_agent.substr(6);
                     else if (exist_agent.starts_with("user:")) exist_agent_name = exist_agent.substr(5);
 
-                    if ((!exist_user.empty() && (get_user_uid(exist_user) == principal_id || get_user_uid(exist_user_name) == principal_id)) ||
-                        (!exist_agent.empty() && (get_user_uid(exist_agent) == principal_id || get_user_uid(exist_agent_name) == principal_id))) {
+                    if ((!exist_user.empty() && (get_user_uid(exist_user) == principal_id || get_user_uid(exist_user_name) == principal_id || get_user_uid("user:" + exist_user_name) == principal_id)) ||
+                        (!exist_agent.empty() && (get_user_uid(exist_agent) == principal_id || get_user_uid(exist_agent_name) == principal_id || get_user_uid("agent:" + exist_agent_name) == principal_id || get_user_uid("user:" + exist_agent_name) == principal_id))) {
                         creds.set_acl(principal_id, db_key, l3kv::Permission::READ | l3kv::Permission::WRITE);
                         std::string hex_part = db_key.substr(2);
                         creds.set_acl(principal_id, "e:out:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
                         creds.set_acl(principal_id, "e:in:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
                         has_write = true;
+                    }
+                    if (!has_write && !exist_agent_name.empty() && exist_agent_name.ends_with("-agent")) {
+                        std::string base = exist_agent_name.substr(0, exist_agent_name.length() - 6);
+                        if (get_user_uid(base) == principal_id || get_user_uid("user:" + base) == principal_id) {
+                            creds.set_acl(principal_id, db_key, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                            std::string hex_part = db_key.substr(2);
+                            creds.set_acl(principal_id, "e:out:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                            creds.set_acl(principal_id, "e:in:" + hex_part, l3kv::Permission::READ | l3kv::Permission::WRITE);
+                            has_write = true;
+                        }
                     }
                 }
             } catch (...) {}

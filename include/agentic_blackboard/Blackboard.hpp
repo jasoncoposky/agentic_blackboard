@@ -2,6 +2,7 @@
 
 #include "L3KVG/Engine.hpp"
 #include <agentic_blackboard/schema.hpp>
+#include <nlohmann/json.hpp>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,6 +29,7 @@ public:
     std::string get_auth_mode() const;
     bool register_token(const std::string& token, const std::string& user, const std::string& role);
     bool validate_token(const std::string& token, std::string& out_user, std::string& out_role);
+    bool validate_token(const std::string& token, std::string& out_user, std::string& out_role, nlohmann::json& out_meta);
     std::vector<std::pair<std::string, std::string>> get_registered_users() const;
 
     bool register_user_credentials(const std::string& username, const std::string& public_key);
