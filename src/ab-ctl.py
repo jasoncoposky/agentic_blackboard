@@ -1099,6 +1099,10 @@ def handle_swarm_review_verdict(args, cfg: dict) -> int:
             details_val = {"raw": details}
 
     task_meta = extract_node_metadata(node_data)
+    current_status = task_meta.get("status")
+    if current_status != "REVIEW_PENDING":
+        print(f"[BLOCKED] Cannot record verdict for task {task_id}: status is '{current_status}', expected 'REVIEW_PENDING'", file=sys.stderr)
+        return 1
     context_id = task_meta.get("context_id", "")
 
     if verdict == "PASS":
@@ -1610,6 +1614,650 @@ def build_mcp_server(connect_url: str, token: str | None):
                 "atom_id": atom_id,
                 "node": node_data,
                 "links": links_data
+            })
+
+    def _make_headers(active_user: str | None = None, active_agent: str | None = None) -> dict:
+        h = dict(headers)
+        if active_user:
+            h["X-Active-User"] = active_user
+        if active_agent:
+            h["X-Active-Agent"] = active_agent
+        return h
+
+    async def _async_commit_graph_node(client: httpx.AsyncClient, node_type: str, node_id: str, metadata: dict, req_headers: dict) -> tuple[bool, str]:
+        node_url = f"{api_url}/graph/node"
+        payload = {
+            "type": node_type,
+            "id": node_id,
+            "metadata": metadata
+        }
+        try:
+            resp = await client.post(node_url, json=payload, headers=req_headers)
+            if resp.status_code in (200, 201):
+                try:
+                    res_json = resp.json()
+                    if not (isinstance(res_json, dict) and res_json.get("status") == "EXISTS"):
+                        return True, ""
+                except Exception:
+                    return True, ""
+
+            bundle_url = f"{api_url}/graph/bundle"
+            project_id = metadata.get("context_id") or "default-swarm"
+            agent_id = metadata.get("agent_id") or req_headers.get("X-Active-Agent") or "cpg-swarm-agent"
+            user_id = req_headers.get("X-Active-User") or "cpg-swarm-user"
+            meta_copy = dict(metadata)
+            if "type" not in meta_copy:
+                meta_copy["type"] = node_type
+            atom = {
+                "uuid": node_id,
+                "header": {
+                    "uuid": node_id,
+                    "origin": {
+                        "project_id": project_id,
+                        "agent_id": agent_id,
+                        "user_id": user_id,
+                        "context_id": metadata.get("context_id", ""),
+                    }
+                },
+                "payload": {
+                    "statement": metadata.get("name") or metadata.get("statement") or node_id,
+                    "content": json.dumps(meta_copy)
+                },
+                "attributes": {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in meta_copy.items()}
+            }
+            b_payload = {
+                "project_id": project_id,
+                "agent_id": agent_id,
+                "atoms": [atom]
+            }
+            b_resp = await client.post(bundle_url, json=b_payload, headers=req_headers)
+            if b_resp.status_code in (200, 201):
+                return True, ""
+            return False, resp.text
+        except Exception as e:
+            return False, str(e)
+
+    async def _async_fetch_graph_node(client: httpx.AsyncClient, node_id: str, req_headers: dict) -> tuple[int, dict | None]:
+        url = f"{api_url}/node/{urllib.parse.quote(node_id)}"
+        try:
+            resp = await client.get(url, headers=req_headers)
+            if resp.status_code == 200:
+                try:
+                    return 200, resp.json()
+                except Exception:
+                    return 200, None
+            return resp.status_code, None
+        except Exception:
+            return 500, None
+
+    async def _async_create_graph_link(client: httpx.AsyncClient, source: str, target: str, label: str, req_headers: dict, weight: float = 1.0) -> bool:
+        link_url = f"{api_url}/link"
+        payload = {
+            "source": source,
+            "target": target,
+            "label": label,
+            "weight": weight
+        }
+        try:
+            resp = await client.post(link_url, json=payload, headers=req_headers)
+            return resp.status_code in (200, 201)
+        except Exception:
+            return False
+
+    async def _async_fetch_node_links(client: httpx.AsyncClient, node_id: str, req_headers: dict, direction: str = "both") -> dict:
+        url = f"{api_url}/node/{urllib.parse.quote(node_id)}/links?direction={direction}"
+        try:
+            resp = await client.get(url, headers=req_headers)
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except Exception:
+                    return {"inbound": [], "outbound": []}
+            return {"inbound": [], "outbound": []}
+        except Exception:
+            return {"inbound": [], "outbound": []}
+
+    # ------------------------------------------------------------------
+    # Swarm Coordination Tools
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    async def swarm_init_context(
+        context_id: str,
+        name: str,
+        user_id: str = "human"
+    ) -> str:
+        """Initialize a new swarm execution context and propose the initial requirement atom."""
+        req_h = _make_headers(active_user=user_id, active_agent="swarm-coordinator")
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            # 1. Register context ID
+            reg_url = f"{api_url}/context/register"
+            reg_payload = {
+                "context_id": context_id,
+                "surface_id": "swarm-coordinator",
+                "client_app": "ab-ctl-swarm",
+                "capabilities": {
+                    "swarm_name": name,
+                    "surface_type": "orchestrator"
+                }
+            }
+            try:
+                resp = await client.post(reg_url, json=reg_payload, headers=req_h)
+                if resp.status_code not in (200, 201):
+                    return json.dumps({"status": "ERROR", "message": f"Error registering swarm context: HTTP {resp.status_code}: {resp.text}"})
+            except Exception as e:
+                return json.dumps({"status": "ERROR", "message": f"Error registering swarm context: {e}"})
+
+            # 2. Create initial requirement knowledge atom
+            req_id = f"req-{context_id}"
+            req_meta = {
+                "name": name,
+                "statement": f"Requirement for {name}",
+                "description": f"Requirement for {name}",
+                "context_id": context_id,
+                "status": "PROPOSED",
+                "created_at": int(time.time())
+            }
+            ok, err = await _async_commit_graph_node(client, "requirement", req_id, req_meta, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error creating requirement atom: {err}"})
+
+            return json.dumps({
+                "status": "SUCCESS",
+                "context_id": context_id,
+                "requirement_id": req_id,
+                "name": name
+            })
+
+    @mcp.tool()
+    async def swarm_create_task(
+        context_id: str,
+        name: str,
+        workflow: str = "feature",
+        target_symbols: list[str] = [],
+        depends_on: list[str] = [],
+        blast_radius_k: int = 2,
+        agent_id: str = "cpg-architect"
+    ) -> str:
+        """Create a swarm task atom with target CPG symbols, workflow, and DEPENDS_ON links."""
+        req_h = _make_headers(active_user="human", active_agent=agent_id)
+        if isinstance(target_symbols, str):
+            symbols = [s.strip() for s in target_symbols.split(",") if s.strip()]
+        elif target_symbols is None:
+            symbols = []
+        else:
+            symbols = list(target_symbols)
+
+        if isinstance(depends_on, str):
+            deps = [d.strip() for d in depends_on.split(",") if d.strip()]
+        elif depends_on is None:
+            deps = []
+        else:
+            deps = list(depends_on)
+
+        if re.match(r"^[a-zA-Z0-9_\-]+$", name):
+            task_id = name
+        else:
+            task_id = f"task-{secrets.token_hex(4)}"
+
+        task_meta = {
+            "type": "task",
+            "name": name,
+            "workflow": workflow or "feature",
+            "target_symbols": symbols,
+            "status": "READY",
+            "context_id": context_id,
+            "agent_id": agent_id,
+            "blast_radius_k": blast_radius_k if blast_radius_k is not None else 2,
+            "lease": {
+                "holder": None,
+                "expires_at": 0
+            },
+            "depends_on": deps,
+            "created_at": int(time.time())
+        }
+
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            ok, err = await _async_commit_graph_node(client, "task", task_id, task_meta, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error creating task node: {err}"})
+
+            for dep_id in deps:
+                await _async_create_graph_link(client, task_id, dep_id, "DEPENDS_ON", req_h)
+
+            return json.dumps({
+                "status": "SUCCESS",
+                "task_id": task_id,
+                "name": name,
+                "workflow": workflow,
+                "target_symbols": symbols,
+                "depends_on": deps,
+                "blast_radius_k": blast_radius_k
+            })
+
+    @mcp.tool()
+    async def swarm_list_tasks(context_id: str) -> str:
+        """List all tasks in a swarm context with status, lease holder, dependencies, and verdicts."""
+        req_h = _make_headers(active_user="human", active_agent="cpg-swarm-agent")
+        tasks_map = {}
+
+        def _is_task_node(item_id: str, item_data: dict, meta: dict) -> bool:
+            if str(item_id).startswith(("req-", "sol-", "proof-", "counter-", "acc-")):
+                return False
+            node_type = item_data.get("type") or meta.get("type")
+            if node_type == "requirement":
+                return False
+            return True
+
+        def _extract_search_items(search_resp: dict) -> list:
+            if not isinstance(search_resp, dict):
+                return []
+            items = search_resp.get("matches")
+            if items is None:
+                items = search_resp.get("results")
+            if isinstance(items, list):
+                return items
+            return []
+
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            # Query context endpoint
+            ctx_url = f"{api_url}/context/{urllib.parse.quote(context_id)}"
+            try:
+                c_resp = await client.get(ctx_url, headers=req_h)
+                if c_resp.status_code == 200:
+                    ctx_data = c_resp.json()
+                    if isinstance(ctx_data, dict):
+                        for item in ctx_data.get("tasks", []):
+                            tid = item.get("id") or item.get("uuid")
+                            if tid:
+                                meta = extract_node_metadata(item)
+                                if _is_task_node(tid, item, meta):
+                                    tasks_map[tid] = item
+                        for item in ctx_data.get("nodes", []):
+                            tid = item.get("id") or item.get("uuid")
+                            if tid:
+                                meta = extract_node_metadata(item)
+                                if _is_task_node(tid, item, meta) and (item.get("type") == "task" or "task" in tid.lower()):
+                                    tasks_map[tid] = item
+            except Exception:
+                pass
+
+            # Query search endpoint by context
+            search_url = f"{api_url}/search?q={urllib.parse.quote(context_id)}"
+            try:
+                s_resp = await client.get(search_url, headers=req_h)
+                if s_resp.status_code == 200:
+                    search_data = s_resp.json()
+                    if isinstance(search_data, dict):
+                        for item in _extract_search_items(search_data):
+                            tid = item.get("id") or item.get("uuid")
+                            if tid:
+                                meta = extract_node_metadata(item)
+                                item_ctx = meta.get("context_id") or item.get("context_id") or item.get("project")
+                                if (not item_ctx or item_ctx == context_id) and _is_task_node(tid, item, meta):
+                                    tasks_map[tid] = item
+            except Exception:
+                pass
+
+            # General search fallback if empty
+            if not tasks_map:
+                try:
+                    all_resp = await client.get(f"{api_url}/search?q=", headers=req_h)
+                    if all_resp.status_code == 200:
+                        all_data = all_resp.json()
+                        if isinstance(all_data, dict):
+                            for item in _extract_search_items(all_data):
+                                tid = item.get("id") or item.get("uuid")
+                                if tid:
+                                    meta = extract_node_metadata(item)
+                                    item_ctx = meta.get("context_id") or item.get("context_id") or item.get("project")
+                                    if (not item_ctx or item_ctx == context_id) and _is_task_node(tid, item, meta):
+                                        tasks_map[tid] = item
+                except Exception:
+                    pass
+
+            task_rows = []
+            for tid, node in tasks_map.items():
+                meta = extract_node_metadata(node)
+                name = meta.get("name") or node.get("label") or node.get("statement") or tid
+                status = meta.get("status", "READY")
+                lease = meta.get("lease", {})
+                holder = lease.get("holder") if isinstance(lease, dict) else None
+
+                links_data = await _async_fetch_node_links(client, tid, req_h, direction="both")
+                dep_names = list(meta.get("depends_on", []))
+                verdicts = []
+                for l in links_data.get("outbound", []):
+                    rel = l.get("relation", "")
+                    target = l.get("target") or l.get("uuid")
+                    if rel == "DEPENDS_ON" and target and target not in dep_names:
+                        dep_names.append(target)
+                    elif rel in ("VALIDATED_BY", "REFUTES", "ACCEPTS", "HAS_SOLUTION"):
+                        verdicts.append(f"{rel}:{target}")
+                for l in links_data.get("inbound", []):
+                    rel = l.get("relation", "")
+                    source = l.get("source") or l.get("uuid")
+                    if rel in ("ACCEPTS",):
+                        verdicts.append(f"{rel}:{source}")
+
+                task_rows.append({
+                    "id": tid,
+                    "name": name,
+                    "status": status,
+                    "lease_holder": holder,
+                    "dependencies": dep_names,
+                    "verdicts": verdicts,
+                    "metadata": meta
+                })
+
+            return json.dumps({"status": "SUCCESS", "context_id": context_id, "tasks": task_rows})
+
+    @mcp.tool()
+    async def swarm_claim_lease(
+        task_id: str,
+        agent_id: str,
+        ttl_sec: int = 600
+    ) -> str:
+        """Claims an exclusive lease on a task whose dependencies are satisfied and not already completed/validated."""
+        req_h = _make_headers(active_user="human", active_agent=agent_id)
+        ttl = ttl_sec if ttl_sec is not None else 600
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            status, node_data = await _async_fetch_graph_node(client, task_id, req_h)
+            if status != 200 or not node_data:
+                return json.dumps({"status": "ERROR", "message": f"Task '{task_id}' not found (HTTP {status})"})
+
+            metadata = extract_node_metadata(node_data)
+            current_status = metadata.get("status", "").upper()
+            if current_status in ("COMPLETED", "VALIDATED"):
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot claim task {task_id}: task is already {current_status}"})
+
+            links_data = await _async_fetch_node_links(client, task_id, req_h, direction="both")
+            prereq_ids = set(metadata.get("depends_on", []))
+            for l in links_data.get("outbound", []):
+                if l.get("relation", "").upper() == "DEPENDS_ON":
+                    dep = l.get("target") or l.get("uuid")
+                    if dep and dep != task_id:
+                        prereq_ids.add(dep)
+
+            for dep_id in prereq_ids:
+                dep_st, dep_node = await _async_fetch_graph_node(client, dep_id, req_h)
+                if dep_st != 200 or not dep_node:
+                    return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Prerequisite {dep_id} not found in blackboard"})
+                dep_meta = extract_node_metadata(dep_node)
+                dep_status = dep_meta.get("status", "UNKNOWN").upper()
+                if dep_status not in ("COMPLETED", "VALIDATED"):
+                    return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Prerequisite {dep_id} not validated (Current status: {dep_status})"})
+
+            lease = metadata.get("lease") or {}
+            holder = lease.get("holder")
+            expires_at = lease.get("expires_at") or 0
+            now = time.time()
+
+            if holder and holder != agent_id and expires_at > now:
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Task {task_id} is already leased by agent '{holder}' until {int(expires_at)}"})
+
+            metadata["status"] = "IN_PROGRESS"
+            metadata["lease"] = {
+                "holder": agent_id,
+                "expires_at": int(now + ttl)
+            }
+
+            ok, err = await _async_commit_graph_node(client, "task", task_id, metadata, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error updating task lease: {err}"})
+
+            return json.dumps({
+                "status": "SUCCESS",
+                "task_id": task_id,
+                "holder": agent_id,
+                "status_value": "IN_PROGRESS",
+                "expires_at": int(now + ttl),
+                "ttl_sec": ttl
+            })
+
+    @mcp.tool()
+    async def swarm_release_lease(
+        task_id: str,
+        agent_id: str
+    ) -> str:
+        """Release active lease on a task and return it to READY state."""
+        req_h = _make_headers(active_user="human", active_agent=agent_id)
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            status, node_data = await _async_fetch_graph_node(client, task_id, req_h)
+            if status != 200 or not node_data:
+                return json.dumps({"status": "ERROR", "message": f"Task '{task_id}' not found (HTTP {status})"})
+
+            metadata = extract_node_metadata(node_data)
+            lease = metadata.get("lease") or {}
+            holder = lease.get("holder")
+            expires_at = lease.get("expires_at") or 0
+            now = time.time()
+
+            if holder and holder != agent_id and expires_at > now:
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot release lease: Task {task_id} is leased by different agent '{holder}'"})
+
+            metadata["status"] = "READY"
+            metadata["lease"] = {
+                "holder": None,
+                "expires_at": 0
+            }
+
+            ok, err = await _async_commit_graph_node(client, "task", task_id, metadata, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error releasing lease: {err}"})
+
+            return json.dumps({
+                "status": "SUCCESS",
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "status_value": "READY"
+            })
+
+    @mcp.tool()
+    async def swarm_submit_review(
+        task_id: str,
+        agent_id: str,
+        patch_summary: str = ""
+    ) -> str:
+        """Create solution atom, link via HAS_SOLUTION, and mark task REVIEW_PENDING."""
+        req_h = _make_headers(active_user="human", active_agent=agent_id)
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            status, node_data = await _async_fetch_graph_node(client, task_id, req_h)
+            if status != 200 or not node_data:
+                return json.dumps({"status": "ERROR", "message": f"Task '{task_id}' not found (HTTP {status})"})
+
+            task_meta = extract_node_metadata(node_data)
+            context_id = task_meta.get("context_id", "")
+            current_status = task_meta.get("status")
+
+            if current_status != "IN_PROGRESS":
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot submit review for task {task_id}: status is '{current_status}', expected 'IN_PROGRESS'"})
+
+            lease_holder = (task_meta.get("lease") or {}).get("holder")
+            if lease_holder and lease_holder != agent_id:
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot submit review: Task is leased by '{lease_holder}', not '{agent_id}'"})
+
+            patch = patch_summary or "Solution patch submitted"
+            solution_id = f"sol-{task_id}-{secrets.token_hex(4)}"
+            sol_meta = {
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "patch": patch,
+                "summary": patch,
+                "created_at": int(time.time()),
+                "context_id": context_id
+            }
+
+            ok, err = await _async_commit_graph_node(client, "solution", solution_id, sol_meta, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error creating solution atom: {err}"})
+
+            await _async_create_graph_link(client, task_id, solution_id, "HAS_SOLUTION", req_h)
+
+            task_meta["status"] = "REVIEW_PENDING"
+            ok, err = await _async_commit_graph_node(client, "task", task_id, task_meta, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error updating task status: {err}"})
+
+            return json.dumps({
+                "status": "SUCCESS",
+                "task_id": task_id,
+                "solution_id": solution_id,
+                "agent_id": agent_id,
+                "status_value": "REVIEW_PENDING"
+            })
+
+    @mcp.tool()
+    async def swarm_record_verdict(
+        task_id: str,
+        verifier_id: str,
+        verdict: str,
+        details: str = ""
+    ) -> str:
+        """Record dialectic verification verdict (PASS/FAIL), linking proof or counterexample trace."""
+        req_h = _make_headers(active_user="human", active_agent=verifier_id)
+        v_upper = (verdict or "").upper()
+        if v_upper not in ("PASS", "FAIL"):
+            return json.dumps({"status": "ERROR", "message": f"Invalid verdict '{verdict}'. Must be PASS or FAIL."})
+
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            status, node_data = await _async_fetch_graph_node(client, task_id, req_h)
+            if status != 200 or not node_data:
+                return json.dumps({"status": "ERROR", "message": f"Task '{task_id}' not found (HTTP {status})"})
+
+            task_meta = extract_node_metadata(node_data)
+            current_status = task_meta.get("status")
+            if current_status != "REVIEW_PENDING":
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot record verdict for task {task_id}: status is '{current_status}', expected 'REVIEW_PENDING'"})
+
+            context_id = task_meta.get("context_id", "")
+            if isinstance(details, dict):
+                details_val = details
+            elif details and isinstance(details, str):
+                try:
+                    details_val = json.loads(details)
+                except Exception:
+                    details_val = {"raw": details}
+            else:
+                details_val = {}
+
+            if v_upper == "PASS":
+                proof_id = f"proof-{task_id}-{secrets.token_hex(4)}"
+                proof_meta = {
+                    "task_id": task_id,
+                    "verifier_agent": verifier_id,
+                    "verdict": "PASS",
+                    "details": details_val,
+                    "context_id": context_id,
+                    "created_at": int(time.time())
+                }
+                ok, err = await _async_commit_graph_node(client, "verification_proof", proof_id, proof_meta, req_h)
+                if not ok:
+                    return json.dumps({"status": "ERROR", "message": f"Error creating verification proof atom: {err}"})
+
+                await _async_create_graph_link(client, task_id, proof_id, "VALIDATED_BY", req_h)
+
+                task_meta["status"] = "VALIDATED"
+                if "lease" in task_meta and isinstance(task_meta["lease"], dict):
+                    task_meta["lease"]["holder"] = None
+                    task_meta["lease"]["expires_at"] = 0
+                else:
+                    task_meta["lease"] = {"holder": None, "expires_at": 0}
+
+                ok, err = await _async_commit_graph_node(client, "task", task_id, task_meta, req_h)
+                if not ok:
+                    return json.dumps({"status": "ERROR", "message": f"Error updating task status: {err}"})
+
+                return json.dumps({
+                    "status": "SUCCESS",
+                    "task_id": task_id,
+                    "verdict": "PASS",
+                    "proof_id": proof_id,
+                    "verifier_id": verifier_id,
+                    "status_value": "VALIDATED"
+                })
+
+            else:  # FAIL
+                counter_id = f"counter-{task_id}-{secrets.token_hex(4)}"
+                counter_meta = {
+                    "task_id": task_id,
+                    "verifier_agent": verifier_id,
+                    "verdict": "FAIL",
+                    "details": details_val,
+                    "context_id": context_id,
+                    "created_at": int(time.time())
+                }
+                ok, err = await _async_commit_graph_node(client, "counterexample_trace", counter_id, counter_meta, req_h)
+                if not ok:
+                    return json.dumps({"status": "ERROR", "message": f"Error creating counterexample trace atom: {err}"})
+
+                await _async_create_graph_link(client, task_id, counter_id, "REFUTES", req_h)
+
+                task_meta["status"] = "READY"
+                if "lease" in task_meta and isinstance(task_meta["lease"], dict):
+                    task_meta["lease"]["holder"] = None
+                    task_meta["lease"]["expires_at"] = 0
+                else:
+                    task_meta["lease"] = {"holder": None, "expires_at": 0}
+
+                ok, err = await _async_commit_graph_node(client, "task", task_id, task_meta, req_h)
+                if not ok:
+                    return json.dumps({"status": "ERROR", "message": f"Error updating task status: {err}"})
+
+                return json.dumps({
+                    "status": "SUCCESS",
+                    "task_id": task_id,
+                    "verdict": "FAIL",
+                    "counter_id": counter_id,
+                    "verifier_id": verifier_id,
+                    "status_value": "READY"
+                })
+
+    @mcp.tool()
+    async def swarm_accept_task(
+        task_id: str,
+        stakeholder_id: str,
+        notes: str = ""
+    ) -> str:
+        """Record stakeholder acceptance and advance task from VALIDATED to COMPLETED."""
+        req_h = _make_headers(active_user=stakeholder_id, active_agent="cpg-swarm-agent")
+        async with httpx.AsyncClient(timeout=client_timeout) as client:
+            status, node_data = await _async_fetch_graph_node(client, task_id, req_h)
+            if status != 200 or not node_data:
+                return json.dumps({"status": "ERROR", "message": f"Task '{task_id}' not found (HTTP {status})"})
+
+            task_meta = extract_node_metadata(node_data)
+            task_status = task_meta.get("status")
+            if task_status != "VALIDATED":
+                return json.dumps({"status": "ERROR", "message": f"[BLOCKED] Cannot accept task {task_id}: status is '{task_status}', expected 'VALIDATED'"})
+
+            context_id = task_meta.get("context_id", "")
+            acc_id = f"acc-{task_id}-{secrets.token_hex(4)}"
+            acc_meta = {
+                "task_id": task_id,
+                "stakeholder": stakeholder_id,
+                "notes": notes or "Accepted by stakeholder",
+                "context_id": context_id,
+                "created_at": int(time.time())
+            }
+
+            ok, err = await _async_commit_graph_node(client, "acceptance", acc_id, acc_meta, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error creating acceptance record: {err}"})
+
+            await _async_create_graph_link(client, task_id, acc_id, "ACCEPTS", req_h)
+
+            task_meta["status"] = "COMPLETED"
+            ok, err = await _async_commit_graph_node(client, "task", task_id, task_meta, req_h)
+            if not ok:
+                return json.dumps({"status": "ERROR", "message": f"Error updating task status: {err}"})
+
+            return json.dumps({
+                "status": "SUCCESS",
+                "task_id": task_id,
+                "acceptance_id": acc_id,
+                "stakeholder": stakeholder_id,
+                "status_value": "COMPLETED"
             })
 
     @mcp.resource("ab://schema")
