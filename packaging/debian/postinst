@@ -1,0 +1,50 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create blackboard group if not present
+        if ! getent group blackboard >/dev/null; then
+            addgroup --system blackboard 2>/dev/null || groupadd -r blackboard 2>/dev/null || true
+        fi
+
+        # Create blackboard user if not present
+        if ! getent passwd blackboard >/dev/null; then
+            adduser --system --ingroup blackboard --home /var/lib/agentic-blackboard \
+                --no-create-home --shell /usr/sbin/nologin blackboard 2>/dev/null || \
+            useradd -r -g blackboard -d /var/lib/agentic-blackboard -s /usr/sbin/nologin blackboard 2>/dev/null || true
+        fi
+
+        # Ensure directories exist and have proper permissions
+        mkdir -p /var/lib/agentic-blackboard /var/log/agentic-blackboard /etc/agentic-blackboard
+        chown -R blackboard:blackboard /var/lib/agentic-blackboard /var/log/agentic-blackboard
+        chmod 0750 /var/lib/agentic-blackboard /var/log/agentic-blackboard
+
+        if [ -f /etc/agentic-blackboard/blackboard.conf ]; then
+            chown root:blackboard /etc/agentic-blackboard/blackboard.conf
+            chmod 0640 /etc/agentic-blackboard/blackboard.conf
+        fi
+
+        # Idempotent bootstrap initialization
+        if [ ! -f /var/lib/agentic-blackboard/initialized ]; then
+            if [ -x /usr/bin/ab-ctl ]; then
+                /usr/bin/ab-ctl init --bootstrap --data-dir=/var/lib/agentic-blackboard || true
+                touch /var/lib/agentic-blackboard/initialized 2>/dev/null || true
+            fi
+            chown -R blackboard:blackboard /var/lib/agentic-blackboard
+        fi
+
+        # Reload systemd daemon if running
+        if [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
