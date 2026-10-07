@@ -23,13 +23,24 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+def find_free_port() -> int:
+    """Allocate an unused ephemeral TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
 
 # Import MCP tools and FastMCP instance
 from ab_mcp_server import (
@@ -54,45 +65,53 @@ from ab_mcp_server import (
 started_process = None
 
 
-async def ensure_backend():
+async def ensure_backend(test_port: int, data_dir: str, base_url: str):
     """Ensure the Agentic Blackboard daemon is running and reachable."""
     global started_process
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{AB_API_URL}/schema", timeout=2.0)
-            if resp.status_code == 200:
-                print(f"[DAEMON] Connected to running Agentic Blackboard daemon at {AB_API_URL}")
-                return
-    except Exception:
-        pass
 
     daemon_bin = REPO_ROOT / "build" / "agentic-blackboardd"
     if not daemon_bin.exists():
         raise RuntimeError(f"Daemon binary not found at {daemon_bin}. Run cmake build first!")
 
-    print(f"[DAEMON] Starting Agentic Blackboard daemon: {daemon_bin}")
+    daemon_cmd = [
+        str(daemon_bin),
+        "1",
+        f"--data-dir={data_dir}",
+        "--auth-mode=trusted_network",
+        f"--port={test_port}"
+    ]
+    print(f"[DAEMON] Starting Agentic Blackboard daemon on port {test_port}: {' '.join(daemon_cmd)}")
+    daemon_log_path = Path(data_dir) / "daemon.log"
+    daemon_log_file = open(daemon_log_path, "w")
     started_process = subprocess.Popen(
-        [str(daemon_bin)],
+        daemon_cmd,
         cwd=str(REPO_ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+        stdout=daemon_log_file,
+        stderr=subprocess.STDOUT
     )
 
     # Wait up to 30 seconds for daemon to initialize
     for _ in range(150):
         if started_process and started_process.poll() is not None:
-            raise RuntimeError(f"Agentic Blackboard daemon exited prematurely with code {started_process.returncode}")
+            log_content = ""
+            if daemon_log_path.exists():
+                log_content = daemon_log_path.read_text(errors="replace")
+            raise RuntimeError(f"Agentic Blackboard daemon exited prematurely with code {started_process.returncode}:\n{log_content}")
         await asyncio.sleep(0.2)
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{AB_API_URL}/schema", timeout=1.0)
+                resp = await client.get(f"{base_url}/schema", timeout=1.0)
                 if resp.status_code == 200:
-                    print(f"[DAEMON] Agentic Blackboard daemon initialized and responsive at {AB_API_URL}")
+                    print(f"[DAEMON] Agentic Blackboard daemon initialized and responsive at {base_url}")
                     return
         except Exception:
             pass
 
-    raise RuntimeError("Timed out waiting for Agentic Blackboard daemon to start on port 8085.")
+    log_content = ""
+    if daemon_log_path.exists():
+        log_content = daemon_log_path.read_text(errors="replace")
+    raise RuntimeError(f"Timed out waiting for Agentic Blackboard daemon to start on port {test_port}.\n{log_content}")
+
 
 
 async def run_full_cycle():
@@ -456,12 +475,15 @@ async def run_full_cycle():
     node_script = REPO_ROOT / "scratch" / "verify_mcp_node.js"
     assert node_script.exists(), f"Node script not found at {node_script}"
 
+    node_env = os.environ.copy()
+    node_env["AB_API_URL"] = os.environ.get("AB_API_URL", "http://localhost:8085/api/v1")
     proc = await asyncio.create_subprocess_exec(
         "node",
         str(node_script),
         cwd=str(REPO_ROOT),
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
+        stderr=asyncio.subprocess.PIPE,
+        env=node_env
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
     out_str = stdout.decode("utf-8", errors="replace")
@@ -481,8 +503,19 @@ async def run_full_cycle():
 
 
 async def main():
+    test_port = int(os.environ.get("AB_TEST_PORT", 0)) or find_free_port()
+    temp_dir = tempfile.mkdtemp(prefix="bb_atmo_full_")
+    data_dir = os.path.join(temp_dir, "substrate")
+    os.makedirs(data_dir, exist_ok=True)
+    base_url = f"http://127.0.0.1:{test_port}"
+    api_url = f"{base_url}/api/v1"
+    os.environ["AB_API_URL"] = api_url
+    os.environ["AB_TEST_PORT"] = str(test_port)
+    import ab_mcp_server
+    ab_mcp_server.AB_API_URL = api_url
+
     try:
-        await ensure_backend()
+        await ensure_backend(test_port, data_dir, api_url)
         await run_full_cycle()
     finally:
         if started_process:
@@ -493,6 +526,7 @@ async def main():
             except subprocess.TimeoutExpired:
                 started_process.kill()
             print("[CLEANUP] Daemon stopped cleanly.")
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

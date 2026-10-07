@@ -16,12 +16,21 @@ REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=3.0)
 RDF_TIMEOUT = httpx.Timeout(30.0)
 
+def get_api_url() -> str:
+    return os.environ.get("AB_API_URL", AB_API_URL)
+
+
+def get_api_token() -> str:
+    return os.environ.get("AB_API_TOKEN", AB_API_TOKEN)
+
+
 def _build_headers(active_user: str | None = None) -> dict[str, str]:
     headers: dict[str, str] = {}
     if active_user:
         headers["X-Active-User"] = active_user
-    if AB_API_TOKEN:
-        headers["Authorization"] = f"Bearer {AB_API_TOKEN}"
+    token = get_api_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return headers
 
 
@@ -57,7 +66,7 @@ async def ensure_node(
     }
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.post(f"{AB_API_URL}/graph/node", json=payload, headers=headers)
+        response = await client.post(f"{get_api_url()}/graph/node", json=payload, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -87,7 +96,7 @@ async def commit_knowledge_bundle(
     }
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.post(f"{AB_API_URL}/graph/bundle", json=payload, headers=headers)
+        response = await client.post(f"{get_api_url()}/graph/bundle", json=payload, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -121,7 +130,7 @@ async def search_commonplace(
         params["tags"] = ",".join(tags)
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.get(f"{AB_API_URL}/search", params=params, headers=headers)
+        response = await client.get(f"{get_api_url()}/search", params=params, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -140,7 +149,7 @@ async def get_node(uuid: str, active_user: str | None = None) -> str:
     """
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.get(f"{AB_API_URL}/node/{uuid}", headers=headers)
+        response = await client.get(f"{get_api_url()}/node/{uuid}", headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -161,7 +170,7 @@ async def get_node_links(uuid: str, direction: str = "both", active_user: str | 
     params = {"direction": direction}
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.get(f"{AB_API_URL}/node/{uuid}/links", params=params, headers=headers)
+        response = await client.get(f"{get_api_url()}/node/{uuid}/links", params=params, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -180,7 +189,7 @@ async def export_graph_rdf(active_user: str | None = None) -> str:
     """
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=RDF_TIMEOUT) as client:
-        response = await client.get(f"{AB_API_URL}/graph/export", headers=headers)
+        response = await client.get(f"{get_api_url()}/graph/export", headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -223,7 +232,7 @@ async def create_note(
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         if check_duplicates:
             search_res = await client.get(
-                f"{AB_API_URL}/search",
+                f"{get_api_url()}/search",
                 params={"q": statement, "limit": 50},
                 headers=headers
             )
@@ -259,7 +268,7 @@ async def create_note(
             "atoms": [atom]
         }
         response = await client.post(
-            f"{AB_API_URL}/graph/bundle",
+            f"{get_api_url()}/graph/bundle",
             json=payload,
             headers=headers
         )
@@ -313,7 +322,7 @@ async def create_catalog_entry(
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         if check_duplicates:
             search_res = await client.get(
-                f"{AB_API_URL}/search",
+                f"{get_api_url()}/search",
                 params={"q": statement, "limit": 50},
                 headers=headers
             )
@@ -353,7 +362,7 @@ async def create_catalog_entry(
             "atoms": [atom]
         }
         response = await client.post(
-            f"{AB_API_URL}/graph/bundle",
+            f"{get_api_url()}/graph/bundle",
             json=payload,
             headers=headers
         )
@@ -392,7 +401,7 @@ async def link_nodes(
     }
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.post(f"{AB_API_URL}/link", json=payload, headers=headers)
+        response = await client.post(f"{get_api_url()}/link", json=payload, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -412,7 +421,7 @@ async def query_substrate(
     }
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.post(f"{AB_API_URL}/query", json=payload, headers=headers)
+        response = await client.post(f"{get_api_url()}/query", json=payload, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -434,7 +443,7 @@ async def spawn_widget(
     }
     headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.post(f"{AB_API_URL}/nucleus/materialize", json=payload, headers=headers)
+        response = await client.post(f"{get_api_url()}/nucleus/materialize", json=payload, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -458,7 +467,7 @@ async def bind_anchor_to_atom(
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         # We'll use a link endpoint to establish the ANCHORED_TO / REPRESENTED_BY chain
         # For MVP, we'll assume a composite operation in the backend
-        response = await client.post(f"{AB_API_URL}/nucleus/bind", json=payload, headers=headers)
+        response = await client.post(f"{get_api_url()}/nucleus/bind", json=payload, headers=headers)
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
@@ -470,7 +479,7 @@ async def get_schema() -> str:
     Knowledge Areas (KA), and relationship labels.
     """
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        response = await client.get(f"{AB_API_URL}/schema")
+        response = await client.get(f"{get_api_url()}/schema")
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
