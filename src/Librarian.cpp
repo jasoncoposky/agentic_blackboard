@@ -59,22 +59,19 @@ void Librarian::perform_analysis() {
 
     std::cout << "[Librarian] Scanning graph for structural analogies..." << std::endl;
 
-    // 1. Discover all Knowledge Atoms
-    // Nodes are stored with "n:{" prefix in KeyBuilder::node_key
-    auto keys = store->get_prefix_keys_all_shards("n:{", "", 1000);
+    // 1. Discover all Knowledge Atoms via parallel multi-shard prefix entries
+    auto entries = store->get_prefix_entries_all_shards("n:{", "", 1000);
     
     std::vector<CpbEntry> atoms;
-    for (const auto& key : keys) {
+    for (const auto& [key, val] : entries) {
         // Skip sidecar history/loser keys if we only want primary analogies
-        if (key.find(":los:") != std::string::npos) continue;
+        if (key.find(":los:") != std::string::npos || val.empty()) continue;
 
-        auto buf = store->get(key);
-        if (buf.size() > 0) {
-            try {
-                atoms.push_back(CpbEntry::deserialize(buf));
-            } catch (...) {
-                // Skip corrupted or incompatible nodes
-            }
+        try {
+            lite3cpp::Buffer buf(reinterpret_cast<const uint8_t*>(val.data()), val.size());
+            atoms.push_back(CpbEntry::deserialize(buf));
+        } catch (...) {
+            // Skip corrupted or incompatible nodes
         }
     }
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 import uuid as uuid_mod
 import httpx
@@ -8,11 +9,21 @@ from mcp.server.fastmcp import FastMCP
 # Initialize FastMCP server
 mcp = FastMCP("agentic-blackboard")
 
-AB_API_URL = "http://localhost:8085/api/v1"
+AB_API_URL = os.environ.get("AB_API_URL", "http://localhost:8085/api/v1")
+AB_API_TOKEN = os.environ.get("AB_API_TOKEN", "")
 REPO_ROOT = Path(__file__).resolve().parent
 
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=3.0)
 RDF_TIMEOUT = httpx.Timeout(30.0)
+
+def _build_headers(active_user: str | None = None) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if active_user:
+        headers["X-Active-User"] = active_user
+    if AB_API_TOKEN:
+        headers["Authorization"] = f"Bearer {AB_API_TOKEN}"
+    return headers
+
 
 @mcp.tool()
 async def ensure_node(
@@ -44,7 +55,7 @@ async def ensure_node(
             "content": content
         }
     }
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{AB_API_URL}/graph/node", json=payload, headers=headers)
         if response.is_error:
@@ -74,7 +85,7 @@ async def commit_knowledge_bundle(
         "agent_id": agent_id,
         "atoms": atoms
     }
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{AB_API_URL}/graph/bundle", json=payload, headers=headers)
         if response.is_error:
@@ -108,7 +119,7 @@ async def search_commonplace(
         params["ka"] = ka
     if tags:
         params["tags"] = ",".join(tags)
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{AB_API_URL}/search", params=params, headers=headers)
         if response.is_error:
@@ -127,7 +138,7 @@ async def get_node(uuid: str, active_user: str | None = None) -> str:
     Returns:
         JSON string containing node properties, taxonomy, and payload.
     """
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{AB_API_URL}/node/{uuid}", headers=headers)
         if response.is_error:
@@ -148,7 +159,7 @@ async def get_node_links(uuid: str, direction: str = "both", active_user: str | 
         JSON string containing inbound and outbound link lists with hydrated statements.
     """
     params = {"direction": direction}
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.get(f"{AB_API_URL}/node/{uuid}/links", params=params, headers=headers)
         if response.is_error:
@@ -167,7 +178,7 @@ async def export_graph_rdf(active_user: str | None = None) -> str:
     Returns:
         W3C RDF Turtle serialization of the knowledge graph.
     """
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=RDF_TIMEOUT) as client:
         response = await client.get(f"{AB_API_URL}/graph/export", headers=headers)
         if response.is_error:
@@ -208,7 +219,7 @@ async def create_note(
     Returns:
         Structured JSON response with status, uuid, and message.
     """
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         if check_duplicates:
             search_res = await client.get(
@@ -298,7 +309,7 @@ async def create_catalog_entry(
     Returns:
         Structured JSON response with status, uuid, and message.
     """
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         if check_duplicates:
             search_res = await client.get(
@@ -379,7 +390,7 @@ async def link_nodes(
         "label": label,
         "weight": weight
     }
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{AB_API_URL}/link", json=payload, headers=headers)
         if response.is_error:
@@ -399,7 +410,7 @@ async def query_substrate(
         "match": match_alias,
         "where_eq": where_eq or {}
     }
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{AB_API_URL}/query", json=payload, headers=headers)
         if response.is_error:
@@ -421,7 +432,7 @@ async def spawn_widget(
         "behavior": behavior,
         "label": label
     }
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         response = await client.post(f"{AB_API_URL}/nucleus/materialize", json=payload, headers=headers)
         if response.is_error:
@@ -443,7 +454,7 @@ async def bind_anchor_to_atom(
         "atom_id": atom_id,
         "device_id": device_id
     }
-    headers = {"X-Active-User": active_user} if active_user else {}
+    headers = _build_headers(active_user)
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         # We'll use a link endpoint to establish the ANCHORED_TO / REPRESENTED_BY chain
         # For MVP, we'll assume a composite operation in the backend

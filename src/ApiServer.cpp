@@ -1714,19 +1714,21 @@ void ApiServer::listen_loop() {
             response["nodes"] = json::array();
             response["edges"] = json::array();
 
-            // 1. Fetch ALL Nodes (Atoms, Identities, Projects)
-            std::set<std::string> unique_keys;
-            auto keys1 = store->get_prefix_keys_all_shards("n:", "n:", 1000);
-            auto keys2 = store->get_prefix_keys_all_shards("n:{", "n:{", 1000);
-            unique_keys.insert(keys1.begin(), keys1.end());
-            unique_keys.insert(keys2.begin(), keys2.end());
-
-            std::cout << "[API] Snapshot Scan: Found " << unique_keys.size() << " potential node keys." << std::endl;
+            // 1. Fetch ALL Nodes (Atoms, Identities, Projects) via parallel multi-shard scan
+            auto entries = store->get_prefix_entries_all_shards("n:", "", 2000);
+            std::cout << "[API] Snapshot Scan: Found " << entries.size() << " potential node entries." << std::endl;
 
             std::unordered_set<std::string> materialized_ids;
 
-            for(const auto& key : unique_keys) {
-                auto buf = store->get(key, principal_id);
+            for(const auto& [key, val] : entries) {
+                if (val.empty()) continue;
+                if (principal_id != 0 && principal_id != l3kv::ADMIN_UID && principal_id != l3kv::INTERNAL_UID) {
+                    auto perm = store->credentials().check_permission(principal_id, key);
+                    if (!(perm & l3kv::Permission::READ) && !(perm & l3kv::Permission::ADMIN)) {
+                        continue;
+                    }
+                }
+                lite3cpp::Buffer buf(reinterpret_cast<const uint8_t*>(val.data()), val.size());
                 if (buf.size() > 0) {
                     try {
                         size_t h_idx = buf.get_obj(0, "header");
