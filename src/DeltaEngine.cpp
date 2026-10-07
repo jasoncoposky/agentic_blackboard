@@ -22,6 +22,7 @@ L3DeltaPatch DeltaEngine::create_xor_patch(const lite3cpp::Buffer& base, const l
     size_t max_size = std::max(base_size, target_size);
     
     patch.patch.offset = 0;
+    patch.patch.target_size = static_cast<int64_t>(target_size);
     patch.patch.binary_delta.resize(max_size);
     
     for (size_t i = 0; i < max_size; ++i) {
@@ -38,14 +39,14 @@ std::optional<lite3cpp::Buffer> DeltaEngine::apply_xor_patch(const lite3cpp::Buf
     size_t base_size = base.size();
     size_t delta_size = patch.patch.binary_delta.size();
     
-    // Reconstruct target size calculation (same as delta_size for XOR)
-    size_t target_size = delta_size;
+    // Reconstruct target size calculation (use explicit target_size when present, otherwise fallback to delta_size)
+    size_t target_size = (patch.patch.target_size > 0) ? static_cast<size_t>(patch.patch.target_size) : delta_size;
     
     std::vector<uint8_t> reconstructed_data(target_size);
     
     for (size_t i = 0; i < target_size; ++i) {
         uint8_t base_byte = (i < base_size) ? base.data()[i] : 0;
-        uint8_t delta_byte = patch.patch.binary_delta[i];
+        uint8_t delta_byte = (i < delta_size) ? patch.patch.binary_delta[i] : 0;
         reconstructed_data[i] = base_byte ^ delta_byte;
     }
     

@@ -197,9 +197,10 @@ struct L3DeltaPatch {
     } header;
 
     struct Patch {
-        int64_t offset;
+        int64_t offset = 0;
+        int64_t target_size = 0;
         std::vector<uint8_t> binary_delta;
-        uint64_t checksum; // XXH3_64bits
+        uint64_t checksum = 0; // XXH3_64bits
     } patch;
 
     void serialize(lite3cpp::Buffer& buf) const {
@@ -211,6 +212,7 @@ struct L3DeltaPatch {
 
         size_t p_idx = buf.set_obj(0, "patch");
         buf.set_i64(p_idx, "offset", patch.offset);
+        buf.set_i64(p_idx, "target_size", patch.target_size);
         buf.set_i64(p_idx, "checksum", static_cast<int64_t>(patch.checksum));
         
         std::string delta_str(reinterpret_cast<const char*>(patch.binary_delta.data()), patch.binary_delta.size());
@@ -225,6 +227,7 @@ struct L3DeltaPatch {
 
         size_t p_idx = buf.get_obj(0, "patch");
         p.patch.offset = buf.get_i64(p_idx, "offset");
+        try { p.patch.target_size = buf.get_i64(p_idx, "target_size"); } catch (...) {}
         p.patch.checksum = static_cast<uint64_t>(buf.get_i64(p_idx, "checksum"));
         
         std::string_view delta_view = buf.get_str(p_idx, "binary_delta");

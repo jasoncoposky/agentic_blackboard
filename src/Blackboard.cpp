@@ -8,6 +8,7 @@
 #include "L3KVG/Node.hpp"
 #include "engine/store.hpp"
 #include "engine/credential_manager.hpp"
+#include "L3KVG/MutationBatch.hpp"
 #include <algorithm>
 #include <openssl/evp.h>
 #include <iomanip>
@@ -458,9 +459,14 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     
     // FORCED LOCAL STORAGE: Ensure all atoms are stored on local substrate for shake-down
     std::cout << "[Blackboard] Committing Atom: " << adjusted.header.uuid << " (Project: " << adjusted.header.origin.project_id << ")" << std::endl;
-    
-    // Use the engine's put_node to ensure proper distributed routing, caching, and indexing
-    engine_->put_node(adjusted.header.uuid, std::string(reinterpret_cast<const char*>(buf.data()), buf.size()));
+
+    // Modern Zero-Copy Binary HLC Injection into node payload
+    l3kvg::HLCTimestamp ts = engine_->get_hlc().now();
+    ts.write_to_buffer(buf, 0, "_hlc");
+
+    l3kvg::MutationBatch batch;
+    uint64_t src_id = engine_->get_resolver().parse_uuid(adjusted.header.uuid);
+    batch.put_node(src_id, std::string_view(reinterpret_cast<const char*>(buf.data()), buf.size()));
 
     
     // IDENTITY-CENTRIC ENFORCEMENT: Ensure Links (No Orphans)
@@ -475,7 +481,8 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
             IdentityNode stub = {origin_user_id, "Unknown User (" + origin_user_id + ")", "USER", ""};
             commit_identity_node(stub);
         }
-        engine_->add_edge(adjusted.header.uuid, rel::CREATED_BY, 1.0, origin_user_id);
+        uint64_t user_id = engine_->get_resolver().parse_uuid(origin_user_id);
+        batch.add_edge(src_id, rel::CREATED_BY, 1.0, user_id);
 
         if (!origin_agent_id.empty() && origin_agent_id != origin_user_id) {
             auto agent_node = engine_->get_node(origin_agent_id);
@@ -483,7 +490,8 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
                 IdentityNode stub = {origin_agent_id, "Unknown Agent (" + origin_agent_id + ")", "AGENT", ""};
                 commit_identity_node(stub);
             }
-            engine_->add_edge(adjusted.header.uuid, rel::CREATED_BY, 1.0, origin_agent_id);
+            uint64_t agent_id = engine_->get_resolver().parse_uuid(origin_agent_id);
+            batch.add_edge(src_id, rel::CREATED_BY, 1.0, agent_id);
         }
     } else if (!origin_agent_id.empty()) {
         auto agent_node = engine_->get_node(origin_agent_id);
@@ -491,7 +499,8 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
             IdentityNode stub = {origin_agent_id, "Unknown Agent (" + origin_agent_id + ")", "AGENT", ""};
             commit_identity_node(stub);
         }
-        engine_->add_edge(adjusted.header.uuid, rel::CREATED_BY, 1.0, origin_agent_id);
+        uint64_t agent_id = engine_->get_resolver().parse_uuid(origin_agent_id);
+        batch.add_edge(src_id, rel::CREATED_BY, 1.0, agent_id);
     }
 
     // 2. Link Project
@@ -501,7 +510,8 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
             ProjectNode stub = {project_id, "Auto-created stub for " + project_id, "STUB"};
             commit_project_node(stub);
         }
-        engine_->add_edge(adjusted.header.uuid, rel::BELONGS_TO, 1.0, project_id);
+        uint64_t proj_id = engine_->get_resolver().parse_uuid(project_id);
+        batch.add_edge(src_id, rel::BELONGS_TO, 1.0, proj_id);
     }
 
     // 3. Propagate Edge ACLs for Source Node (Multi-Tenancy)
@@ -515,16 +525,21 @@ bool Blackboard::commit_cpb_entry(const CpbEntry& entry, uint32_t principal_id) 
     for (const auto& link : adjusted.payload.note_links) {
         if (!link.target_uuid.empty()) {
             std::string rel_label = link.relation.empty() ? rel::SEE_ALSO : link.relation;
-            engine_->add_edge(adjusted.header.uuid, rel_label, 1.0, link.target_uuid);
+            uint64_t dst_id = engine_->get_resolver().parse_uuid(link.target_uuid);
+            batch.add_edge(src_id, rel_label, 1.0, dst_id);
         }
     }
 
     // 5. Auto-project Reference Citations
     for (const auto& ref : adjusted.payload.references) {
         if (!ref.uuid.empty()) {
-            engine_->add_edge(adjusted.header.uuid, rel::CITES, 1.0, ref.uuid);
+            uint64_t dst_id = engine_->get_resolver().parse_uuid(ref.uuid);
+            batch.add_edge(src_id, rel::CITES, 1.0, dst_id);
         }
     }
+
+    // Atomic execution of atom + all synapses in a single WAL write
+    engine_->apply_batch(batch.get_buffer(), l3kv::INTERNAL_UID);
 
 
     // Telemetry
@@ -614,7 +629,7 @@ bool Blackboard::apply_delta_patch(const L3DeltaPatch& patch) {
     if (!reconstructed) return false;
 
     // Direct put to store (bypass semantic merge as patches are usually during catchup/sync)
-    engine_->put_node(patch.header.base_uuid, std::string(reinterpret_cast<const char*>(reconstructed->data()), reconstructed->size()));
+    store->put(key, std::string(reinterpret_cast<const char*>(reconstructed->data()), reconstructed->size()));
     return true;
 }
 
