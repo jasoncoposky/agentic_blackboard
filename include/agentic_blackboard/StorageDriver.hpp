@@ -43,10 +43,6 @@ public:
 
 } // namespace agentic_blackboard::storage
 
-namespace ab {
-    namespace storage = agentic_blackboard::storage;
-}
+namespace ab = agentic_blackboard;
+namespace blackboard = agentic_blackboard;
 
-namespace blackboard {
-    namespace storage = agentic_blackboard::storage;
-}

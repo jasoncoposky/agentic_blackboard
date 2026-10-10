@@ -1430,6 +1430,89 @@ void test_review_fixes() {
     std::cout << "[Test] Review Fixes Verification PASSED" << std::endl;
 }
 
+void verify_artifact_graph_model(blackboard::Blackboard& bb) {
+    std::cout << "\n=== Test Suite 17: Artifact Graph Modeling & AVU Triples ===" << std::endl;
+
+    blackboard::ArtifactEntry artifact;
+    artifact.uuid = "art-test-001";
+    artifact.pid = "urn:ab:artifact:nucleus/specs/design.md";
+    artifact.content_hash = "blake3:9f83a1b42c67e89d";
+    artifact.mime_type = "text/markdown";
+    artifact.byte_size = 14655;
+    artifact.title = "FAIR System Design";
+    artifact.license = "SPDX:Apache-2.0";
+    artifact.collection_path = "/nucleus/specs";
+    artifact.logical_name = "design.md";
+
+    // Attach AVU triples
+    artifact.avus.push_back({"lifecycle", "draft", ""});
+    artifact.avus.push_back({"fair_tier", "gold", ""});
+
+    // Commit artifact to blackboard
+    bool ok = bb.commit_artifact(artifact, "user:alice", "agent:cpg-architect");
+    assert(ok && "commit_artifact must return true");
+
+    // Verify retrieval
+    auto retrieved = bb.get_artifact("art-test-001");
+    assert(retrieved.has_value());
+    assert(retrieved->content_hash == "blake3:9f83a1b42c67e89d");
+    assert(retrieved->pid == "urn:ab:artifact:nucleus/specs/design.md");
+    assert(retrieved->mime_type == "text/markdown");
+    assert(retrieved->byte_size == 14655);
+    assert(retrieved->title == "FAIR System Design");
+    assert(retrieved->license == "SPDX:Apache-2.0");
+    assert(retrieved->collection_path == "/nucleus/specs");
+    assert(retrieved->logical_name == "design.md");
+    assert(retrieved->avus.size() == 2);
+
+    // Verify graph edges
+    auto art_node = bb.get_engine()->get_node("art-test-001");
+    assert(art_node && "Artifact node must exist in graph");
+
+    bool has_user_author = false;
+    for (const auto& edge : art_node->get_edges(rel::AUTHORED_BY)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("user:alice")) {
+            has_user_author = true;
+        }
+    }
+    assert(has_user_author && "Artifact must have AUTHORED_BY edge to user:alice");
+
+    bool has_agent_gen = false;
+    for (const auto& edge : art_node->get_edges(rel::GENERATED_BY)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("agent:cpg-architect")) {
+            has_agent_gen = true;
+        }
+    }
+    assert(has_agent_gen && "Artifact must have GENERATED_BY edge to agent:cpg-architect");
+
+    auto coll_node = bb.get_engine()->get_node("/nucleus/specs");
+    assert(coll_node && "Collection node must exist in graph");
+    bool coll_contains_art = false;
+    for (const auto& edge : coll_node->get_edges(rel::CONTAINS)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("art-test-001")) {
+            coll_contains_art = true;
+        }
+    }
+    assert(coll_contains_art && "Collection must have CONTAINS edge to artifact");
+
+    auto avu_edges = art_node->get_edges(rel::ANNOTATED_WITH);
+    assert(avu_edges.size() == 2 && "Artifact must have 2 ANNOTATED_WITH edges");
+
+    // Verify reverse AVU query
+    auto matches = bb.query_by_avu("fair_tier", "gold");
+    assert(!matches.empty() && "Must find artifact by AVU triple");
+    assert(matches[0] == "art-test-001");
+
+    auto draft_matches = bb.query_by_avu("lifecycle", "draft");
+    assert(!draft_matches.empty() && "Must find artifact by lifecycle:draft");
+    assert(draft_matches[0] == "art-test-001");
+
+    auto negative_matches = bb.query_by_avu("fair_tier", "platinum");
+    assert(negative_matches.empty() && "Negative AVU query must return empty");
+
+    std::cout << "[PASS] Artifact graph model and AVU deduplicated indexes verified!" << std::endl;
+}
+
 int main() {
     try {
         std::cout << "[Test] Starting Agentic Blackboard Verification..." << std::endl;
@@ -1459,6 +1542,12 @@ int main() {
         }
         std::filesystem::remove_all("test_token_db");
         test_review_fixes();
+        std::filesystem::remove_all("test_artifact_db");
+        {
+            blackboard::Blackboard bb("test_artifact_db", 17);
+            verify_artifact_graph_model(bb);
+        }
+        std::filesystem::remove_all("test_artifact_db");
         std::cout << "\n[SUCCESS] All Agentic Blackboard Verification Tests Passed!" << std::endl;
         return 0;
     } catch (const std::exception& e) {

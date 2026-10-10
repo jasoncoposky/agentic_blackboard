@@ -5,8 +5,10 @@
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <utility>
+#include <optional>
 #include <shared_mutex>
 
 namespace agentic_blackboard {
@@ -78,11 +80,24 @@ public:
     bool commit_identity_node(const IdentityNode& identity);
     bool commit_project_node(const ProjectNode& project);
 
+    // FAIR Artifact & Metadata Management
+    /**
+     * @brief Commit a FAIR artifact entry with provenance and AVU indexing.
+     */
+    bool commit_artifact(const ArtifactEntry& entry, std::string_view user_id = "", std::string_view agent_id = "");
+
+    /**
+     * @brief Retrieve a FAIR artifact entry by UUID.
+     */
+    std::optional<ArtifactEntry> get_artifact(std::string_view uuid);
+
+    /**
+     * @brief Query artifact UUIDs matching an Attribute-Value pair.
+     */
+    std::vector<std::string> query_by_avu(std::string_view attribute, std::string_view value = "");
 
     // Graph Access
-
     l3kvg::Engine* get_engine() { return engine_.get(); }
-
 
 private:
     std::unique_ptr<l3kvg::Engine> engine_;
@@ -93,4 +108,6 @@ private:
 
 } // namespace agentic_blackboard
  
+namespace blackboard = agentic_blackboard;
 namespace ab = agentic_blackboard;
+

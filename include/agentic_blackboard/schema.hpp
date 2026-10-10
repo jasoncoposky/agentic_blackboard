@@ -45,6 +45,15 @@ namespace rel {
     const std::string PAIRS_WITH = "PAIRS_WITH";
     const std::string VARIATION_OF = "VARIATION_OF";
     const std::string USES_INGREDIENT = "USES_INGREDIENT";
+
+    // FAIR Artifact & Graph Modeling
+    const std::string CONTAINS = "CONTAINS";
+    const std::string STORED_AS = "STORED_AS";
+    const std::string ANNOTATED_WITH = "ANNOTATED_WITH";
+    const std::string SPECIFIES = "SPECIFIES";
+    const std::string AUTHORED_BY = "AUTHORED_BY";
+    const std::string GENERATED_BY = "GENERATED_BY";
+    const std::string DERIVED_FROM = "DERIVED_FROM";
 }
 
 
@@ -970,6 +979,138 @@ struct NucleusWidgetNode {
     }
 };
 
+/**
+ * @brief Attribute-Value-Units Triple for FAIR Annotation
+ */
+struct AVUTriple {
+    std::string attribute;
+    std::string value;
+    std::string units;
+
+    void serialize(lite3cpp::Buffer& buf, size_t parent) const {
+        size_t target_idx = parent;
+        lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + parent));
+        if (nv.type() == lite3cpp::Type::Array) {
+            target_idx = buf.arr_append_obj(parent);
+        }
+        buf.set_str(target_idx, "attribute", attribute);
+        buf.set_str(target_idx, "value", value);
+        buf.set_str(target_idx, "units", units);
+    }
+
+    static AVUTriple deserialize(const lite3cpp::Buffer& buf, size_t parent) {
+        AVUTriple avu;
+        try { if (buf.get_type(parent, "attribute") == lite3cpp::Type::String) avu.attribute = std::string(buf.get_str(parent, "attribute")); } catch (...) {}
+        try { if (buf.get_type(parent, "value") == lite3cpp::Type::String) avu.value = std::string(buf.get_str(parent, "value")); } catch (...) {}
+        try { if (buf.get_type(parent, "units") == lite3cpp::Type::String) avu.units = std::string(buf.get_str(parent, "units")); } catch (...) {}
+        return avu;
+    }
+};
+
+/**
+ * @brief FAIR Artifact Entry
+ */
+struct ArtifactEntry {
+    std::string uuid;
+    std::string pid;
+    std::string content_hash;
+    std::string mime_type;
+    uint64_t byte_size{0};
+    std::string title;
+    std::string abstract;
+    std::string license;
+    std::string version{"1.0.0"};
+    std::string collection_path;
+    std::string logical_name;
+    std::string primary_locator;
+    std::vector<AVUTriple> avus;
+    std::vector<std::string> derived_from_uuids;
+    uint64_t created_at_ms{0};
+
+    void serialize(lite3cpp::Buffer& buf) const {
+        buf.init_object();
+        size_t h_idx = buf.set_obj(0, "header");
+        buf.set_str(h_idx, "type", "ARTIFACT");
+        buf.set_str(h_idx, "uuid", uuid);
+        buf.set_i64(h_idx, "created_at_ms", static_cast<int64_t>(created_at_ms));
+
+        buf.set_str(0, "uuid", uuid);
+        buf.set_str(0, "pid", pid);
+        buf.set_str(0, "content_hash", content_hash);
+        buf.set_str(0, "mime_type", mime_type);
+        buf.set_i64(0, "byte_size", static_cast<int64_t>(byte_size));
+        buf.set_str(0, "title", title);
+        buf.set_str(0, "abstract", abstract);
+        buf.set_str(0, "license", license);
+        buf.set_str(0, "version", version);
+        buf.set_str(0, "collection_path", collection_path);
+        buf.set_str(0, "logical_name", logical_name);
+        buf.set_str(0, "primary_locator", primary_locator);
+        buf.set_i64(0, "created_at_ms", static_cast<int64_t>(created_at_ms));
+
+        size_t avus_idx = buf.set_arr(0, "avus");
+        for (const auto& a : avus) {
+            a.serialize(buf, avus_idx);
+        }
+
+        size_t df_idx = buf.set_arr(0, "derived_from_uuids");
+        for (const auto& df : derived_from_uuids) {
+            buf.arr_append_str(df_idx, df);
+        }
+    }
+
+    static ArtifactEntry deserialize(const lite3cpp::Buffer& buf) {
+        ArtifactEntry ae;
+        try {
+            if (buf.get_type(0, "uuid") == lite3cpp::Type::String) {
+                ae.uuid = std::string(buf.get_str(0, "uuid"));
+            } else if (buf.get_type(0, "header") == lite3cpp::Type::Object) {
+                size_t h_idx = buf.get_obj(0, "header");
+                if (buf.get_type(h_idx, "uuid") == lite3cpp::Type::String) {
+                    ae.uuid = std::string(buf.get_str(h_idx, "uuid"));
+                }
+            }
+        } catch (...) {}
+
+        try { if (buf.get_type(0, "pid") == lite3cpp::Type::String) ae.pid = std::string(buf.get_str(0, "pid")); } catch (...) {}
+        try { if (buf.get_type(0, "content_hash") == lite3cpp::Type::String) ae.content_hash = std::string(buf.get_str(0, "content_hash")); } catch (...) {}
+        try { if (buf.get_type(0, "mime_type") == lite3cpp::Type::String) ae.mime_type = std::string(buf.get_str(0, "mime_type")); } catch (...) {}
+        try { if (buf.get_type(0, "byte_size") == lite3cpp::Type::Int64) ae.byte_size = static_cast<uint64_t>(buf.get_i64(0, "byte_size")); } catch (...) {}
+        try { if (buf.get_type(0, "title") == lite3cpp::Type::String) ae.title = std::string(buf.get_str(0, "title")); } catch (...) {}
+        try { if (buf.get_type(0, "abstract") == lite3cpp::Type::String) ae.abstract = std::string(buf.get_str(0, "abstract")); } catch (...) {}
+        try { if (buf.get_type(0, "license") == lite3cpp::Type::String) ae.license = std::string(buf.get_str(0, "license")); } catch (...) {}
+        try { if (buf.get_type(0, "version") == lite3cpp::Type::String) ae.version = std::string(buf.get_str(0, "version")); } catch (...) {}
+        try { if (buf.get_type(0, "collection_path") == lite3cpp::Type::String) ae.collection_path = std::string(buf.get_str(0, "collection_path")); } catch (...) {}
+        try { if (buf.get_type(0, "logical_name") == lite3cpp::Type::String) ae.logical_name = std::string(buf.get_str(0, "logical_name")); } catch (...) {}
+        try { if (buf.get_type(0, "primary_locator") == lite3cpp::Type::String) ae.primary_locator = std::string(buf.get_str(0, "primary_locator")); } catch (...) {}
+        try { if (buf.get_type(0, "created_at_ms") == lite3cpp::Type::Int64) ae.created_at_ms = static_cast<uint64_t>(buf.get_i64(0, "created_at_ms")); } catch (...) {}
+
+        try {
+            if (buf.get_type(0, "avus") == lite3cpp::Type::Array) {
+                size_t avus_idx = buf.get_arr(0, "avus");
+                lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + avus_idx));
+                for (uint32_t i = 0; i < nv.size(); ++i) {
+                    size_t o = buf.arr_get_obj(avus_idx, i);
+                    ae.avus.push_back(AVUTriple::deserialize(buf, o));
+                }
+            }
+        } catch (...) {}
+
+        try {
+            if (buf.get_type(0, "derived_from_uuids") == lite3cpp::Type::Array) {
+                size_t df_idx = buf.get_arr(0, "derived_from_uuids");
+                lite3cpp::NodeView nv(reinterpret_cast<const lite3cpp::PackedNodeLayout*>(buf.data() + df_idx));
+                for (uint32_t i = 0; i < nv.size(); ++i) {
+                    ae.derived_from_uuids.push_back(std::string(buf.arr_get_str(df_idx, i)));
+                }
+            }
+        } catch (...) {}
+
+        return ae;
+    }
+};
+
 } // namespace agentic_blackboard
  
+namespace blackboard = agentic_blackboard;
 namespace ab = agentic_blackboard;

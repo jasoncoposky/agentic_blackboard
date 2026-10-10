@@ -56,6 +56,12 @@ std::string extract_uuid_from_buf(const lite3cpp::Buffer& buf) {
         }
     } catch (...) {}
     try {
+        if (buf.get_type(0, "uuid") == lite3cpp::Type::String) {
+            std::string u = std::string(buf.get_str(0, "uuid"));
+            if (!u.empty()) return u;
+        }
+    } catch (...) {}
+    try {
         if (buf.get_type(0, "project_id") == lite3cpp::Type::String) {
             std::string u = std::string(buf.get_str(0, "project_id"));
             if (!u.empty()) return u;
@@ -817,4 +823,192 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(
     return outbound;
 }
 
+bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view user_id, std::string_view agent_id) {
+    if (!engine_) return false;
+
+    ArtifactEntry adjusted = entry;
+    if (adjusted.uuid.empty()) {
+        uint32_t h = std::hash<std::string>{}(adjusted.logical_name + adjusted.content_hash);
+        char hex[9];
+        std::snprintf(hex, sizeof(hex), "%08x", h);
+        adjusted.uuid = "art-" + std::string(hex);
+    }
+
+    if (adjusted.created_at_ms == 0) {
+        adjusted.created_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
+    lite3cpp::Buffer buf;
+    adjusted.serialize(buf);
+
+    l3kvg::HLCTimestamp ts = engine_->get_hlc().now();
+    ts.write_to_buffer(buf, 0, "_hlc");
+
+    l3kvg::MutationBatch batch;
+    uint64_t src_id = engine_->get_resolver().parse_uuid(adjusted.uuid);
+    batch.put_node(src_id, std::string_view(reinterpret_cast<const char*>(buf.data()), buf.size()));
+
+    // Link author/identity nodes (user_id, agent_id) via AUTHORED_BY / GENERATED_BY
+    if (!user_id.empty()) {
+        std::string uid_str(user_id);
+        auto user_node = engine_->get_node(uid_str);
+        if (!user_node || !user_node->has_attribute("header")) {
+            IdentityNode stub = {uid_str, "User (" + uid_str + ")", "USER", ""};
+            commit_identity_node(stub);
+        }
+        uint64_t u_nid = engine_->get_resolver().parse_uuid(uid_str);
+        batch.add_edge(src_id, rel::AUTHORED_BY, 1.0, u_nid);
+    }
+
+    if (!agent_id.empty()) {
+        std::string aid_str(agent_id);
+        auto agent_node = engine_->get_node(aid_str);
+        if (!agent_node || !agent_node->has_attribute("header")) {
+            IdentityNode stub = {aid_str, "Agent (" + aid_str + ")", "AGENT", ""};
+            commit_identity_node(stub);
+        }
+        uint64_t a_nid = engine_->get_resolver().parse_uuid(aid_str);
+        batch.add_edge(src_id, rel::GENERATED_BY, 1.0, a_nid);
+    }
+
+    // Link collection node (collection_path) to artifact via CONTAINS
+    if (!adjusted.collection_path.empty()) {
+        std::string coll_str = adjusted.collection_path;
+        uint64_t coll_id = engine_->get_resolver().parse_uuid(coll_str);
+        auto coll_node = engine_->get_node(coll_str);
+        if (!coll_node || !coll_node->has_attribute("header")) {
+            lite3cpp::Buffer cbuf;
+            cbuf.init_object();
+            size_t h_idx = cbuf.set_obj(0, "header");
+            cbuf.set_str(h_idx, "type", "COLLECTION");
+            cbuf.set_str(h_idx, "path", coll_str);
+            batch.put_node(coll_id, std::string_view(reinterpret_cast<const char*>(cbuf.data()), cbuf.size()));
+        }
+        batch.add_edge(coll_id, rel::CONTAINS, 1.0, src_id);
+    }
+
+    // Link primary locator via STORED_AS if specified
+    if (!adjusted.primary_locator.empty()) {
+        uint64_t loc_id = engine_->get_resolver().parse_uuid(adjusted.primary_locator);
+        batch.add_edge(src_id, rel::STORED_AS, 1.0, loc_id);
+    }
+
+    // Link persistent identifier (PID) via SPECIFIES if specified
+    if (!adjusted.pid.empty()) {
+        uint64_t pid_id = engine_->get_resolver().parse_uuid(adjusted.pid);
+        batch.add_edge(src_id, rel::SPECIFIES, 1.0, pid_id);
+    }
+
+    // Link derivation history
+    for (const auto& parent_uuid : adjusted.derived_from_uuids) {
+        if (!parent_uuid.empty()) {
+            uint64_t parent_id = engine_->get_resolver().parse_uuid(parent_uuid);
+            batch.add_edge(src_id, rel::DERIVED_FROM, 1.0, parent_id);
+        }
+    }
+
+    // For each AVU in entry.avus:
+    // - Compute AVU node id (e.g. aid = engine_->get_resolver().parse_uuid("avu:" + a.attribute + ":" + a.value + ":" + a.units))
+    // - Link edge_out_key(src_id, "ANNOTATED_WITH", 1.0, aid) and edge_in_key(aid, "ANNOTATED_WITH", src_id)
+    // - Write index key idx:Metadata:av:{attr}:{val}:{entry.uuid}
+    for (const auto& a : adjusted.avus) {
+        std::string avu_id_str = "avu:" + a.attribute + ":" + a.value + ":" + a.units;
+        uint64_t aid = engine_->get_resolver().parse_uuid(avu_id_str);
+
+        lite3cpp::Buffer avu_buf;
+        avu_buf.init_object();
+        size_t h_idx = avu_buf.set_obj(0, "header");
+        avu_buf.set_str(h_idx, "type", "AVU");
+        avu_buf.set_str(0, "attribute", a.attribute);
+        avu_buf.set_str(0, "value", a.value);
+        avu_buf.set_str(0, "units", a.units);
+        batch.put_node(aid, std::string_view(reinterpret_cast<const char*>(avu_buf.data()), avu_buf.size()));
+
+        batch.add_edge(src_id, rel::ANNOTATED_WITH, 1.0, aid);
+
+        std::string idx_key = "idx:Metadata:av:" + a.attribute + ":" + a.value + ":" + adjusted.uuid;
+        batch.add_index(idx_key, adjusted.uuid);
+    }
+
+    return engine_->apply_batch(batch.get_buffer(), l3kv::INTERNAL_UID);
+}
+
+std::optional<ArtifactEntry> Blackboard::get_artifact(std::string_view uuid) {
+    if (uuid.empty() || !engine_) return std::nullopt;
+
+    uint64_t nid = engine_->get_resolver().parse_uuid(std::string(uuid));
+    std::string key = std::string(l3kvg::KeyBuilder::node_key(nid));
+    auto buf = engine_->get_store()->get(key, l3kv::INTERNAL_UID);
+    if (buf.size() == 0) {
+        return std::nullopt;
+    }
+
+    try {
+        ArtifactEntry entry = ArtifactEntry::deserialize(buf);
+        if (!entry.uuid.empty() || !entry.content_hash.empty()) {
+            return entry;
+        }
+    } catch (...) {}
+
+    try {
+        std::string_view sv(reinterpret_cast<const char*>(buf.data()), buf.size());
+        auto j = nlohmann::json::parse(sv);
+        ArtifactEntry ae;
+        if (j.contains("uuid")) ae.uuid = j["uuid"].get<std::string>();
+        if (j.contains("pid")) ae.pid = j["pid"].get<std::string>();
+        if (j.contains("content_hash")) ae.content_hash = j["content_hash"].get<std::string>();
+        if (j.contains("mime_type")) ae.mime_type = j["mime_type"].get<std::string>();
+        if (j.contains("byte_size")) ae.byte_size = j["byte_size"].get<uint64_t>();
+        if (j.contains("title")) ae.title = j["title"].get<std::string>();
+        if (j.contains("abstract")) ae.abstract = j["abstract"].get<std::string>();
+        if (j.contains("license")) ae.license = j["license"].get<std::string>();
+        if (j.contains("version")) ae.version = j["version"].get<std::string>();
+        if (j.contains("collection_path")) ae.collection_path = j["collection_path"].get<std::string>();
+        if (j.contains("logical_name")) ae.logical_name = j["logical_name"].get<std::string>();
+        if (j.contains("primary_locator")) ae.primary_locator = j["primary_locator"].get<std::string>();
+        if (j.contains("created_at_ms")) ae.created_at_ms = j["created_at_ms"].get<uint64_t>();
+        return ae;
+    } catch (...) {}
+
+    return std::nullopt;
+}
+
+std::vector<std::string> Blackboard::query_by_avu(std::string_view attribute, std::string_view value) {
+    if (!engine_) return {};
+
+    auto* store = engine_->get_store();
+    std::string prefix;
+    if (value.empty()) {
+        prefix = "idx:Metadata:av:" + std::string(attribute) + ":";
+    } else {
+        prefix = "idx:Metadata:av:" + std::string(attribute) + ":" + std::string(value) + ":";
+    }
+
+    auto keys = store->get_prefix_keys_all_shards(prefix, "", engine_->get_settings().prefix_scan_limit);
+
+    std::vector<std::string> results;
+    std::vector<std::string> seen;
+    for (const auto& key : keys) {
+        if (key.ends_with(":meta")) continue;
+        if (key.starts_with(prefix)) {
+            std::string u;
+            if (!value.empty()) {
+                u = key.substr(prefix.size());
+            } else {
+                size_t last_colon = key.rfind(':');
+                if (last_colon != std::string::npos && last_colon >= prefix.size() - 1) {
+                    u = key.substr(last_colon + 1);
+                }
+            }
+            if (!u.empty() && std::find(seen.begin(), seen.end(), u) == seen.end()) {
+                seen.push_back(u);
+                results.push_back(u);
+            }
+        }
+    }
+    return results;
+}
+
 } // namespace agentic_blackboard
+
