@@ -945,7 +945,7 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
         for (const auto& old_a : existing_opt->avus) {
             bool still_present = false;
             for (const auto& new_a : adjusted.avus) {
-                if (old_a.attribute == new_a.attribute && old_a.value == new_a.value) {
+                if (old_a.attribute == new_a.attribute && old_a.value == new_a.value && old_a.units == new_a.units) {
                     still_present = true;
                     break;
                 }

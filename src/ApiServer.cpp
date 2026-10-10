@@ -2382,6 +2382,8 @@ void ApiServer::listen_loop() {
 
             if (req.form.has_field("path")) {
                 target_path = req.form.get_field("path");
+            } else if (req.form.has_field("target_path")) {
+                target_path = req.form.get_field("target_path");
             } else if (req.has_header("X-Logical-Path")) {
                 target_path = req.get_header_value("X-Logical-Path");
             } else if (!file_name.empty()) {
@@ -2567,8 +2569,13 @@ void ApiServer::listen_loop() {
                         if (dash != std::string::npos) {
                             std::string s1 = spec.substr(0, dash);
                             std::string s2 = spec.substr(dash + 1);
-                            if (!s1.empty()) first_byte = std::stoll(s1);
-                            if (!s2.empty()) last_byte = std::stoll(s2);
+                            try {
+                                if (!s1.empty()) first_byte = std::stoll(s1);
+                                if (!s2.empty()) last_byte = std::stoll(s2);
+                            } catch (...) {
+                                first_byte = -1;
+                                last_byte = -1;
+                            }
                         }
                     }
                 }
