@@ -30,6 +30,9 @@ public:
     std::future<PutResult> store(const std::string& driver_id, std::istream& in, std::string_view expected_hash = {});
     std::future<PutResult> store(std::istream& in, std::string_view expected_hash = {});
 
+    PutResult store_sync(const std::string& driver_id, std::istream& in, std::string_view expected_hash = {});
+    PutResult store_sync(std::istream& in, std::string_view expected_hash = {});
+
     std::unique_ptr<std::istream> retrieve(const std::string& driver_id, std::string_view locator, std::optional<ByteRange> range = {});
     std::unique_ptr<std::istream> retrieve(std::string_view locator, std::optional<ByteRange> range = {});
 

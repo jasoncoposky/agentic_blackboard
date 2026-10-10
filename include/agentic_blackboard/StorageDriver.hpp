@@ -34,6 +34,7 @@ public:
     virtual ~IStorageDriver() = default;
     virtual auto put_stream(std::istream& in, std::string_view expected_hash = {}) 
         -> std::future<PutResult> = 0;
+    virtual PutResult put_stream_sync(std::istream& in, std::string_view expected_hash = {}) = 0;
     virtual auto get_stream(std::string_view locator, std::optional<ByteRange> range = {}) 
         -> std::unique_ptr<std::istream> = 0;
     virtual bool verify_digest(std::string_view locator, std::string_view expected_hash) = 0;

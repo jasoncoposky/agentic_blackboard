@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include "agentic_blackboard/PosixCasDriver.hpp"
 #include <cassert>
 #include <filesystem>
@@ -48,6 +49,16 @@ int main() {
     auto result2 = driver.put_stream(in2).get();
     assert(result1.digest == result2.digest);
     std::cout << "[PASS] Deduplication verified for digest: " << result2.digest << std::endl;
+
+    // 2b. Test CAS Pre-check Deduplication (instant return when expected_hash exists)
+    {
+        std::istringstream in_precheck("");
+        auto res_precheck = driver.put_stream_sync(in_precheck, result1.digest);
+        assert(res_precheck.digest == result1.digest);
+        assert(res_precheck.bytes_written == content.size());
+        assert(res_precheck.locator == result1.locator);
+        std::cout << "[PASS] CAS Pre-check deduplication verified for digest: " << res_precheck.digest << std::endl;
+    }
 
     // 3. Test Get Stream
     auto stream_out = driver.get_stream(result1.locator);

@@ -21,6 +21,13 @@ using json = nlohmann::json;
 
 namespace {
 
+struct MemViewStreamBuf : public std::streambuf {
+    MemViewStreamBuf(const char* data, size_t size) {
+        char* p = const_cast<char*>(data);
+        setg(p, p, p + size);
+    }
+};
+
 json artifact_to_json(const agentic_blackboard::ArtifactEntry& entry) {
     json avus_arr = json::array();
     for (const auto& a : entry.avus) {
@@ -2400,7 +2407,6 @@ void ApiServer::listen_loop() {
                 active_user = req.get_header_value("X-Active-User");
             }
 
-            std::string file_content;
             std::string file_name;
             std::string content_type;
             std::string target_path;
@@ -2408,13 +2414,19 @@ void ApiServer::listen_loop() {
             std::string avus_json_str;
             std::string driver_id;
 
-            if (req.form.has_file("file")) {
-                auto file_data = req.form.get_file("file");
-                file_content = file_data.content;
+            const char* data_ptr = nullptr;
+            size_t data_len = 0;
+
+            auto file_it = req.form.files.find("file");
+            if (file_it != req.form.files.end()) {
+                const auto& file_data = file_it->second;
+                data_ptr = file_data.content.data();
+                data_len = file_data.content.size();
                 file_name = file_data.filename;
                 content_type = file_data.content_type;
             } else if (!req.body.empty() || req.has_header("X-Logical-Path") || req.has_header("X-File-Name")) {
-                file_content = req.body;
+                data_ptr = req.body.data();
+                data_len = req.body.size();
                 if (req.has_header("X-File-Name")) file_name = req.get_header_value("X-File-Name");
                 if (req.has_header("Content-Type")) content_type = req.get_header_value("Content-Type");
             } else {
@@ -2491,11 +2503,11 @@ void ApiServer::listen_loop() {
                 return;
             }
 
-            std::istringstream stream_in(file_content);
+            MemViewStreamBuf membuf(data_ptr, data_len);
+            std::istream stream_in(&membuf);
             storage::PutResult put_res;
             try {
-                auto fut = storage_manager_->store(driver_id, stream_in);
-                put_res = fut.get();
+                put_res = storage_manager_->store_sync(driver_id, stream_in);
             } catch (const std::exception& e) {
                 res.status = 500;
                 res.set_content(json({{"error", "Failed to store content"}, {"message", e.what()}}).dump(), "application/json");
@@ -2503,7 +2515,7 @@ void ApiServer::listen_loop() {
             }
 
             auto* lib = librarian_ ? librarian_ : &Librarian::instance();
-            ArtifactEntry entry = lib->process_ingest_artifact(target_path, file_content, put_res.digest, active_user, agent_id, initial_avus);
+            ArtifactEntry entry = lib->process_ingest_artifact(target_path, std::string_view(data_ptr, data_len), put_res.digest, active_user, agent_id, initial_avus);
             entry.primary_locator = put_res.locator;
             if (!license.empty() && entry.license.empty()) {
                 entry.license = license;
@@ -3131,7 +3143,7 @@ void ApiServer::listen_loop() {
                     std::vector<std::string> msgs;
                     {
                         std::unique_lock<std::mutex> lock(session->mutex);
-                        session->cv.wait_for(lock, std::chrono::milliseconds(100), [&]() {
+                        session->cv.wait_for(lock, std::chrono::seconds(15), [&]() {
                             return !running_ || !session->active || !session->event_queue.empty();
                         });
 

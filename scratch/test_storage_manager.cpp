@@ -1,3 +1,4 @@
+#undef NDEBUG
 #include "agentic_blackboard/StorageManager.hpp"
 #include "agentic_blackboard/PosixCasDriver.hpp"
 #include <cassert>
@@ -34,6 +35,20 @@ void test_basic_and_fallback_routing() {
     assert(!res.digest.empty());
     assert(res.bytes_written == payload.size());
     assert(res.driver_id == "default_posix_cas");
+
+    // 2b. Test synchronous store_sync
+    std::string sync_payload = "Synchronous direct storage payload";
+    std::istringstream sync_in(sync_payload);
+    auto sync_res = mgr.store_sync("default_posix_cas", sync_in);
+    assert(!sync_res.digest.empty());
+    assert(sync_res.bytes_written == sync_payload.size());
+    assert(sync_res.driver_id == "default_posix_cas");
+
+    std::string sync_payload2 = "Synchronous fallback storage payload";
+    std::istringstream sync_in2(sync_payload2);
+    auto sync_res2 = mgr.store_sync(sync_in2);
+    assert(!sync_res2.digest.empty());
+    assert(sync_res2.bytes_written == sync_payload2.size());
 
     // 3. Fetch stream through manager with explicit driver
     auto fetched_stream = mgr.retrieve("default_posix_cas", res.locator);

@@ -74,6 +74,26 @@ std::future<PutResult> StorageManager::store(
     return store("", in, expected_hash);
 }
 
+PutResult StorageManager::store_sync(
+    const std::string& driver_id,
+    std::istream& in,
+    std::string_view expected_hash)
+{
+    auto driver = get_driver(driver_id);
+    if (!driver) {
+        throw std::runtime_error("StorageManager::store_sync: driver not found: " +
+                                 (driver_id.empty() ? default_driver_id() : driver_id));
+    }
+    return driver->put_stream_sync(in, expected_hash);
+}
+
+PutResult StorageManager::store_sync(
+    std::istream& in,
+    std::string_view expected_hash)
+{
+    return store_sync("", in, expected_hash);
+}
+
 std::unique_ptr<std::istream> StorageManager::retrieve(
     const std::string& driver_id,
     std::string_view locator,

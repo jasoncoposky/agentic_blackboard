@@ -139,79 +139,126 @@ ArtifactEntry Librarian::process_ingest_artifact(
         return std::string(s);
     };
 
-    // Split raw_content into lines
-    std::vector<std::string_view> lines;
-    size_t pos = 0;
-    while (pos < raw_content.size()) {
-        size_t next_nl = raw_content.find('\n', pos);
-        if (next_nl == std::string_view::npos) {
-            std::string_view line = raw_content.substr(pos);
-            if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-            lines.push_back(line);
-            break;
+    // Check if the file is text-based by extension. If binary, skip frontmatter parsing completely.
+    auto dot_pos = entry.logical_name.rfind('.');
+    std::string ext;
+    if (dot_pos != std::string_view::npos) {
+        ext = entry.logical_name.substr(dot_pos);
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+    }
+
+    bool is_text = false;
+    if (!ext.empty()) {
+        if (ext == ".md" || ext == ".markdown" || ext == ".txt" || ext == ".text" ||
+            ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".csv" ||
+            ext == ".tsv" || ext == ".xml" || ext == ".html" || ext == ".htm" ||
+            ext == ".svg" || ext == ".toml" || ext == ".ini" || ext == ".cfg" ||
+            ext == ".conf" || ext == ".rst" || ext == ".py" || ext == ".cpp" ||
+            ext == ".h" || ext == ".c" || ext == ".hpp" || ext == ".sh") {
+            is_text = true;
         }
-        std::string_view line = raw_content.substr(pos, next_nl - pos);
-        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-        lines.push_back(line);
-        pos = next_nl + 1;
     }
 
-    size_t fm_start = 0;
-    while (fm_start < lines.size() && trim_sv(lines[fm_start]).empty()) {
-        fm_start++;
-    }
+    if (is_text && !raw_content.empty()) {
+        size_t scan_limit = std::min(raw_content.size(), size_t(65536));
+        std::string_view prefix = raw_content.substr(0, scan_limit);
 
-    bool has_fm = false;
-    size_t fm_end = 0;
-    if (fm_start < lines.size() && trim_sv(lines[fm_start]) == "---") {
-        for (size_t i = fm_start + 1; i < lines.size(); ++i) {
-            if (trim_sv(lines[i]) == "---" || trim_sv(lines[i]) == "...") {
-                has_fm = true;
-                fm_end = i;
-                break;
+        size_t pos = 0;
+        auto get_next_line = [&](std::string_view& line) -> bool {
+            if (pos >= prefix.size()) return false;
+            size_t next_nl = prefix.find('\n', pos);
+            if (next_nl == std::string_view::npos) {
+                line = prefix.substr(pos);
+                pos = prefix.size();
+            } else {
+                line = prefix.substr(pos, next_nl - pos);
+                pos = next_nl + 1;
             }
-        }
-    }
+            if (!line.empty() && line.back() == '\r') {
+                line.remove_suffix(1);
+            }
+            return true;
+        };
 
-    if (has_fm) {
-        for (size_t i = fm_start + 1; i < fm_end; ++i) {
-            std::string_view line = trim_sv(lines[i]);
-            if (line.empty() || line.starts_with('#')) continue;
-            size_t colon = line.find(':');
-            if (colon == std::string_view::npos) continue;
+        bool found_fm_start = false;
+        bool in_frontmatter = false;
+        bool frontmatter_done = false;
 
-            std::string_view key_sv = trim_sv(line.substr(0, colon));
-            std::string_view val_sv = strip_comment(line.substr(colon + 1));
-            std::string val = unquote(val_sv);
+        std::string_view line;
+        while (get_next_line(line)) {
+            std::string_view trimmed = trim_sv(line);
 
-            std::string key(key_sv);
-            std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return std::tolower(c); });
-
-            if (key == "title") {
-                entry.title = val;
-            } else if (key == "license") {
-                entry.license = val;
-            } else if (key == "version") {
-                entry.version = val;
-            } else if (key == "abstract") {
-                entry.abstract = val;
-            } else if (key == "description") {
-                if (entry.abstract.empty()) {
-                    entry.abstract = val;
+            if (!found_fm_start) {
+                if (trimmed.empty()) {
+                    continue; // Skip leading blank lines
+                }
+                if (trimmed == "---") {
+                    found_fm_start = true;
+                    in_frontmatter = true;
+                    continue;
+                } else {
+                    // No frontmatter present
+                    found_fm_start = true;
+                    frontmatter_done = true;
+                    // Check if first non-empty line is a heading
+                    if (trimmed.starts_with("# ")) {
+                        std::string_view heading = trim_sv(trimmed.substr(2));
+                        if (!heading.empty()) {
+                            entry.title = std::string(heading);
+                            break; // Title heading found, early exit
+                        }
+                    }
+                    continue;
                 }
             }
-        }
-    }
 
-    // Heading fallback: If no frontmatter or title is empty, scan for the first line starting with '# '
-    if (entry.title.empty()) {
-        size_t scan_start = has_fm ? (fm_end + 1) : 0;
-        for (size_t i = scan_start; i < lines.size(); ++i) {
-            std::string_view trimmed = trim_sv(lines[i]);
-            if (trimmed.starts_with("# ")) {
-                std::string_view heading = trim_sv(trimmed.substr(2));
-                if (!heading.empty()) {
-                    entry.title = std::string(heading);
+            if (in_frontmatter) {
+                if (trimmed == "---" || trimmed == "...") {
+                    in_frontmatter = false;
+                    frontmatter_done = true;
+                    if (!entry.title.empty()) {
+                        break; // Title found in frontmatter, early exit
+                    }
+                    continue;
+                }
+
+                if (trimmed.empty() || trimmed.starts_with('#')) {
+                    continue;
+                }
+
+                size_t colon = trimmed.find(':');
+                if (colon != std::string_view::npos) {
+                    std::string_view key_sv = trim_sv(trimmed.substr(0, colon));
+                    std::string_view val_sv = strip_comment(trimmed.substr(colon + 1));
+                    std::string val = unquote(val_sv);
+
+                    std::string key(key_sv);
+                    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return std::tolower(c); });
+
+                    if (key == "title") {
+                        entry.title = val;
+                    } else if (key == "license") {
+                        entry.license = val;
+                    } else if (key == "version") {
+                        entry.version = val;
+                    } else if (key == "abstract") {
+                        entry.abstract = val;
+                    } else if (key == "description") {
+                        if (entry.abstract.empty()) {
+                            entry.abstract = val;
+                        }
+                    }
+                }
+            } else if (frontmatter_done) {
+                if (entry.title.empty()) {
+                    if (trimmed.starts_with("# ")) {
+                        std::string_view heading = trim_sv(trimmed.substr(2));
+                        if (!heading.empty()) {
+                            entry.title = std::string(heading);
+                            break; // Heading found, early exit
+                        }
+                    }
+                } else {
                     break;
                 }
             }

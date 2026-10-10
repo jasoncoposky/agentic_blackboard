@@ -256,6 +256,36 @@ std::filesystem::path PosixCasDriver::resolve_path(std::string_view locator) con
 }
 
 PutResult PosixCasDriver::put_stream_sync(std::istream& in, std::string_view expected_hash) {
+    if (!expected_hash.empty()) {
+        std::filesystem::path target_path = compute_target_path(expected_hash);
+        std::error_code ec;
+        if (std::filesystem::exists(target_path, ec)) {
+            uint64_t sz = std::filesystem::file_size(target_path, ec);
+            std::string lower_expected;
+            lower_expected.reserve(expected_hash.size());
+            for (char c : expected_hash) {
+                lower_expected.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+            std::string prefix = "sha256:";
+            if (lower_expected.rfind("blake3:", 0) == 0) {
+                prefix = "blake3:";
+            }
+            std::string digest_str = prefix + strip_prefix(expected_hash);
+            uint64_t now_ms = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()
+                ).count()
+            );
+            PutResult res;
+            res.digest = std::move(digest_str);
+            res.locator = std::filesystem::relative(target_path, vault_root_).string();
+            res.bytes_written = sz;
+            res.driver_id = driver_id_;
+            res.timestamp_ms = now_ms;
+            return res;
+        }
+    }
+
     if (active_streams_) {
         (*active_streams_)++;
     }
@@ -267,7 +297,6 @@ PutResult PosixCasDriver::put_stream_sync(std::istream& in, std::string_view exp
     static std::atomic<uint64_t> counter{0};
     std::string tmp_name = "tmp_" + std::to_string(now_ns) + "_" + std::to_string(counter++) + ".tmp";
     std::filesystem::path tmp_dir = vault_root_ / ".tmp";
-    std::filesystem::create_directories(tmp_dir);
     std::filesystem::path tmp_path = tmp_dir / tmp_name;
 
     TempFileGuard guard{tmp_path};
@@ -376,7 +405,7 @@ PutResult PosixCasDriver::put_stream_sync(std::istream& in, std::string_view exp
     result.digest = digest;
     result.bytes_written = bytes_written;
     result.driver_id = driver_id_;
-    result.locator = target_path.string();
+    result.locator = std::filesystem::relative(target_path, vault_root_).string();
     result.timestamp_ms = now_ms;
     return result;
 }
@@ -384,9 +413,13 @@ PutResult PosixCasDriver::put_stream_sync(std::istream& in, std::string_view exp
 auto PosixCasDriver::put_stream(std::istream& in, std::string_view expected_hash) 
     -> std::future<PutResult> 
 {
-    return std::async(std::launch::async, [this, &in, expected = std::string(expected_hash)]() {
-        return put_stream_sync(in, expected);
-    });
+    std::promise<PutResult> prom;
+    try {
+        prom.set_value(put_stream_sync(in, expected_hash));
+    } catch (...) {
+        prom.set_exception(std::current_exception());
+    }
+    return prom.get_future();
 }
 
 auto PosixCasDriver::get_stream(std::string_view locator, std::optional<ByteRange> range) 

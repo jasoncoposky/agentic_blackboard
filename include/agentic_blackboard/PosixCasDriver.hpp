@@ -35,7 +35,7 @@ public:
 
     StorageStats stat() override;
 
-    PutResult put_stream_sync(std::istream& in, std::string_view expected_hash = {});
+    PutResult put_stream_sync(std::istream& in, std::string_view expected_hash = {}) override;
 
     const std::filesystem::path& vault_root() const noexcept { return vault_root_; }
     const std::string& driver_id() const noexcept { return driver_id_; }

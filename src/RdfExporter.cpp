@@ -92,7 +92,8 @@ std::string format_target_uri(const std::string& target) {
     if (target.starts_with("project:")) return make_project_iri(target.substr(8));
     if (target.starts_with("atom:")) return make_atom_iri(target.substr(5));
     if (target.starts_with("art-")) return "<urn:ab:artifact:" + sanitize_iri(target) + ">";
-    if (target.starts_with("vault/") || target.find("vault/") != std::string::npos) {
+    if (target.starts_with("vault/") || target.find("vault/") != std::string::npos ||
+        (target.size() >= 5 && target[2] == '/' && target[5] == '/')) {
         return "<urn:ab:locator:" + sanitize_iri(target) + ">";
     }
     if (target.starts_with("/")) return "<urn:ab:collection:" + sanitize_iri(target.substr(1)) + ">";
