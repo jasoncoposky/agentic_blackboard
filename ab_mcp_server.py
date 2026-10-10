@@ -474,6 +474,29 @@ async def bind_anchor_to_atom(
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
 
+def guess_mime_type(fname: str) -> str:
+    """Guess MIME type from filename extension."""
+    ext = os.path.splitext(fname)[1].lower()
+    mapping = {
+        ".md": "text/markdown",
+        ".markdown": "text/markdown",
+        ".json": "application/json",
+        ".txt": "text/plain",
+        ".csv": "text/csv",
+        ".yaml": "application/yaml",
+        ".yml": "application/yaml",
+        ".xml": "application/xml",
+        ".html": "text/html",
+        ".htm": "text/html",
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml"
+    }
+    return mapping.get(ext, "application/octet-stream")
+
+
 @mcp.tool()
 def publish_artifact(
     path: str,
@@ -501,11 +524,7 @@ def publish_artifact(
             target_path = f"{coll}/{target_path.lstrip('/')}"
 
     filename = os.path.basename(target_path) or "artifact.bin"
-    mime_type = "text/markdown" if filename.endswith((".md", ".markdown")) else (
-        "application/json" if filename.endswith(".json") else (
-            "text/csv" if filename.endswith(".csv") else "application/octet-stream"
-        )
-    )
+    mime_type = guess_mime_type(filename)
     file_bytes = content.encode("utf-8") if isinstance(content, str) else content
 
     files = {
@@ -580,6 +599,16 @@ def read_artifact(
         if range:
             content_headers["Range"] = range
         content_resp = client.get(f"{get_api_url()}/artifacts/{quoted}/content", headers=content_headers)
+
+        if content_resp.is_error:
+            return {
+                "uuid": meta.get("uuid"),
+                "content": "",
+                "status_code": content_resp.status_code,
+                "metadata": meta,
+                "content_hash": meta.get("content_hash"),
+                "error": content_resp.text,
+            }
 
         return {
             "uuid": meta.get("uuid"),

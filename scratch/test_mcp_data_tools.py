@@ -16,6 +16,8 @@ Verifies:
      - ab-ctl data fair-check
 """
 
+import asyncio
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -41,6 +43,11 @@ DB_PATH = "/tmp/ab_test_mcp_data_db"
 VAULT_PATH = f"{DB_PATH}_vault"
 DAEMON_PATH = REPO_ROOT / "build" / "agentic-blackboardd"
 AB_CTL_PY = REPO_ROOT / "src" / "ab-ctl.py"
+
+_ab_ctl_spec = importlib.util.spec_from_file_location("ab_ctl", str(AB_CTL_PY))
+_ab_ctl = importlib.util.module_from_spec(_ab_ctl_spec)
+_ab_ctl_spec.loader.exec_module(_ab_ctl)
+build_mcp_server = _ab_ctl.build_mcp_server
 
 
 def _cleanup_db():
@@ -347,6 +354,119 @@ def test_cli_data_fair_check(daemon):
     assert "Accessible" in proc.stdout
     assert "Interoperable" in proc.stdout
     assert "Reusable" in proc.stdout
+
+
+def test_fastmcp_publish_mime_interoperability(daemon):
+    """Test publish_artifact infers correct MIME type for .yaml, earning full interoperability points."""
+    yaml_content = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test-cfg\n"
+    res = ab_mcp_server.publish_artifact(
+        path="/configs/app_config.yaml",
+        content=yaml_content,
+        metadata={"license": "SPDX:Apache-2.0"}
+    )
+    assert res["mime_type"] == "application/yaml"
+    fair = ab_mcp_server.verify_artifact_fair(res["uuid"])
+    assert fair["rubric"]["interoperable"]["mime_type"] is True
+    assert fair["rubric"]["interoperable"]["score"] >= 10.0
+
+
+def test_negative_read_artifact_nonexistent(daemon):
+    """Test read_artifact with a non-existent artifact returns 404 and error info."""
+    res = ab_mcp_server.read_artifact("nonexistent/artifact/does_not_exist.bin")
+    assert res["status_code"] == 404
+    assert res["uuid"] is None
+    assert "error" in res
+    assert res["error"] != ""
+
+
+def test_negative_read_artifact_invalid_range(daemon):
+    """Test read_artifact with invalid byte range returns HTTP 416 and error info."""
+    res = ab_mcp_server.read_artifact("protocols/experiment.md", range="bytes=99999-999999")
+    assert res["status_code"] == 416
+    assert res["content"] == ""
+    assert "error" in res
+
+
+def test_negative_cli_data_put_nonexistent_file(daemon):
+    """Test 'ab-ctl data put' with non-existent local file exits with error."""
+    proc = run_ab_ctl([
+        "--connect", daemon,
+        "data", "put",
+        "/tmp/definitely_nonexistent_file_xyz_123.txt",
+        "/test/nonexistent.txt"
+    ])
+    assert proc.returncode != 0
+    assert "not found" in proc.stderr.lower()
+
+
+def test_build_mcp_server_data_tools(daemon):
+    """Test that build_mcp_server() registers and provides functional data tools."""
+    server_mcp = build_mcp_server(daemon, None)
+    assert server_mcp is not None and server_mcp != 1
+
+    async def _verify_all():
+        tools = await server_mcp.list_tools()
+        tool_names = {t.name for t in tools}
+        expected_tools = [
+            "publish_artifact",
+            "read_artifact",
+            "annotate_artifact",
+            "query_artifacts",
+            "verify_artifact_fair"
+        ]
+        for t in expected_tools:
+            assert t in tool_names, f"Tool '{t}' not registered in build_mcp_server()"
+
+        # 1. publish_artifact
+        pub_fn = server_mcp._tool_manager.get_tool("publish_artifact").fn
+        pub_res = pub_fn(
+            path="/built_mcp/manifest.json",
+            content='{"name": "mcp_test", "version": "1.0.0"}',
+            metadata={"license": "SPDX:MIT"}
+        )
+        assert isinstance(pub_res, dict)
+        assert "uuid" in pub_res
+        art_uuid = pub_res["uuid"]
+        assert pub_res["logical_name"] == "manifest.json"
+
+        # 2. read_artifact
+        read_fn = server_mcp._tool_manager.get_tool("read_artifact").fn
+        read_res = read_fn(art_uuid)
+        assert read_res["status_code"] == 200
+        assert "mcp_test" in read_res["content"]
+        assert read_res["uuid"] == art_uuid
+
+        # 2b. read_artifact negative tests (invalid range & nonexistent)
+        range_err_res = read_fn(art_uuid, range="bytes=99999-999999")
+        assert range_err_res["status_code"] == 416
+        assert range_err_res["content"] == ""
+        assert "error" in range_err_res
+
+        not_found_res = read_fn("nonexistent/artifact/not_here.bin")
+        assert not_found_res["status_code"] == 404
+        assert not_found_res["uuid"] is None
+        assert "error" in not_found_res
+
+        # 3. annotate_artifact
+        ann_fn = server_mcp._tool_manager.get_tool("annotate_artifact").fn
+        ann_res = ann_fn(art_uuid, attribute="test:engine", value="build_mcp_server")
+        assert ann_res.get("status") == "success"
+
+        # 4. query_artifacts
+        query_fn = server_mcp._tool_manager.get_tool("query_artifacts").fn
+        query_res = query_fn(attribute="test:engine", value="build_mcp_server")
+        assert isinstance(query_res, list)
+        assert any(q.get("uuid") == art_uuid for q in query_res)
+
+        # 5. verify_artifact_fair
+        fair_fn = server_mcp._tool_manager.get_tool("verify_artifact_fair").fn
+        fair_res = fair_fn(art_uuid)
+        assert isinstance(fair_res, dict)
+        assert "score" in fair_res
+        assert "rubric" in fair_res
+        assert fair_res["rubric"]["interoperable"]["mime_type"] is True
+
+    asyncio.run(_verify_all())
 
 
 if __name__ == "__main__":

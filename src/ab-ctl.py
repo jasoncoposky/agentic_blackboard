@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import sqlite3
 import sys
 import time
@@ -1834,69 +1835,43 @@ def handle_data_put(args, cfg: dict) -> int:
         print(f"Error: Local file '{args.file}' not found", file=sys.stderr)
         return 1
 
-    content_bytes = file_path.read_bytes()
+    file_size = file_path.stat().st_size
     filename = file_path.name
     mime_type = guess_mime_type(filename)
 
-    boundary = f"----WebKitFormBoundary{secrets.token_hex(16)}"
-    body = bytearray()
-
-    # file
-    body.extend(f"--{boundary}\r\n".encode("utf-8"))
-    body.extend(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode("utf-8"))
-    body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"))
-    body.extend(content_bytes)
-    body.extend(b"\r\n")
-
-    # path
-    body.extend(f"--{boundary}\r\n".encode("utf-8"))
-    body.extend(b'Content-Disposition: form-data; name="path"\r\n\r\n')
-    body.extend(args.path.encode("utf-8"))
-    body.extend(b"\r\n")
-
-    # license
+    req_headers = dict(headers)
+    req_headers["Content-Type"] = mime_type
+    req_headers["Content-Length"] = str(file_size)
+    req_headers["X-Logical-Path"] = args.path
+    req_headers["X-File-Name"] = filename
     if getattr(args, "license", None):
-        body.extend(f"--{boundary}\r\n".encode("utf-8"))
-        body.extend(b'Content-Disposition: form-data; name="license"\r\n\r\n')
-        body.extend(args.license.encode("utf-8"))
-        body.extend(b"\r\n")
-
-    # avus
+        req_headers["X-License"] = args.license
     if getattr(args, "avus", None):
         avus_str = parse_avus_arg(args.avus)
         if avus_str:
-            body.extend(f"--{boundary}\r\n".encode("utf-8"))
-            body.extend(b'Content-Disposition: form-data; name="avus"\r\n\r\n')
-            body.extend(avus_str.encode("utf-8"))
-            body.extend(b"\r\n")
-
-    # driver
+            req_headers["X-AVUs"] = avus_str
     if getattr(args, "driver", None):
-        body.extend(f"--{boundary}\r\n".encode("utf-8"))
-        body.extend(b'Content-Disposition: form-data; name="driver"\r\n\r\n')
-        body.extend(args.driver.encode("utf-8"))
-        body.extend(b"\r\n")
-
-    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
-
-    req_headers = dict(headers)
-    req_headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        req_headers["X-Driver"] = args.driver
 
     upload_url = f"{connect_url}/api/v1/artifacts/upload"
-    req = urllib.request.Request(upload_url, data=bytes(body), headers=req_headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=30.0) as resp:
-            resp_body = resp.read().decode("utf-8")
-            data = json.loads(resp_body)
-            print("Artifact published successfully:")
-            print(f"  UUID:         {data.get('uuid')}")
-            print(f"  PID:          {data.get('pid')}")
-            print(f"  Content Hash: {data.get('content_hash')}")
-            print(f"  Title:        {data.get('title')}")
-            print(f"  Path:         {data.get('collection_path', '')}/{data.get('logical_name', '')}")
-            print(f"  Size:         {data.get('byte_size')} bytes")
-            print(f"  License:      {data.get('license', 'None')}")
-            return 0
+        with open(file_path, "rb") as f:
+            req = urllib.request.Request(upload_url, data=f, headers=req_headers, method="POST")
+            with urllib.request.urlopen(req, timeout=120.0) as resp:
+                resp_body = resp.read().decode("utf-8")
+                data = json.loads(resp_body)
+                coll = data.get("collection_path", "")
+                name = data.get("logical_name", "")
+                full_p = f"{coll.rstrip('/')}/{name}" if coll != "/" else f"/{name}"
+                print("Artifact published successfully:")
+                print(f"  UUID:         {data.get('uuid')}")
+                print(f"  PID:          {data.get('pid')}")
+                print(f"  Content Hash: {data.get('content_hash')}")
+                print(f"  Title:        {data.get('title')}")
+                print(f"  Path:         {full_p}")
+                print(f"  Size:         {data.get('byte_size')} bytes")
+                print(f"  License:      {data.get('license', 'None')}")
+                return 0
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")
         print(f"Error publishing artifact (HTTP {e.code}): {err_body}", file=sys.stderr)
@@ -1919,14 +1894,14 @@ def handle_data_get(args, cfg: dict) -> int:
 
     try:
         with urllib.request.urlopen(req, timeout=30.0) as resp:
-            content_bytes = resp.read()
             if getattr(args, "output", None):
                 out_path = Path(args.output)
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_bytes(content_bytes)
-                print(f"Retrieved {len(content_bytes)} bytes written to {args.output}")
+                with open(out_path, "wb") as f:
+                    shutil.copyfileobj(resp, f)
+                print(f"Retrieved content written to {args.output}")
             else:
-                sys.stdout.buffer.write(content_bytes)
+                shutil.copyfileobj(resp, sys.stdout.buffer)
                 sys.stdout.buffer.flush()
             return 0
     except urllib.error.HTTPError as e:
@@ -1966,7 +1941,6 @@ def handle_data_ls(args, cfg: dict) -> int:
             a for a in artifacts
             if a.get("collection_path", "").rstrip("/") == norm_coll
             or a.get("collection_path", "").startswith(norm_coll + "/")
-            or norm_coll in a.get("collection_path", "")
         ]
 
     if not artifacts:
@@ -2114,12 +2088,14 @@ def handle_data_fair_check(args, cfg: dict) -> int:
     passed = (score >= 80.0)
     verdict_str = "PASSED" if passed else "FAILED"
 
+    full_path = f"{collection_path.rstrip('/')}/{logical_name}" if collection_path != "/" else f"/{logical_name}"
+
     print("=" * 80)
     print(f"FAIR Compliance Report: {meta.get('uuid', args.id_or_path)}")
     print("=" * 80)
     print(f"PID:         {pid or 'None'}")
     print(f"Title:       {title or 'None'}")
-    print(f"Path:        {collection_path}/{logical_name}")
+    print(f"Path:        {full_path}")
     print(f"Score:       {score:.1f} / 100.0  ({verdict_str} - threshold >= 80.0)")
     print("-" * 80)
     print(f"Findable ({findable_score:.1f}/30.0):")
@@ -3272,6 +3248,16 @@ def build_mcp_server(connect_url: str, token: str | None):
             if range:
                 content_headers["Range"] = range
             content_resp = client.get(f"{api_url}/artifacts/{quoted}/content", headers=content_headers)
+
+            if content_resp.is_error:
+                return {
+                    "uuid": meta.get("uuid"),
+                    "content": "",
+                    "status_code": content_resp.status_code,
+                    "metadata": meta,
+                    "content_hash": meta.get("content_hash"),
+                    "error": content_resp.text,
+                }
 
             return {
                 "uuid": meta.get("uuid"),
