@@ -148,6 +148,23 @@ def run_tests():
         assert res.headers.get("ETag") == f'"{content_hash}"'
         print("[PASS] 5. HTTP Range request verified: 206 Partial Content with exact slice")
 
+        # --- Test 5b: Suffix Range Exceeding File Size (Range: bytes=-1000) ---
+        print("\n--- Test 5b: Suffix Range Exceeding File Size (Range: bytes=-1000) ---")
+        headers = {"Range": "bytes=-1000"}
+        res = requests.get(f"{BASE_URL}/api/v1/artifacts/{uuid}/content", headers=headers)
+        assert res.status_code == 206, f"Expected 206, got {res.status_code}"
+        assert res.text == sample_content, f"Expected full content, got {res.text!r}"
+        assert res.headers.get("Content-Range") == f"bytes 0-{len(sample_content)-1}/{len(sample_content)}"
+        print("[PASS] 5b. Suffix range request verified (HTTP 206 with full content)")
+
+        # --- Test 5c: Out-of-bounds Range (Range: bytes=9999-) ---
+        print("\n--- Test 5c: Out-of-bounds Range (Range: bytes=9999-) ---")
+        headers = {"Range": "bytes=9999-"}
+        res = requests.get(f"{BASE_URL}/api/v1/artifacts/{uuid}/content", headers=headers)
+        assert res.status_code == 416, f"Expected 416 Range Not Satisfiable, got {res.status_code}"
+        assert res.headers.get("Content-Range") == f"bytes */{len(sample_content)}"
+        print("[PASS] 5c. Out-of-bounds range request verified (HTTP 416)")
+
         # --- Test 6: Metadata endpoints GET & POST ---
         print("\n--- Test 6: Metadata GET & POST Updates ---")
         res = requests.get(f"{BASE_URL}/api/v1/artifacts/{uuid}/metadata")
@@ -212,6 +229,45 @@ def run_tests():
         res = requests.post(f"{BASE_URL}/api/v1/artifacts/upload")
         assert res.status_code == 400, f"Expected 400, got {res.status_code}"
         print("[PASS] 8. Negative tests verified (404 and 400)")
+
+        # --- Test 8b: Query non-artifact UUID (CPB atom) -> verify 404 ---
+        print("\n--- Test 8b: Non-artifact Node Query (CPB atom) ---")
+        bundle = {
+            "atoms": [{
+                "uuid": "atom-not-artifact-001",
+                "project_id": "proj-default",
+                "statement": "Statement of test atom"
+            }]
+        }
+        res = requests.post(f"{BASE_URL}/api/v1/graph/bundle", json=bundle)
+        assert res.status_code == 200, f"Bundle commit failed: {res.status_code} {res.text}"
+
+        res = requests.get(f"{BASE_URL}/api/v1/artifacts/atom-not-artifact-001")
+        assert res.status_code == 404, f"Expected 404 for CPB atom node, got {res.status_code}"
+        res = requests.get(f"{BASE_URL}/api/v1/artifacts/atom-not-artifact-001/content")
+        assert res.status_code == 404, f"Expected 404 for CPB atom content, got {res.status_code}"
+        res = requests.get(f"{BASE_URL}/api/v1/artifacts/atom-not-artifact-001/metadata")
+        assert res.status_code == 404, f"Expected 404 for CPB atom metadata, got {res.status_code}"
+        print("[PASS] 8b. Query non-artifact UUID (CPB atom) verified as 404")
+
+        # --- Test 9: Upload with form license: SPDX:Apache-2.0 ---
+        print("\n--- Test 9: Upload with License & FAIR Score Verification ---")
+        lic_files = {
+            "target_path": (None, "models/resnet.pt"),
+            "license": (None, "SPDX:Apache-2.0"),
+            "file": ("resnet.pt", b"binary weights data", "application/octet-stream")
+        }
+        res = requests.post(f"{BASE_URL}/api/v1/artifacts/upload", files=lic_files)
+        assert res.status_code == 200, f"Upload with license failed: {res.status_code} {res.text}"
+        lic_json = res.json()
+        assert lic_json["license"] == "SPDX:Apache-2.0"
+        fair_score = None
+        for a in lic_json["avus"]:
+            if a["attribute"] == "fair:score":
+                fair_score = int(a["value"])
+        # Score: PID (+15) + content_hash (+15) + path/logical (+10) + license (+20) = 60
+        assert fair_score == 60, f"Expected FAIR score 60 (+20 for license), got {fair_score}"
+        print("[PASS] 9. Upload with license: SPDX:Apache-2.0 verified with +20 license points (score=60)")
 
         print("\n[SUCCESS] All Python REST API artifact integration tests passed successfully!")
 

@@ -2457,11 +2457,23 @@ void ApiServer::listen_loop() {
                 return;
             }
 
-            if (!librarian_) librarian_ = &Librarian::instance();
-            ArtifactEntry entry = librarian_->process_ingest_artifact(target_path, file_content, put_res.digest, active_user, agent_id, initial_avus);
+            auto* lib = librarian_ ? librarian_ : &Librarian::instance();
+            ArtifactEntry entry = lib->process_ingest_artifact(target_path, file_content, put_res.digest, active_user, agent_id, initial_avus);
             entry.primary_locator = put_res.locator;
             if (!license.empty() && entry.license.empty()) {
                 entry.license = license;
+                double score = lib->calculate_fair_score(entry);
+                bool found = false;
+                for (auto& a : entry.avus) {
+                    if (a.attribute == "fair:score") {
+                        a.value = std::to_string(static_cast<int>(score));
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    entry.avus.push_back(AVUTriple{"fair:score", std::to_string(static_cast<int>(score)), "points"});
+                }
             }
             if (!content_type.empty() && content_type != "application/x-www-form-urlencoded" && content_type.find("multipart/form-data") == std::string::npos) {
                 if (entry.mime_type.empty() || entry.mime_type == "application/octet-stream") {
@@ -2563,16 +2575,16 @@ void ApiServer::listen_loop() {
 
                 uint64_t total_size = entry.byte_size;
                 if (first_byte < 0 && last_byte >= 0) {
-                    first_byte = static_cast<ssize_t>(total_size) - last_byte;
+                    first_byte = (static_cast<ssize_t>(total_size) > last_byte)
+                                 ? static_cast<ssize_t>(total_size) - last_byte : 0;
                     last_byte = static_cast<ssize_t>(total_size) - 1;
                 } else if (first_byte >= 0 && last_byte < 0) {
                     last_byte = static_cast<ssize_t>(total_size) - 1;
                 }
 
-                if (first_byte < 0 || total_size == 0 || static_cast<uint64_t>(first_byte) >= total_size || last_byte < first_byte) {
+                if (first_byte < 0 || total_size == 0 || first_byte >= static_cast<ssize_t>(total_size) || last_byte < first_byte) {
                     res.status = 416; // Range Not Satisfiable
                     res.set_header("Content-Range", "bytes */" + std::to_string(total_size));
-                    const_cast<httplib::Request&>(req).ranges.clear();
                     return;
                 }
 
@@ -2586,26 +2598,33 @@ void ApiServer::listen_loop() {
                 auto stream = storage_manager_->retrieve("", entry.primary_locator, br);
                 if (!stream) {
                     res.status = 404;
-                    res.set_content(json({{"error", "Content not found in CAS vault"}}).dump(), "application/json");
-                    const_cast<httplib::Request&>(req).ranges.clear();
+                    res.set_content(json({{"error", "Content range not found"}}).dump(), "application/json");
                     return;
                 }
-
-                std::string range_bytes;
-                range_bytes.resize(range_len);
-                stream->read(&range_bytes[0], range_len);
-                std::streamsize bytes_read = stream->gcount();
-                if (bytes_read > 0 && static_cast<size_t>(bytes_read) < range_bytes.size()) {
-                    range_bytes.resize(bytes_read);
-                }
-
-                const_cast<httplib::Request&>(req).ranges.clear();
 
                 res.status = 206;
                 res.set_header("Content-Range", "bytes " + std::to_string(first_byte) + "-" + std::to_string(last_byte) + "/" + std::to_string(total_size));
                 res.set_header("Accept-Ranges", "bytes");
                 res.set_header("ETag", "\"" + entry.content_hash + "\"");
-                res.set_content(range_bytes, entry.mime_type.empty() ? "application/octet-stream" : entry.mime_type);
+
+                auto shared_stream = std::shared_ptr<std::istream>(std::move(stream));
+                // httplib internally re-applies req.ranges against res.content_length_ (which is range_len),
+                // causing double-slicing and false-positive 416 on suffix ranges. Clearing req.ranges
+                // ensures our exact RFC 7233 range stream and headers are preserved.
+                const_cast<httplib::Request&>(req).ranges.clear();
+                res.set_content_provider(
+                    range_len,
+                    entry.mime_type.empty() ? "application/octet-stream" : entry.mime_type,
+                    [shared_stream](size_t offset, size_t length, httplib::DataSink &sink) -> bool {
+                        char buffer[65536];
+                        size_t to_read = std::min(length, sizeof(buffer));
+                        shared_stream->read(buffer, static_cast<std::streamsize>(to_read));
+                        std::streamsize bytes = shared_stream->gcount();
+                        if (bytes <= 0) return false;
+                        sink.write(buffer, static_cast<size_t>(bytes));
+                        return true;
+                    }
+                );
             } else {
                 auto stream = storage_manager_->retrieve("", entry.primary_locator);
                 if (!stream) {
@@ -2614,13 +2633,25 @@ void ApiServer::listen_loop() {
                     return;
                 }
 
-                std::string content((std::istreambuf_iterator<char>(*stream)), std::istreambuf_iterator<char>());
-
                 res.status = 200;
                 res.set_header("Accept-Ranges", "bytes");
                 res.set_header("ETag", "\"" + entry.content_hash + "\"");
                 res.set_header("Content-Disposition", "inline; filename=\"" + (entry.logical_name.empty() ? "artifact" : entry.logical_name) + "\"");
-                res.set_content(content, entry.mime_type.empty() ? "application/octet-stream" : entry.mime_type);
+
+                auto shared_stream = std::shared_ptr<std::istream>(std::move(stream));
+                res.set_content_provider(
+                    entry.byte_size,
+                    entry.mime_type.empty() ? "application/octet-stream" : entry.mime_type,
+                    [shared_stream](size_t offset, size_t length, httplib::DataSink &sink) -> bool {
+                        char buffer[65536];
+                        size_t to_read = std::min(length, sizeof(buffer));
+                        shared_stream->read(buffer, static_cast<std::streamsize>(to_read));
+                        std::streamsize bytes = shared_stream->gcount();
+                        if (bytes <= 0) return false;
+                        sink.write(buffer, static_cast<size_t>(bytes));
+                        return true;
+                    }
+                );
             }
         } catch (const std::exception& e) {
             res.status = 500;
@@ -2765,9 +2796,12 @@ void ApiServer::listen_loop() {
             };
             res.status = 200;
             res.set_content(resp.dump(2), "application/json");
-        } catch (const std::exception& e) {
+        } catch (const nlohmann::json::exception& e) {
             res.status = 400;
             res.set_content(json({{"error", "Invalid JSON payload"}, {"message", e.what()}}).dump(), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", "Internal server error"}, {"message", e.what()}}).dump(), "application/json");
         }
     });
 

@@ -952,6 +952,9 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
             }
             if (!still_present) {
                 batch.del_raw("idx:Metadata:av:" + old_a.attribute + ":" + old_a.value + ":" + adjusted.uuid);
+                std::string old_aid_str = "avu:" + old_a.attribute + ":" + old_a.value + ":" + old_a.units;
+                uint64_t old_aid = engine_->get_resolver().parse_uuid(old_aid_str);
+                batch.del_edge(src_id, rel::ANNOTATED_WITH, 1.0, old_aid);
             }
         }
     }
@@ -994,7 +997,7 @@ std::optional<ArtifactEntry> Blackboard::get_artifact(std::string_view uuid) {
 
     try {
         ArtifactEntry entry = ArtifactEntry::deserialize(buf);
-        if (!entry.uuid.empty() || !entry.content_hash.empty()) {
+        if (!entry.uuid.empty()) {
             return entry;
         }
     } catch (...) {}
@@ -1002,6 +1005,16 @@ std::optional<ArtifactEntry> Blackboard::get_artifact(std::string_view uuid) {
     try {
         std::string_view sv(reinterpret_cast<const char*>(buf.data()), buf.size());
         auto j = nlohmann::json::parse(sv);
+        bool is_artifact = false;
+        if (j.contains("header") && j["header"].is_object() && j["header"].value("type", "") == "ARTIFACT") {
+            is_artifact = true;
+        } else if (j.value("type", "") == "ARTIFACT") {
+            is_artifact = true;
+        }
+        if (!is_artifact) {
+            return std::nullopt;
+        }
+
         ArtifactEntry ae;
         if (j.contains("uuid")) ae.uuid = j["uuid"].get<std::string>();
         else if (j.contains("header") && j["header"].is_object() && j["header"].contains("uuid")) {
@@ -1033,7 +1046,7 @@ std::optional<ArtifactEntry> Blackboard::get_artifact(std::string_view uuid) {
                 ae.derived_from_uuids.push_back(item.get<std::string>());
             }
         }
-        if (!ae.uuid.empty() || !ae.content_hash.empty()) {
+        if (!ae.uuid.empty()) {
             return ae;
         }
         return std::nullopt;

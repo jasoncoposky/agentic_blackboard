@@ -1063,15 +1063,28 @@ struct ArtifactEntry {
         ArtifactEntry ae;
         if (buf.size() == 0) return ae;
         try {
-            if (buf.get_type(0, "uuid") == lite3cpp::Type::String) {
-                ae.uuid = std::string(buf.get_str(0, "uuid"));
-            } else if (buf.get_type(0, "header") == lite3cpp::Type::Object) {
+            bool is_artifact = false;
+            if (buf.get_type(0, "header") == lite3cpp::Type::Object) {
                 size_t h_idx = buf.get_obj(0, "header");
+                if (buf.get_type(h_idx, "type") == lite3cpp::Type::String && buf.get_str(h_idx, "type") == "ARTIFACT") {
+                    is_artifact = true;
+                }
                 if (buf.get_type(h_idx, "uuid") == lite3cpp::Type::String) {
                     ae.uuid = std::string(buf.get_str(h_idx, "uuid"));
                 }
             }
-        } catch (...) {}
+            if (buf.get_type(0, "type") == lite3cpp::Type::String && buf.get_str(0, "type") == "ARTIFACT") {
+                is_artifact = true;
+            }
+            if (!is_artifact) {
+                return ArtifactEntry{};
+            }
+            if (ae.uuid.empty() && buf.get_type(0, "uuid") == lite3cpp::Type::String) {
+                ae.uuid = std::string(buf.get_str(0, "uuid"));
+            }
+        } catch (...) {
+            return ArtifactEntry{};
+        }
 
         try { if (buf.get_type(0, "pid") == lite3cpp::Type::String) ae.pid = std::string(buf.get_str(0, "pid")); } catch (...) {}
         try { if (buf.get_type(0, "content_hash") == lite3cpp::Type::String) ae.content_hash = std::string(buf.get_str(0, "content_hash")); } catch (...) {}

@@ -5,6 +5,7 @@
 #include "httplib.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
+#undef NDEBUG
 #include <cassert>
 #include <filesystem>
 #include <chrono>
@@ -101,6 +102,21 @@ int main() {
         assert(res->get_header_value("Accept-Ranges") == "bytes");
         std::cout << "[PASS] 5. Partial content range request verified (HTTP 206, exact bytes)" << std::endl;
 
+        // 5b. Suffix range exceeding file size: Range: bytes=-1000
+        httplib::Headers suffix_range_headers = {{"Range", "bytes=-1000"}};
+        res = cli.Get("/api/v1/artifacts/" + uuid + "/content", suffix_range_headers);
+        assert(res && res->status == 206);
+        assert(res->body == sample_data);
+        assert(res->get_header_value("Content-Range") == "bytes 0-" + std::to_string(sample_data.size() - 1) + "/" + std::to_string(sample_data.size()));
+        std::cout << "[PASS] 5b. Suffix range request verified" << std::endl;
+
+        // 5c. Out-of-bounds range request: Range: bytes=9999-
+        httplib::Headers oob_range_headers = {{"Range", "bytes=9999-"}};
+        res = cli.Get("/api/v1/artifacts/" + uuid + "/content", oob_range_headers);
+        assert(res && res->status == 416);
+        assert(res->get_header_value("Content-Range") == "bytes */" + std::to_string(sample_data.size()));
+        std::cout << "[PASS] 5c. Out-of-bounds range request (HTTP 416) verified" << std::endl;
+
         // 6. Metadata endpoint GET
         res = cli.Get("/api/v1/artifacts/" + uuid + "/metadata");
         assert(res && res->status == 200);
@@ -168,6 +184,43 @@ int main() {
         assert(res && res->status == 400);
 
         std::cout << "[PASS] 9. Negative tests (404 and 400) verified" << std::endl;
+
+        // 9b. Non-artifact node type validation (CPB atom node vs ArtifactEntry)
+        ab::CpbEntry atom_entry;
+        atom_entry.header.uuid = "atom-node-test-999";
+        atom_entry.header.origin.project_id = "proj-default";
+        atom_entry.header.origin.user_id = "user:tester";
+        atom_entry.payload.statement = "Test CPB atom statement";
+        bool atom_ok = blackboard.commit_cpb_entry(atom_entry);
+        assert(atom_ok);
+
+        res = cli.Get("/api/v1/artifacts/atom-node-test-999");
+        assert(res && res->status == 404);
+        res = cli.Get("/api/v1/artifacts/atom-node-test-999/content");
+        assert(res && res->status == 404);
+        res = cli.Get("/api/v1/artifacts/atom-node-test-999/metadata");
+        assert(res && res->status == 404);
+        std::cout << "[PASS] 9b. Non-artifact node (atom) verified as 404" << std::endl;
+
+        // 10. Upload with form license: SPDX:Apache-2.0 -> verify fair:score AVU includes +20 license points
+        httplib::UploadFormDataItems lic_items = {
+            {"target_path", "models/resnet.pt", "", ""},
+            {"license", "SPDX:Apache-2.0", "", ""},
+            {"file", "binary weights data", "resnet.pt", "application/octet-stream"}
+        };
+        res = cli.Post("/api/v1/artifacts/upload", lic_items);
+        assert(res && res->status == 200);
+        auto lic_meta = json::parse(res->body);
+        assert(lic_meta["license"] == "SPDX:Apache-2.0");
+        int fair_score_lic = 0;
+        for (const auto& a : lic_meta["avus"]) {
+            if (a["attribute"] == "fair:score") {
+                fair_score_lic = std::stoi(a["value"].get<std::string>());
+            }
+        }
+        // Score: PID (+15) + content_hash (+15) + path/logical (+10) + license (+20) = 60
+        assert(fair_score_lic == 60);
+        std::cout << "[PASS] 10. Upload with license and FAIR score verified (+20 license points)" << std::endl;
 
         ab::ApiServer::instance().stop();
     }
