@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <sstream>
 #include <chrono>
+#include <unordered_set>
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -827,16 +828,21 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
     if (!engine_) return false;
 
     ArtifactEntry adjusted = entry;
-    if (adjusted.uuid.empty()) {
-        uint32_t h = std::hash<std::string>{}(adjusted.logical_name + adjusted.content_hash);
-        char hex[9];
-        std::snprintf(hex, sizeof(hex), "%08x", h);
-        adjusted.uuid = "art-" + std::string(hex);
-    }
-
     if (adjusted.created_at_ms == 0) {
         adjusted.created_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
+    if (adjusted.uuid.empty()) {
+        std::string seed = std::to_string(adjusted.created_at_ms) + ":" +
+                           adjusted.logical_name + ":" +
+                           adjusted.content_hash + ":" +
+                           adjusted.title + ":" +
+                           adjusted.pid;
+        uint32_t h = std::hash<std::string>{}(seed);
+        char hex[9];
+        std::snprintf(hex, sizeof(hex), "%08x", h);
+        adjusted.uuid = "art-" + std::string(hex);
     }
 
     lite3cpp::Buffer buf;
@@ -956,6 +962,9 @@ std::optional<ArtifactEntry> Blackboard::get_artifact(std::string_view uuid) {
         auto j = nlohmann::json::parse(sv);
         ArtifactEntry ae;
         if (j.contains("uuid")) ae.uuid = j["uuid"].get<std::string>();
+        else if (j.contains("header") && j["header"].is_object() && j["header"].contains("uuid")) {
+            ae.uuid = j["header"]["uuid"].get<std::string>();
+        }
         if (j.contains("pid")) ae.pid = j["pid"].get<std::string>();
         if (j.contains("content_hash")) ae.content_hash = j["content_hash"].get<std::string>();
         if (j.contains("mime_type")) ae.mime_type = j["mime_type"].get<std::string>();
@@ -968,7 +977,24 @@ std::optional<ArtifactEntry> Blackboard::get_artifact(std::string_view uuid) {
         if (j.contains("logical_name")) ae.logical_name = j["logical_name"].get<std::string>();
         if (j.contains("primary_locator")) ae.primary_locator = j["primary_locator"].get<std::string>();
         if (j.contains("created_at_ms")) ae.created_at_ms = j["created_at_ms"].get<uint64_t>();
-        return ae;
+        if (j.contains("avus") && j["avus"].is_array()) {
+            for (const auto& item : j["avus"]) {
+                AVUTriple avu;
+                if (item.contains("attribute")) avu.attribute = item["attribute"].get<std::string>();
+                if (item.contains("value")) avu.value = item["value"].get<std::string>();
+                if (item.contains("units")) avu.units = item["units"].get<std::string>();
+                ae.avus.push_back(std::move(avu));
+            }
+        }
+        if (j.contains("derived_from_uuids") && j["derived_from_uuids"].is_array()) {
+            for (const auto& item : j["derived_from_uuids"]) {
+                ae.derived_from_uuids.push_back(item.get<std::string>());
+            }
+        }
+        if (!ae.uuid.empty() || !ae.content_hash.empty()) {
+            return ae;
+        }
+        return std::nullopt;
     } catch (...) {}
 
     return std::nullopt;
@@ -988,7 +1014,7 @@ std::vector<std::string> Blackboard::query_by_avu(std::string_view attribute, st
     auto keys = store->get_prefix_keys_all_shards(prefix, "", engine_->get_settings().prefix_scan_limit);
 
     std::vector<std::string> results;
-    std::vector<std::string> seen;
+    std::unordered_set<std::string> seen;
     for (const auto& key : keys) {
         if (key.ends_with(":meta")) continue;
         if (key.starts_with(prefix)) {
@@ -1001,8 +1027,7 @@ std::vector<std::string> Blackboard::query_by_avu(std::string_view attribute, st
                     u = key.substr(last_colon + 1);
                 }
             }
-            if (!u.empty() && std::find(seen.begin(), seen.end(), u) == seen.end()) {
-                seen.push_back(u);
+            if (!u.empty() && seen.insert(u).second) {
                 results.push_back(u);
             }
         }

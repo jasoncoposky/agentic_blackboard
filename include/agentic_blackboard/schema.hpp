@@ -1061,6 +1061,7 @@ struct ArtifactEntry {
 
     static ArtifactEntry deserialize(const lite3cpp::Buffer& buf) {
         ArtifactEntry ae;
+        if (buf.size() == 0) return ae;
         try {
             if (buf.get_type(0, "uuid") == lite3cpp::Type::String) {
                 ae.uuid = std::string(buf.get_str(0, "uuid"));

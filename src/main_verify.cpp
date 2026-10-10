@@ -1443,6 +1443,8 @@ void verify_artifact_graph_model(blackboard::Blackboard& bb) {
     artifact.license = "SPDX:Apache-2.0";
     artifact.collection_path = "/nucleus/specs";
     artifact.logical_name = "design.md";
+    artifact.primary_locator = "vault/9f/83/test.bin";
+    artifact.derived_from_uuids = {"art-parent-001"};
 
     // Attach AVU triples
     artifact.avus.push_back({"lifecycle", "draft", ""});
@@ -1463,7 +1465,32 @@ void verify_artifact_graph_model(blackboard::Blackboard& bb) {
     assert(retrieved->license == "SPDX:Apache-2.0");
     assert(retrieved->collection_path == "/nucleus/specs");
     assert(retrieved->logical_name == "design.md");
+    assert(retrieved->primary_locator == "vault/9f/83/test.bin");
+    assert(retrieved->derived_from_uuids.size() == 1 && retrieved->derived_from_uuids[0] == "art-parent-001");
     assert(retrieved->avus.size() == 2);
+
+    // Negative lookup for non-existent artifact
+    assert(bb.get_artifact("non-existent-uuid") == std::nullopt);
+
+    // Verify unrelated JSON node or empty JSON node returns std::nullopt
+    bb.get_engine()->put_node("unrelated-json-node", "{\"unknown_field\": 12345}");
+    assert(bb.get_artifact("unrelated-json-node") == std::nullopt);
+    bb.get_engine()->put_node("empty-json-node", "{}");
+    assert(bb.get_artifact("empty-json-node") == std::nullopt);
+
+    // Verify defensive check for empty buffer in deserialize
+    lite3cpp::Buffer empty_buf;
+    auto empty_entry = blackboard::ArtifactEntry::deserialize(empty_buf);
+    assert(empty_entry.uuid.empty() && empty_entry.content_hash.empty());
+
+    // Verify auto-generated UUID with collision prevention
+    blackboard::ArtifactEntry auto_uuid_art;
+    auto_uuid_art.logical_name = "auto_gen.md";
+    auto_uuid_art.content_hash = "blake3:112233";
+    auto_uuid_art.title = "Auto Gen Title";
+    auto_uuid_art.pid = "urn:ab:auto";
+    bool auto_ok = bb.commit_artifact(auto_uuid_art);
+    assert(auto_ok && "commit_artifact with empty uuid must succeed");
 
     // Verify graph edges
     auto art_node = bb.get_engine()->get_node("art-test-001");
@@ -1495,6 +1522,30 @@ void verify_artifact_graph_model(blackboard::Blackboard& bb) {
     }
     assert(coll_contains_art && "Collection must have CONTAINS edge to artifact");
 
+    bool has_stored_as = false;
+    for (const auto& edge : art_node->get_edges(rel::STORED_AS)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("vault/9f/83/test.bin")) {
+            has_stored_as = true;
+        }
+    }
+    assert(has_stored_as && "Artifact must have STORED_AS edge to vault/9f/83/test.bin");
+
+    bool has_specifies = false;
+    for (const auto& edge : art_node->get_edges(rel::SPECIFIES)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("urn:ab:artifact:nucleus/specs/design.md")) {
+            has_specifies = true;
+        }
+    }
+    assert(has_specifies && "Artifact must have SPECIFIES edge to PID");
+
+    bool has_derived_from = false;
+    for (const auto& edge : art_node->get_edges(rel::DERIVED_FROM)) {
+        if (edge->get_dst() == bb.get_engine()->get_resolver().parse_uuid("art-parent-001")) {
+            has_derived_from = true;
+        }
+    }
+    assert(has_derived_from && "Artifact must have DERIVED_FROM edge to art-parent-001");
+
     auto avu_edges = art_node->get_edges(rel::ANNOTATED_WITH);
     assert(avu_edges.size() == 2 && "Artifact must have 2 ANNOTATED_WITH edges");
 
@@ -1506,6 +1557,11 @@ void verify_artifact_graph_model(blackboard::Blackboard& bb) {
     auto draft_matches = bb.query_by_avu("lifecycle", "draft");
     assert(!draft_matches.empty() && "Must find artifact by lifecycle:draft");
     assert(draft_matches[0] == "art-test-001");
+
+    // Attribute-only query (value = "")
+    auto attr_only_matches = bb.query_by_avu("fair_tier");
+    assert(!attr_only_matches.empty() && "Attribute-only query must find artifact");
+    assert(std::find(attr_only_matches.begin(), attr_only_matches.end(), "art-test-001") != attr_only_matches.end());
 
     auto negative_matches = bb.query_by_avu("fair_tier", "platinum");
     assert(negative_matches.empty() && "Negative AVU query must return empty");
