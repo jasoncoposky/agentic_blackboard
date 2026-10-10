@@ -797,6 +797,9 @@ void ApiServer::stop() {
     s_server.store(nullptr);
     default_storage_manager_.reset();
     storage_manager_ = nullptr;
+    librarian_ = nullptr;
+    ingestion_service_ = nullptr;
+    blackboard_ = nullptr;
 }
 
 std::optional<ArtifactEntry> ApiServer::resolve_artifact(const std::string& id_or_path) {

@@ -19,7 +19,6 @@ GraphAnalogyEngine::GraphAnalogyEngine(Blackboard* blackboard)
 
 // Helper: Calculate Jaccard Similarity between two sets of tags
 static double calculate_jaccard(const std::vector<std::string>& a, const std::vector<std::string>& b) {
-    if (a.empty() && b.empty()) return 1.0;
     if (a.empty() || b.empty()) return 0.0;
 
     std::set<std::string> set_a(a.begin(), a.end());

@@ -223,6 +223,10 @@ int main() {
         std::cout << "[PASS] 10. Upload with license and FAIR score verified (+20 license points)" << std::endl;
 
         ab::ApiServer::instance().stop();
+        assert(ab::ApiServer::instance().librarian() == nullptr);
+        assert(ab::ApiServer::instance().ingestion_service() == nullptr);
+        assert(ab::ApiServer::instance().storage_manager() == nullptr);
+        std::cout << "[PASS] 11. ApiServer pointer hygiene after stop() verified" << std::endl;
     }
 
     std::filesystem::remove_all(test_db);

@@ -35,10 +35,10 @@ Librarian::Librarian(
         if (ingestion_service_ && !ingestion_service_->get_blackboard()) {
             ingestion_service_->set_blackboard(blackboard_);
         }
-        if (analogy_engine_) {
+        if (analogy_engine_ && !analogy_engine_->get_blackboard()) {
             analogy_engine_->set_blackboard(blackboard_);
         }
-        if (topology_auditor_) {
+        if (topology_auditor_ && !topology_auditor_->get_blackboard()) {
             topology_auditor_->set_blackboard(blackboard_);
         }
     }
@@ -48,12 +48,16 @@ Librarian::~Librarian() {
     stop();
 }
 
+void Librarian::set_blackboard(Blackboard* bb) {
+    blackboard_ = bb;
+    if (ingestion_service_) ingestion_service_->set_blackboard(bb);
+    if (analogy_engine_) analogy_engine_->set_blackboard(bb);
+    if (topology_auditor_) topology_auditor_->set_blackboard(bb);
+}
+
 void Librarian::start(Blackboard* blackboard) {
     if (running_ || thread_.joinable()) stop();
-    blackboard_ = blackboard;
-    if (ingestion_service_) ingestion_service_->set_blackboard(blackboard);
-    if (analogy_engine_) analogy_engine_->set_blackboard(blackboard);
-    if (topology_auditor_) topology_auditor_->set_blackboard(blackboard);
+    set_blackboard(blackboard);
     running_ = true;
     thread_ = std::thread(&Librarian::analysis_loop, this);
 }

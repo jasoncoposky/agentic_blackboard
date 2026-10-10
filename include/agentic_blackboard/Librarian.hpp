@@ -41,6 +41,9 @@ public:
     GraphTopologyAuditor& topology_auditor() { return *topology_auditor_; }
     const GraphTopologyAuditor& topology_auditor() const { return *topology_auditor_; }
 
+    void set_blackboard(Blackboard* bb);
+    Blackboard* get_blackboard() const noexcept { return blackboard_; }
+
     /**
      * @brief Start the background analysis thread.
      */

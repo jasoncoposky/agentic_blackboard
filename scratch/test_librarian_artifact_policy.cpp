@@ -5,6 +5,7 @@
 #include "ab/GraphTopologyAuditor.hpp"
 #include "agentic_blackboard/Blackboard.hpp"
 #include "agentic_blackboard/StorageManager.hpp"
+#include "engine/store.hpp"
 #include <iostream>
 #include <filesystem>
 #include <sstream>
@@ -207,14 +208,59 @@ int main() {
     custom_lib.perform_analysis();
     custom_lib.audit_orphans();
 
-    // Test standalone engines directly
-    agentic_blackboard::GraphAnalogyEngine standalone_analogy(&bb);
-    size_t analogies = standalone_analogy.perform_analysis();
-    (void)analogies;
+    // 13. Test get_blackboard() and set_blackboard() propagation
+    assert(librarian.get_blackboard() == &bb);
+    assert(custom_lib.get_blackboard() == &bb);
+    assert(custom_lib.ingestion_service().get_blackboard() == &bb);
+    assert(custom_lib.analogy_engine().get_blackboard() == &bb);
+    assert(custom_lib.topology_auditor().get_blackboard() == &bb);
+
+    custom_lib.set_blackboard(nullptr);
+    assert(custom_lib.get_blackboard() == nullptr);
+    assert(custom_lib.ingestion_service().get_blackboard() == nullptr);
+    assert(custom_lib.analogy_engine().get_blackboard() == nullptr);
+    assert(custom_lib.topology_auditor().get_blackboard() == nullptr);
+
+    custom_lib.set_blackboard(&bb);
+    assert(custom_lib.get_blackboard() == &bb);
+    assert(custom_lib.ingestion_service().get_blackboard() == &bb);
+    assert(custom_lib.analogy_engine().get_blackboard() == &bb);
+    assert(custom_lib.topology_auditor().get_blackboard() == &bb);
+
+    // 14. Test targeted orphan auditing: Non-CPB nodes (PROJECT, IDENTITY) must not be flagged
+    agentic_blackboard::ProjectNode unanchored_proj{"project:unanchored", "Unanchored Project", "ACTIVE", ""};
+    bb.commit_project_node(unanchored_proj);
+    agentic_blackboard::IdentityNode unanchored_ident{"identity:unanchored", "Unanchored Identity", "SYSTEM", ""};
+    bb.commit_identity_node(unanchored_ident);
+    bb.get_engine()->get_store()->wait_all_shards();
 
     agentic_blackboard::GraphTopologyAuditor standalone_auditor(&bb);
     size_t orphans = standalone_auditor.audit_orphans();
-    (void)orphans;
+    assert(orphans == 0 && "Non-CPB nodes must not be counted as orphans");
+
+    // 15. Test empty tag sets in Jaccard similarity: must not generate spurious analogies
+    agentic_blackboard::CpbEntry atom_untagged_1;
+    atom_untagged_1.header.uuid = "atom-untagged-1";
+    atom_untagged_1.header.origin.project_id = "project:unanchored";
+    atom_untagged_1.header.origin.user_id = "identity:unanchored";
+    atom_untagged_1.payload.statement = "Untagged statement 1";
+    atom_untagged_1.taxonomy.tags = {}; // empty tags
+    atom_untagged_1.taxonomy.knowledge_area = agentic_blackboard::KnowledgeArea::UNKNOWN;
+    bb.commit_cpb_entry(atom_untagged_1);
+
+    agentic_blackboard::CpbEntry atom_untagged_2;
+    atom_untagged_2.header.uuid = "atom-untagged-2";
+    atom_untagged_2.header.origin.project_id = "project:unanchored";
+    atom_untagged_2.header.origin.user_id = "identity:unanchored";
+    atom_untagged_2.payload.statement = "Untagged statement 2";
+    atom_untagged_2.taxonomy.tags = {}; // empty tags
+    atom_untagged_2.taxonomy.knowledge_area = agentic_blackboard::KnowledgeArea::UNKNOWN;
+    bb.commit_cpb_entry(atom_untagged_2);
+    bb.get_engine()->get_store()->wait_all_shards();
+
+    agentic_blackboard::GraphAnalogyEngine standalone_analogy(&bb);
+    size_t analogies = standalone_analogy.perform_analysis();
+    assert(analogies == 0 && "Atoms with empty tags and UNKNOWN KA must not generate analogies");
 
     std::filesystem::remove_all(db_path);
     std::cout << "[SUCCESS] Librarian artifact policy hooks passed!" << std::endl;
