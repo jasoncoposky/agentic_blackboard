@@ -1736,6 +1736,431 @@ def handle_swarm(args, cfg: dict) -> int:
 
 
 # ----------------------------------------------------------------------
+# Content-Addressable Storage (CAS) & FAIR Artifact Management Handlers
+# ----------------------------------------------------------------------
+
+def guess_mime_type(fname: str) -> str:
+    """Guess MIME type from filename extension."""
+    ext = os.path.splitext(fname)[1].lower()
+    mapping = {
+        ".md": "text/markdown",
+        ".markdown": "text/markdown",
+        ".json": "application/json",
+        ".txt": "text/plain",
+        ".csv": "text/csv",
+        ".yaml": "application/yaml",
+        ".yml": "application/yaml",
+        ".xml": "application/xml",
+        ".html": "text/html",
+        ".htm": "text/html",
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml"
+    }
+    return mapping.get(ext, "application/octet-stream")
+
+
+def parse_avus_arg(avus_str: str | None) -> str:
+    """Parse JSON string or comma-separated key=val AVUs into JSON string."""
+    if not avus_str:
+        return ""
+    s = avus_str.strip()
+    if s.startswith("[") or s.startswith("{"):
+        try:
+            parsed = json.loads(s)
+            return json.dumps(parsed)
+        except Exception:
+            pass
+    triples = []
+    for item in s.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        parts = item.split("=")
+        if len(parts) >= 3:
+            triples.append({"attribute": parts[0].strip(), "value": parts[1].strip(), "units": "=".join(parts[2:]).strip()})
+        elif len(parts) == 2:
+            triples.append({"attribute": parts[0].strip(), "value": parts[1].strip(), "units": ""})
+        else:
+            triples.append({"attribute": parts[0].strip(), "value": "true", "units": ""})
+    return json.dumps(triples)
+
+
+def resolve_data_headers(args, cfg: dict, active_user: str | None = None, active_agent: str | None = None) -> dict:
+    """Resolve authentication and identity headers for CAS data operations."""
+    token = (getattr(args, "token", None) or
+             cfg.get("token") or
+             cfg.get("user_token") or
+             cfg.get("agent_token"))
+    if not token and getattr(args, "token_file", None):
+        try:
+            token = Path(args.token_file).read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    user = (getattr(args, "active_user", None) or
+            getattr(args, "user", None) or
+            active_user or
+            os.environ.get("AB_ACTIVE_USER") or
+            os.environ.get("AB_USER") or
+            cfg.get("user_id") or
+            "")
+    agent = (getattr(args, "active_agent", None) or
+             getattr(args, "agent", None) or
+             active_agent or
+             os.environ.get("AB_ACTIVE_AGENT") or
+             os.environ.get("AB_AGENT") or
+             cfg.get("agent_id") or
+             "")
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        headers["X-AB-Key"] = token
+    if user:
+        headers["X-Active-User"] = user
+    if agent:
+        headers["X-Active-Agent"] = agent
+    return headers
+
+
+def handle_data_put(args, cfg: dict) -> int:
+    """Upload a file or artifact into the CAS vault with FAIR metadata."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_data_headers(args, cfg)
+
+    file_path = Path(args.file)
+    if not file_path.is_file():
+        print(f"Error: Local file '{args.file}' not found", file=sys.stderr)
+        return 1
+
+    content_bytes = file_path.read_bytes()
+    filename = file_path.name
+    mime_type = guess_mime_type(filename)
+
+    boundary = f"----WebKitFormBoundary{secrets.token_hex(16)}"
+    body = bytearray()
+
+    # file
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode("utf-8"))
+    body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode("utf-8"))
+    body.extend(content_bytes)
+    body.extend(b"\r\n")
+
+    # path
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend(b'Content-Disposition: form-data; name="path"\r\n\r\n')
+    body.extend(args.path.encode("utf-8"))
+    body.extend(b"\r\n")
+
+    # license
+    if getattr(args, "license", None):
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(b'Content-Disposition: form-data; name="license"\r\n\r\n')
+        body.extend(args.license.encode("utf-8"))
+        body.extend(b"\r\n")
+
+    # avus
+    if getattr(args, "avus", None):
+        avus_str = parse_avus_arg(args.avus)
+        if avus_str:
+            body.extend(f"--{boundary}\r\n".encode("utf-8"))
+            body.extend(b'Content-Disposition: form-data; name="avus"\r\n\r\n')
+            body.extend(avus_str.encode("utf-8"))
+            body.extend(b"\r\n")
+
+    # driver
+    if getattr(args, "driver", None):
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(b'Content-Disposition: form-data; name="driver"\r\n\r\n')
+        body.extend(args.driver.encode("utf-8"))
+        body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+
+    req_headers = dict(headers)
+    req_headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+
+    upload_url = f"{connect_url}/api/v1/artifacts/upload"
+    req = urllib.request.Request(upload_url, data=bytes(body), headers=req_headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30.0) as resp:
+            resp_body = resp.read().decode("utf-8")
+            data = json.loads(resp_body)
+            print("Artifact published successfully:")
+            print(f"  UUID:         {data.get('uuid')}")
+            print(f"  PID:          {data.get('pid')}")
+            print(f"  Content Hash: {data.get('content_hash')}")
+            print(f"  Title:        {data.get('title')}")
+            print(f"  Path:         {data.get('collection_path', '')}/{data.get('logical_name', '')}")
+            print(f"  Size:         {data.get('byte_size')} bytes")
+            print(f"  License:      {data.get('license', 'None')}")
+            return 0
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        print(f"Error publishing artifact (HTTP {e.code}): {err_body}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error publishing artifact: {e}", file=sys.stderr)
+        return 1
+
+
+def handle_data_get(args, cfg: dict) -> int:
+    """Retrieve artifact content from CAS vault with optional byte range."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_data_headers(args, cfg)
+    if getattr(args, "range", None):
+        headers["Range"] = args.range
+
+    quoted = urllib.parse.quote(args.id_or_path, safe='')
+    content_url = f"{connect_url}/api/v1/artifacts/{quoted}/content"
+    req = urllib.request.Request(content_url, headers=headers, method="GET")
+
+    try:
+        with urllib.request.urlopen(req, timeout=30.0) as resp:
+            content_bytes = resp.read()
+            if getattr(args, "output", None):
+                out_path = Path(args.output)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_bytes(content_bytes)
+                print(f"Retrieved {len(content_bytes)} bytes written to {args.output}")
+            else:
+                sys.stdout.buffer.write(content_bytes)
+                sys.stdout.buffer.flush()
+            return 0
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        print(f"Error retrieving artifact content (HTTP {e.code}): {err_body}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error retrieving artifact content: {e}", file=sys.stderr)
+        return 1
+
+
+def handle_data_ls(args, cfg: dict) -> int:
+    """List artifacts under a collection or query by AVU attribute/value."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_data_headers(args, cfg)
+
+    attr = getattr(args, "attr", None) or ""
+    val = getattr(args, "val", None) or ""
+    collection = getattr(args, "collection", None) or ""
+
+    if attr:
+        query_url = f"{connect_url}/api/v1/artifacts/query?attribute={urllib.parse.quote(attr)}"
+        if val:
+            query_url += f"&value={urllib.parse.quote(val)}"
+    else:
+        query_url = f"{connect_url}/api/v1/artifacts/query?attribute=fair:score"
+
+    status, res = http_request_json(query_url, method="GET", headers=headers)
+    if status != 200 or not isinstance(res, list):
+        print(f"Error listing artifacts: HTTP {status} {res}", file=sys.stderr)
+        return 1
+
+    artifacts = res
+    if collection:
+        norm_coll = "/" + collection.strip("/")
+        artifacts = [
+            a for a in artifacts
+            if a.get("collection_path", "").rstrip("/") == norm_coll
+            or a.get("collection_path", "").startswith(norm_coll + "/")
+            or norm_coll in a.get("collection_path", "")
+        ]
+
+    if not artifacts:
+        print("No artifacts found.")
+        return 0
+
+    header_fmt = "{:<14} {:<40} {:<24} {:<10} {:<6}"
+    row_fmt    = "{:<14} {:<40} {:<24} {:<10} {:<6}"
+    print(header_fmt.format("UUID", "PID", "TITLE", "SIZE", "FAIR"))
+    print("-" * 98)
+    for art in artifacts:
+        uuid_str = art.get("uuid", "")
+        pid_str = art.get("pid", "")
+        if len(pid_str) > 38:
+            pid_str = pid_str[:35] + "..."
+        title_str = art.get("title") or art.get("logical_name") or "-"
+        if len(title_str) > 22:
+            title_str = title_str[:19] + "..."
+        size_str = f"{art.get('byte_size', 0)} B"
+        fair_score = "-"
+        for avu in art.get("avus", []):
+            if avu.get("attribute") == "fair:score":
+                fair_score = str(avu.get("value", "-"))
+                break
+        print(row_fmt.format(uuid_str, pid_str, title_str, size_str, fair_score))
+
+    return 0
+
+
+def handle_data_meta_set(args, cfg: dict) -> int:
+    """Attach or update AVU metadata triple on an artifact."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_data_headers(args, cfg)
+
+    quoted = urllib.parse.quote(args.id_or_path, safe='')
+    meta_url = f"{connect_url}/api/v1/artifacts/{quoted}/metadata"
+
+    payload = {
+        "avus": [
+            {
+                "attribute": args.attribute,
+                "value": args.value,
+                "units": args.units or ""
+            }
+        ]
+    }
+
+    status, res = http_request_json(meta_url, method="POST", payload=payload, headers=headers)
+    if status == 200:
+        print(f"AVU attached successfully to {args.id_or_path}:")
+        print(f"  Attribute: {args.attribute}")
+        print(f"  Value:     {args.value}")
+        if args.units:
+            print(f"  Units:     {args.units}")
+        return 0
+    else:
+        print(f"Error attaching metadata: HTTP {status} {res}", file=sys.stderr)
+        return 1
+
+
+def handle_data_meta_get(args, cfg: dict) -> int:
+    """View artifact AVU metadata triples."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_data_headers(args, cfg)
+
+    quoted = urllib.parse.quote(args.id_or_path, safe='')
+    meta_url = f"{connect_url}/api/v1/artifacts/{quoted}/metadata"
+
+    status, res = http_request_json(meta_url, method="GET", headers=headers)
+    if status == 200 and isinstance(res, dict):
+        print(f"Artifact: {res.get('uuid', args.id_or_path)}")
+        if res.get("pid"):
+            print(f"PID:      {res.get('pid')}")
+        avus = res.get("avus", [])
+        if not avus:
+            print("No AVU triples found.")
+            return 0
+        print("\n{:<30} {:<30} {:<15}".format("ATTRIBUTE", "VALUE", "UNITS"))
+        print("-" * 77)
+        for a in avus:
+            attr = a.get("attribute", "")
+            val = a.get("value", "")
+            units = a.get("units", "")
+            print("{:<30} {:<30} {:<15}".format(attr, val, units))
+        return 0
+    else:
+        print(f"Error fetching metadata: HTTP {status} {res}", file=sys.stderr)
+        return 1
+
+
+def handle_data_fair_check(args, cfg: dict) -> int:
+    """Evaluate FAIR principles compliance score and rubric card."""
+    connect_url = (getattr(args, "connect", None) or cfg.get("connect", DEFAULT_CONNECT_URL)).rstrip("/")
+    headers = resolve_data_headers(args, cfg)
+
+    quoted = urllib.parse.quote(args.id_or_path, safe='')
+    art_url = f"{connect_url}/api/v1/artifacts/{quoted}"
+
+    status, meta = http_request_json(art_url, method="GET", headers=headers)
+    if status != 200 or not isinstance(meta, dict):
+        print(f"Error fetching artifact: HTTP {status} {meta}", file=sys.stderr)
+        return 1
+
+    pid = meta.get("pid", "")
+    title = meta.get("title", "")
+    content_hash = meta.get("content_hash", "")
+    collection_path = meta.get("collection_path", "")
+    logical_name = meta.get("logical_name", "")
+    mime_type = meta.get("mime_type", "")
+    version = meta.get("version", "")
+    license_val = meta.get("license", "")
+    abstract = meta.get("abstract", "")
+
+    findable_pid = bool(pid and pid != "urn:ab:artifact:")
+    findable_title = bool(title)
+    findable_score = (15.0 if findable_pid else 0.0) + (15.0 if findable_title else 0.0)
+
+    accessible_hash = bool(content_hash)
+    accessible_path = bool(collection_path and logical_name)
+    accessible_score = (15.0 if accessible_hash else 0.0) + (10.0 if accessible_path else 0.0)
+
+    interoperable_mime = bool(mime_type and mime_type != "application/octet-stream")
+    interoperable_version = bool(version)
+    interoperable_score = (10.0 if interoperable_mime else 0.0) + (10.0 if interoperable_version else 0.0)
+
+    reusable_license = bool(license_val)
+    reusable_abstract = bool(abstract)
+    reusable_score = (20.0 if reusable_license else 0.0) + (5.0 if reusable_abstract else 0.0)
+
+    calc_score = findable_score + accessible_score + interoperable_score + reusable_score
+    if calc_score > 100.0:
+        calc_score = 100.0
+
+    score = None
+    for a in meta.get("avus", []):
+        if a.get("attribute") == "fair:score":
+            try:
+                score = float(a.get("value", 0))
+            except ValueError:
+                pass
+            break
+    if score is None:
+        score = calc_score
+
+    passed = (score >= 80.0)
+    verdict_str = "PASSED" if passed else "FAILED"
+
+    print("=" * 80)
+    print(f"FAIR Compliance Report: {meta.get('uuid', args.id_or_path)}")
+    print("=" * 80)
+    print(f"PID:         {pid or 'None'}")
+    print(f"Title:       {title or 'None'}")
+    print(f"Path:        {collection_path}/{logical_name}")
+    print(f"Score:       {score:.1f} / 100.0  ({verdict_str} - threshold >= 80.0)")
+    print("-" * 80)
+    print(f"Findable ({findable_score:.1f}/30.0):")
+    print(f"  [{'✓' if findable_pid else ' '}] Persistent Identifier (PID) (+15)")
+    print(f"  [{'✓' if findable_title else ' '}] Title / Rich Labeling (+15)")
+    print(f"Accessible ({accessible_score:.1f}/25.0):")
+    print(f"  [{'✓' if accessible_hash else ' '}] Content-Addressable Hash (+15)")
+    print(f"  [{'✓' if accessible_path else ' '}] Logical Path Hierarchy (+10)")
+    print(f"Interoperable ({interoperable_score:.1f}/20.0):")
+    print(f"  [{'✓' if interoperable_mime else ' '}] Standard MIME Type ({mime_type or 'None'}) (+10)")
+    print(f"  [{'✓' if interoperable_version else ' '}] Explicit Versioning ({version or 'None'}) (+10)")
+    print(f"Reusable ({reusable_score:.1f}/25.0):")
+    print(f"  [{'✓' if reusable_license else ' '}] SPDX / Standard License ({license_val or 'None'}) (+20)")
+    print(f"  [{'✓' if reusable_abstract else ' '}] Description / Abstract (+5)")
+    print("=" * 80)
+    return 0
+
+
+def handle_data(args, cfg: dict) -> int:
+    """Dispatcher for data subcommands."""
+    action = getattr(args, "data_action", None)
+    if action == "put":
+        return handle_data_put(args, cfg)
+    elif action == "get":
+        return handle_data_get(args, cfg)
+    elif action == "ls":
+        return handle_data_ls(args, cfg)
+    elif action == "meta":
+        meta_action = getattr(args, "meta_action", None)
+        if meta_action == "set":
+            return handle_data_meta_set(args, cfg)
+        elif meta_action == "get":
+            return handle_data_meta_get(args, cfg)
+    elif action == "fair-check":
+        return handle_data_fair_check(args, cfg)
+
+    print(f"Unknown data action: {action}", file=sys.stderr)
+    return 1
+
+
+# ----------------------------------------------------------------------
 # Integrated FastMCP Server Runner (with deferred imports)
 # ----------------------------------------------------------------------
 
@@ -2757,6 +3182,247 @@ def build_mcp_server(connect_url: str, token: str | None):
                 "status_value": "COMPLETED"
             })
 
+    @mcp.tool()
+    def publish_artifact(
+        path: str,
+        content: str,
+        metadata: dict | None = None,
+        collection: str | None = None,
+        driver: str = "",
+        active_user: str | None = None
+    ) -> dict:
+        """Publish an artifact into Content-Addressable Storage (CAS) and register FAIR metadata."""
+        target_path = path
+        if collection:
+            coll = "/" + collection.strip("/")
+            if not target_path.startswith(coll):
+                target_path = f"{coll}/{target_path.lstrip('/')}"
+
+        filename = os.path.basename(target_path) or "artifact.bin"
+        mime_type = guess_mime_type(filename)
+        file_bytes = content.encode("utf-8") if isinstance(content, str) else content
+
+        files = {
+            "file": (filename, file_bytes, mime_type)
+        }
+
+        form_data: dict[str, str] = {
+            "path": target_path
+        }
+
+        if metadata:
+            if "license" in metadata and metadata["license"]:
+                form_data["license"] = str(metadata["license"])
+
+            avus_list = []
+            if "avus" in metadata:
+                if isinstance(metadata["avus"], list):
+                    avus_list.extend(metadata["avus"])
+                elif isinstance(metadata["avus"], dict):
+                    for k, v in metadata["avus"].items():
+                        avus_list.append({"attribute": str(k), "value": str(v), "units": ""})
+            for k, v in metadata.items():
+                if k not in ("license", "avus"):
+                    avus_list.append({"attribute": str(k), "value": str(v) if not isinstance(v, (dict, list)) else json.dumps(v), "units": ""})
+            if avus_list:
+                form_data["avus"] = json.dumps(avus_list)
+
+        if driver:
+            form_data["driver"] = driver
+
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+
+        with httpx.Client(timeout=client_timeout) as client:
+            resp = client.post(f"{api_url}/artifacts/upload", files=files, data=form_data, headers=req_h)
+            if resp.is_error:
+                try:
+                    err_data = resp.json()
+                except Exception:
+                    err_data = {"message": resp.text}
+                return {"error": f"Upload failed: HTTP {resp.status_code}", "status_code": resp.status_code, "details": err_data}
+            return resp.json()
+
+    @mcp.tool()
+    def read_artifact(
+        id_or_path: str,
+        range: str | None = None,
+        active_user: str | None = None
+    ) -> dict:
+        """Read artifact content and metadata from the CAS vault."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        quoted = urllib.parse.quote(id_or_path, safe='')
+        with httpx.Client(timeout=client_timeout) as client:
+            meta_resp = client.get(f"{api_url}/artifacts/{quoted}", headers=req_h)
+            if meta_resp.is_error:
+                return {
+                    "uuid": None,
+                    "content": "",
+                    "status_code": meta_resp.status_code,
+                    "metadata": {},
+                    "content_hash": None,
+                    "error": meta_resp.text
+                }
+            meta = meta_resp.json()
+
+            content_headers = dict(req_h)
+            if range:
+                content_headers["Range"] = range
+            content_resp = client.get(f"{api_url}/artifacts/{quoted}/content", headers=content_headers)
+
+            return {
+                "uuid": meta.get("uuid"),
+                "content": content_resp.text,
+                "status_code": content_resp.status_code,
+                "metadata": meta,
+                "content_hash": meta.get("content_hash")
+            }
+
+    @mcp.tool()
+    def annotate_artifact(
+        id_or_path: str,
+        attribute: str,
+        value: str,
+        units: str = "",
+        active_user: str | None = None
+    ) -> dict:
+        """Attach or update an AVU metadata triple on an artifact."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        req_h["Content-Type"] = "application/json"
+        quoted = urllib.parse.quote(id_or_path, safe='')
+        payload = {
+            "avus": [
+                {
+                    "attribute": attribute,
+                    "value": value,
+                    "units": units
+                }
+            ]
+        }
+        with httpx.Client(timeout=client_timeout) as client:
+            resp = client.post(f"{api_url}/artifacts/{quoted}/metadata", json=payload, headers=req_h)
+            if resp.is_error:
+                return {"status": "error", "code": resp.status_code, "message": resp.text}
+            resp_data = resp.json()
+            resp_data["status"] = "success"
+            return resp_data
+
+    @mcp.tool()
+    def query_artifacts(
+        attribute: str,
+        value: str = "",
+        active_user: str | None = None
+    ) -> list[dict]:
+        """Query artifacts matching an AVU metadata attribute and optional value."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        params = {"attribute": attribute}
+        if value:
+            params["value"] = value
+        with httpx.Client(timeout=client_timeout) as client:
+            resp = client.get(f"{api_url}/artifacts/query", params=params, headers=req_h)
+            if resp.is_error:
+                return []
+            data = resp.json()
+            if isinstance(data, list):
+                return data
+            return []
+
+    @mcp.tool()
+    def verify_artifact_fair(
+        id_or_path: str,
+        active_user: str | None = None
+    ) -> dict:
+        """Evaluate FAIR principles compliance score and rubric breakdown for an artifact."""
+        req_h = dict(headers)
+        if active_user:
+            req_h["X-Active-User"] = active_user
+        quoted = urllib.parse.quote(id_or_path, safe='')
+        with httpx.Client(timeout=client_timeout) as client:
+            resp = client.get(f"{api_url}/artifacts/{quoted}", headers=req_h)
+            if resp.is_error:
+                return {"error": f"Artifact not found: {resp.status_code}", "passed": False, "score": 0.0}
+            meta = resp.json()
+
+        pid = meta.get("pid", "")
+        title = meta.get("title", "")
+        content_hash = meta.get("content_hash", "")
+        collection_path = meta.get("collection_path", "")
+        logical_name = meta.get("logical_name", "")
+        mime_type = meta.get("mime_type", "")
+        version = meta.get("version", "")
+        license_val = meta.get("license", "")
+        abstract = meta.get("abstract", "")
+
+        findable_pid = bool(pid and pid != "urn:ab:artifact:")
+        findable_title = bool(title)
+        findable_score = (15.0 if findable_pid else 0.0) + (15.0 if findable_title else 0.0)
+
+        accessible_hash = bool(content_hash)
+        accessible_path = bool(collection_path and logical_name)
+        accessible_score = (15.0 if accessible_hash else 0.0) + (10.0 if accessible_path else 0.0)
+
+        interoperable_mime = bool(mime_type and mime_type != "application/octet-stream")
+        interoperable_version = bool(version)
+        interoperable_score = (10.0 if interoperable_mime else 0.0) + (10.0 if interoperable_version else 0.0)
+
+        reusable_license = bool(license_val)
+        reusable_abstract = bool(abstract)
+        reusable_score = (20.0 if reusable_license else 0.0) + (5.0 if reusable_abstract else 0.0)
+
+        rubric_breakdown = {
+            "findable": {
+                "pid": findable_pid,
+                "title": findable_title,
+                "score": findable_score
+            },
+            "accessible": {
+                "content_hash": accessible_hash,
+                "logical_path": accessible_path,
+                "score": accessible_score
+            },
+            "interoperable": {
+                "mime_type": interoperable_mime,
+                "version": interoperable_version,
+                "score": interoperable_score
+            },
+            "reusable": {
+                "license": reusable_license,
+                "abstract": reusable_abstract,
+                "score": reusable_score
+            }
+        }
+
+        calc_score = findable_score + accessible_score + interoperable_score + reusable_score
+        if calc_score > 100.0:
+            calc_score = 100.0
+
+        score = None
+        for a in meta.get("avus", []):
+            if a.get("attribute") == "fair:score":
+                try:
+                    score = float(a.get("value", 0))
+                except ValueError:
+                    pass
+                break
+
+        if score is None:
+            score = calc_score
+
+        return {
+            "uuid": meta.get("uuid"),
+            "pid": meta.get("pid"),
+            "score": score,
+            "rubric": rubric_breakdown,
+            "passed": score >= 80.0
+        }
+
     @mcp.resource("ab://schema")
     async def get_schema() -> str:
         """Retrieve Agentic Blackboard Knowledge Schema."""
@@ -2888,11 +3554,11 @@ def main():
     agent_create.add_argument("--data-dir", help="Data directory path")
 
     def add_net_args(p: argparse.ArgumentParser):
-        p.add_argument("--connect", help="Daemon connect URL")
-        p.add_argument("--token", help="Bearer authorization token")
-        p.add_argument("--token-file", help="Path to file containing authorization token")
-        p.add_argument("--active-user", help="X-Active-User header identity")
-        p.add_argument("--active-agent", help="X-Active-Agent header identity")
+        p.add_argument("--connect", default=argparse.SUPPRESS, help="Daemon connect URL")
+        p.add_argument("--token", default=argparse.SUPPRESS, help="Bearer authorization token")
+        p.add_argument("--token-file", default=argparse.SUPPRESS, help="Path to file containing authorization token")
+        p.add_argument("--active-user", default=argparse.SUPPRESS, help="X-Active-User header identity")
+        p.add_argument("--active-agent", default=argparse.SUPPRESS, help="X-Active-Agent header identity")
 
     # 5. surface
     surface_p = subparsers.add_parser("surface", help="Surface device operations")
@@ -3032,6 +3698,53 @@ def main():
     accept_p.add_argument("--notes", help="Optional acceptance notes or comments")
     add_net_args(accept_p)
 
+    # 9. data
+    data_p = subparsers.add_parser("data", help="Content-Addressable Storage and FAIR artifact data management")
+    data_sub = data_p.add_subparsers(dest="data_action", required=True)
+
+    # data put
+    data_put_p = data_sub.add_parser("put", help="Upload a file or artifact into CAS vault")
+    data_put_p.add_argument("file", help="Path to local file to upload")
+    data_put_p.add_argument("path", help="Logical target path (e.g. /nucleus/specs/doc.md)")
+    data_put_p.add_argument("--license", help="SPDX license identifier (e.g. SPDX:Apache-2.0)")
+    data_put_p.add_argument("--avus", help="JSON string or comma-separated key=val AVUs")
+    data_put_p.add_argument("--driver", default="", help="Target storage driver ID")
+    add_net_args(data_put_p)
+
+    # data get
+    data_get_p = data_sub.add_parser("get", help="Retrieve artifact content from CAS vault")
+    data_get_p.add_argument("id_or_path", help="Artifact UUID, PID, or logical path")
+    data_get_p.add_argument("-o", "--output", help="Local file path to write output (default: stdout)")
+    data_get_p.add_argument("--range", help="HTTP byte range (e.g. bytes=0-500)")
+    add_net_args(data_get_p)
+
+    # data ls
+    data_ls_p = data_sub.add_parser("ls", help="List artifacts under a collection or query artifacts")
+    data_ls_p.add_argument("collection", nargs="?", default="", help="Optional collection path prefix (e.g. /nucleus/specs)")
+    data_ls_p.add_argument("--attr", default="", help="Filter by AVU attribute")
+    data_ls_p.add_argument("--val", default="", help="Filter by AVU value")
+    add_net_args(data_ls_p)
+
+    # data meta
+    data_meta_p = data_sub.add_parser("meta", help="Manage artifact AVU metadata")
+    data_meta_sub = data_meta_p.add_subparsers(dest="meta_action", required=True)
+
+    meta_set_p = data_meta_sub.add_parser("set", help="Attach or update AVU metadata triple")
+    meta_set_p.add_argument("id_or_path", help="Artifact UUID, PID, or logical path")
+    meta_set_p.add_argument("attribute", help="Metadata attribute name")
+    meta_set_p.add_argument("value", help="Metadata attribute value")
+    meta_set_p.add_argument("units", nargs="?", default="", help="Optional units")
+    add_net_args(meta_set_p)
+
+    meta_get_p = data_meta_sub.add_parser("get", help="View artifact AVU metadata triples")
+    meta_get_p.add_argument("id_or_path", help="Artifact UUID, PID, or logical path")
+    add_net_args(meta_get_p)
+
+    # data fair-check
+    data_fair_p = data_sub.add_parser("fair-check", help="Evaluate FAIR principles compliance score")
+    data_fair_p.add_argument("id_or_path", help="Artifact UUID, PID, or logical path")
+    add_net_args(data_fair_p)
+
     parsed_args = parser.parse_args()
     config = load_config(parsed_args.config)
 
@@ -3061,6 +3774,8 @@ def main():
         sys.exit(handle_mcp(parsed_args, config))
     elif parsed_args.subcommand == "swarm":
         sys.exit(handle_swarm(parsed_args, config))
+    elif parsed_args.subcommand == "data":
+        sys.exit(handle_data(parsed_args, config))
     else:
         parser.print_help()
         sys.exit(1)

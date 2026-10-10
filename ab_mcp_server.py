@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import urllib.parse
 import uuid as uuid_mod
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -31,6 +32,7 @@ def _build_headers(active_user: str | None = None) -> dict[str, str]:
     token = get_api_token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+        headers["X-AB-Key"] = token
     return headers
 
 
@@ -471,6 +473,279 @@ async def bind_anchor_to_atom(
         if response.is_error:
             return json.dumps({"status": "ERROR", "code": response.status_code, "message": response.text})
         return response.text
+
+@mcp.tool()
+def publish_artifact(
+    path: str,
+    content: str,
+    metadata: dict | None = None,
+    collection: str | None = None,
+    driver: str = "",
+    active_user: str | None = None
+) -> dict:
+    """
+    Publish an artifact into Content-Addressable Storage (CAS) and register FAIR metadata.
+
+    Args:
+        path: Logical target path or filename (e.g. '/nucleus/specs/doc.md').
+        content: Raw content string or bytes of the artifact.
+        metadata: Optional dictionary with artifact metadata (e.g. license, avus).
+        collection: Optional collection path prefix.
+        driver: Target storage driver ID.
+        active_user: Optional tenant / active user identifier.
+    """
+    target_path = path
+    if collection:
+        coll = "/" + collection.strip("/")
+        if not target_path.startswith(coll):
+            target_path = f"{coll}/{target_path.lstrip('/')}"
+
+    filename = os.path.basename(target_path) or "artifact.bin"
+    mime_type = "text/markdown" if filename.endswith((".md", ".markdown")) else (
+        "application/json" if filename.endswith(".json") else (
+            "text/csv" if filename.endswith(".csv") else "application/octet-stream"
+        )
+    )
+    file_bytes = content.encode("utf-8") if isinstance(content, str) else content
+
+    files = {
+        "file": (filename, file_bytes, mime_type)
+    }
+
+    form_data: dict[str, str] = {
+        "path": target_path
+    }
+
+    if metadata:
+        if "license" in metadata and metadata["license"]:
+            form_data["license"] = str(metadata["license"])
+
+        avus_list = []
+        if "avus" in metadata:
+            if isinstance(metadata["avus"], list):
+                avus_list.extend(metadata["avus"])
+            elif isinstance(metadata["avus"], dict):
+                for k, v in metadata["avus"].items():
+                    avus_list.append({"attribute": str(k), "value": str(v), "units": ""})
+        for k, v in metadata.items():
+            if k not in ("license", "avus"):
+                avus_list.append({"attribute": str(k), "value": str(v) if not isinstance(v, (dict, list)) else json.dumps(v), "units": ""})
+        if avus_list:
+            form_data["avus"] = json.dumps(avus_list)
+
+    if driver:
+        form_data["driver"] = driver
+
+    headers = _build_headers(active_user)
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        resp = client.post(f"{get_api_url()}/artifacts/upload", files=files, data=form_data, headers=headers)
+        if resp.is_error:
+            try:
+                err_data = resp.json()
+            except Exception:
+                err_data = {"message": resp.text}
+            return {"error": f"Upload failed: HTTP {resp.status_code}", "status_code": resp.status_code, "details": err_data}
+        return resp.json()
+
+@mcp.tool()
+def read_artifact(
+    id_or_path: str,
+    range: str | None = None,
+    active_user: str | None = None
+) -> dict:
+    """
+    Read artifact content and metadata from the CAS vault.
+
+    Args:
+        id_or_path: Artifact UUID, PID, or logical path.
+        range: Optional HTTP byte range (e.g. 'bytes=0-100').
+        active_user: Optional tenant / active user identifier.
+    """
+    headers = _build_headers(active_user)
+    quoted = urllib.parse.quote(id_or_path, safe='')
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        meta_resp = client.get(f"{get_api_url()}/artifacts/{quoted}", headers=headers)
+        if meta_resp.is_error:
+            return {
+                "uuid": None,
+                "content": "",
+                "status_code": meta_resp.status_code,
+                "metadata": {},
+                "content_hash": None,
+                "error": meta_resp.text
+            }
+        meta = meta_resp.json()
+
+        content_headers = dict(headers)
+        if range:
+            content_headers["Range"] = range
+        content_resp = client.get(f"{get_api_url()}/artifacts/{quoted}/content", headers=content_headers)
+
+        return {
+            "uuid": meta.get("uuid"),
+            "content": content_resp.text,
+            "status_code": content_resp.status_code,
+            "metadata": meta,
+            "content_hash": meta.get("content_hash")
+        }
+
+@mcp.tool()
+def annotate_artifact(
+    id_or_path: str,
+    attribute: str,
+    value: str,
+    units: str = "",
+    active_user: str | None = None
+) -> dict:
+    """
+    Attach or update an AVU metadata triple on an artifact.
+
+    Args:
+        id_or_path: Artifact UUID, PID, or logical path.
+        attribute: Metadata attribute name.
+        value: Metadata attribute value.
+        units: Optional units of measurement.
+        active_user: Optional tenant / active user identifier.
+    """
+    headers = _build_headers(active_user)
+    headers["Content-Type"] = "application/json"
+    quoted = urllib.parse.quote(id_or_path, safe='')
+    payload = {
+        "avus": [
+            {
+                "attribute": attribute,
+                "value": value,
+                "units": units
+            }
+        ]
+    }
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        resp = client.post(f"{get_api_url()}/artifacts/{quoted}/metadata", json=payload, headers=headers)
+        if resp.is_error:
+            return {"status": "error", "code": resp.status_code, "message": resp.text}
+        resp_data = resp.json()
+        resp_data["status"] = "success"
+        return resp_data
+
+@mcp.tool()
+def query_artifacts(
+    attribute: str,
+    value: str = "",
+    active_user: str | None = None
+) -> list[dict]:
+    """
+    Query artifacts matching an AVU metadata attribute and optional value.
+
+    Args:
+        attribute: Metadata attribute name.
+        value: Optional metadata attribute value.
+        active_user: Optional tenant / active user identifier.
+    """
+    headers = _build_headers(active_user)
+    params = {"attribute": attribute}
+    if value:
+        params["value"] = value
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        resp = client.get(f"{get_api_url()}/artifacts/query", params=params, headers=headers)
+        if resp.is_error:
+            return []
+        data = resp.json()
+        if isinstance(data, list):
+            return data
+        return []
+
+@mcp.tool()
+def verify_artifact_fair(
+    id_or_path: str,
+    active_user: str | None = None
+) -> dict:
+    """
+    Evaluate FAIR principles compliance score and rubric breakdown for an artifact.
+
+    Args:
+        id_or_path: Artifact UUID, PID, or logical path.
+        active_user: Optional tenant / active user identifier.
+    """
+    headers = _build_headers(active_user)
+    quoted = urllib.parse.quote(id_or_path, safe='')
+    with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
+        resp = client.get(f"{get_api_url()}/artifacts/{quoted}", headers=headers)
+        if resp.is_error:
+            return {"error": f"Artifact not found: {resp.status_code}", "passed": False, "score": 0.0}
+        meta = resp.json()
+
+    pid = meta.get("pid", "")
+    title = meta.get("title", "")
+    content_hash = meta.get("content_hash", "")
+    collection_path = meta.get("collection_path", "")
+    logical_name = meta.get("logical_name", "")
+    mime_type = meta.get("mime_type", "")
+    version = meta.get("version", "")
+    license_val = meta.get("license", "")
+    abstract = meta.get("abstract", "")
+
+    findable_pid = bool(pid and pid != "urn:ab:artifact:")
+    findable_title = bool(title)
+    findable_score = (15.0 if findable_pid else 0.0) + (15.0 if findable_title else 0.0)
+
+    accessible_hash = bool(content_hash)
+    accessible_path = bool(collection_path and logical_name)
+    accessible_score = (15.0 if accessible_hash else 0.0) + (10.0 if accessible_path else 0.0)
+
+    interoperable_mime = bool(mime_type and mime_type != "application/octet-stream")
+    interoperable_version = bool(version)
+    interoperable_score = (10.0 if interoperable_mime else 0.0) + (10.0 if interoperable_version else 0.0)
+
+    reusable_license = bool(license_val)
+    reusable_abstract = bool(abstract)
+    reusable_score = (20.0 if reusable_license else 0.0) + (5.0 if reusable_abstract else 0.0)
+
+    rubric_breakdown = {
+        "findable": {
+            "pid": findable_pid,
+            "title": findable_title,
+            "score": findable_score
+        },
+        "accessible": {
+            "content_hash": accessible_hash,
+            "logical_path": accessible_path,
+            "score": accessible_score
+        },
+        "interoperable": {
+            "mime_type": interoperable_mime,
+            "version": interoperable_version,
+            "score": interoperable_score
+        },
+        "reusable": {
+            "license": reusable_license,
+            "abstract": reusable_abstract,
+            "score": reusable_score
+        }
+    }
+
+    calc_score = findable_score + accessible_score + interoperable_score + reusable_score
+    if calc_score > 100.0:
+        calc_score = 100.0
+
+    score = None
+    for a in meta.get("avus", []):
+        if a.get("attribute") == "fair:score":
+            try:
+                score = float(a.get("value", 0))
+            except ValueError:
+                pass
+            break
+
+    if score is None:
+        score = calc_score
+
+    return {
+        "uuid": meta.get("uuid"),
+        "pid": meta.get("pid"),
+        "score": score,
+        "rubric": rubric_breakdown,
+        "passed": score >= 80.0
+    }
 
 @mcp.resource("ab://schema")
 async def get_schema() -> str:
