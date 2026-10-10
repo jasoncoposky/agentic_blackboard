@@ -12,6 +12,7 @@ Validates the complete end-to-end cycle for Project Nucleus Atmosphere agent too
   7. Reads skill resources via MCP (ab://skills/commonplace-curation, ab://skills/procedural-catalog)
   8. Verifies multi-tenancy ACL enforcement across search, links, and export
   9. Verifies both Python FastMCP and Node.js MCP tools against the live daemon!
+  10. FAIR Artifact Publishing and Verification (publish_artifact, read_artifact, verify_artifact_fair)
 
 Lifecycle:
   - Connects to existing Agentic Blackboard daemon or starts build/agentic-blackboardd on port 8085
@@ -57,6 +58,9 @@ from ab_mcp_server import (
     get_skill,
     curate_note,
     author_catalog,
+    publish_artifact,
+    read_artifact,
+    verify_artifact_fair,
     AB_API_URL,
     DEFAULT_TIMEOUT,
     RDF_TIMEOUT,
@@ -497,8 +501,55 @@ async def run_full_cycle():
     assert "ALL AGENTIC BLACKBOARD NODE.JS MCP VERIFICATION TESTS PASSED!" in out_str, "Node.js suite did not report full pass"
     print("✓ Checkpoint 9 PASSED: Dual Python FastMCP and Node.js MCP verified against the live daemon.")
 
+    # =========================================================================
+    # Checkpoint 10: FAIR Artifact Publishing and Verification
+    # =========================================================================
+    print("\n" + "-" * 70)
+    print("CHECKPOINT 10: FAIR Artifact Publishing and Verification (publish_artifact, read_artifact, verify_artifact_fair)")
+    print("-" * 70)
+    spec_content = (
+        "---\n"
+        "title: Atmosphere Procedural Recipes Specification\n"
+        "license: SPDX:Apache-2.0\n"
+        "version: 1.0.0\n"
+        "abstract: Architectural design for Atmosphere swarm procedural culinary workflows and catalog integration.\n"
+        "---\n"
+        "# Atmosphere Procedural Recipes Specification\n"
+        "Detailed architecture description for recipes and procedural catalog items.\n"
+    )
+    art_path = "/atmosphere/specs/recipes.md"
+    pub_res = publish_artifact(
+        path=art_path,
+        content=spec_content,
+        metadata={
+            "license": "SPDX:Apache-2.0",
+            "project_id": "project:atmosphere_e2e"
+        }
+    )
+    assert isinstance(pub_res, dict), f"Failed to publish artifact: {pub_res}"
+    assert "uuid" in pub_res and pub_res["uuid"].startswith("art-"), f"Invalid artifact publish response: {pub_res}"
+    assert pub_res.get("pid") == f"urn:ab:artifact:{art_path.lstrip('/')}", f"Unexpected PID: {pub_res.get('pid')}"
+    art_uuid = pub_res["uuid"]
+    print(f"Published artifact: UUID={art_uuid}, PID={pub_res.get('pid')}, hash={pub_res.get('content_hash')}")
+
+    # Read back artifact
+    read_res = read_artifact(id_or_path=art_path)
+    assert read_res.get("status_code") == 200, f"Failed to read artifact: {read_res}"
+    assert read_res.get("uuid") == art_uuid, f"UUID mismatch: expected {art_uuid}, got {read_res.get('uuid')}"
+    assert read_res.get("content") == spec_content, "Content mismatch on read_artifact"
+    print(f"Read back artifact {art_path} successfully ({len(read_res.get('content', ''))} bytes).")
+
+    # Verify FAIR score
+    fair_res = verify_artifact_fair(id_or_path=art_path)
+    assert isinstance(fair_res, dict), f"Invalid FAIR check response: {fair_res}"
+    assert fair_res.get("passed") is True, f"FAIR verification failed: {fair_res}"
+    fair_score = fair_res.get("score", 0.0)
+    assert fair_score >= 80.0, f"FAIR score too low: {fair_score} (expected >= 80.0)"
+    print(f"FAIR Compliance verified: score={fair_score}/100.0, passed={fair_res.get('passed')}")
+    print("✓ Checkpoint 10 PASSED: FAIR Artifact publishing, retrieval, and compliance verified.")
+
     print("\n" + "=" * 70)
-    print("ALL 9 ATMOSPHERE INTEGRATION CHECKPOINTS PASSED SUCCESSFULLY!")
+    print("ALL 10 ATMOSPHERE INTEGRATION CHECKPOINTS PASSED SUCCESSFULLY!")
     print("=" * 70 + "\n")
 
 

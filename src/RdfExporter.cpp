@@ -91,6 +91,10 @@ std::string format_target_uri(const std::string& target) {
     if (target.starts_with("identity:")) return make_identity_iri(target.substr(9));
     if (target.starts_with("project:")) return make_project_iri(target.substr(8));
     if (target.starts_with("atom:")) return make_atom_iri(target.substr(5));
+    if (target.starts_with("art-")) return "<urn:ab:artifact:" + sanitize_iri(target) + ">";
+    if (target.starts_with("/")) return "<urn:ab:collection:" + sanitize_iri(target.substr(1)) + ">";
+    if (target.starts_with("avu:")) return "<urn:ab:avu:" + sanitize_iri(target.substr(4)) + ">";
+    if (target.starts_with("vault/")) return "<urn:ab:locator:" + sanitize_iri(target) + ">";
     return make_atom_iri(target);
 }
 
@@ -167,6 +171,7 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
     ss << "@prefix prov: <http://www.w3.org/ns/prov#> .\n";
     ss << "@prefix schema: <http://schema.org/> .\n";
     ss << "@prefix dc: <http://purl.org/dc/terms/> .\n";
+    ss << "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n";
     ss << "@prefix geo: <http://www.w3.org/2003/01/geo/wgs84_pos#> .\n\n";
 
     std::set<std::string> unique_keys;
@@ -250,6 +255,101 @@ std::string RdfExporter::export_turtle(Blackboard* blackboard, uint32_t principa
                 ss << " ;\n    " << pred << " " << val;
             }
             ss << " .\n\n";
+        } else if (has_type && type == "COLLECTION") {
+            try {
+                std::string coll_path = "";
+                size_t h_idx = buf.get_obj(0, "header");
+                if (buf.get_type(h_idx, "path") == lite3cpp::Type::String) {
+                    coll_path = std::string(buf.get_str(h_idx, "path"));
+                }
+                if (coll_path.empty()) coll_path = hex_id;
+                std::string clean_path = coll_path.starts_with("/") ? coll_path.substr(1) : coll_path;
+                std::string subject_uri = "<urn:ab:collection:" + sanitize_iri(clean_path) + ">";
+
+                std::vector<std::pair<std::string, std::string>> props;
+                props.push_back({"rdfs:label", "\"" + sanitize_str(coll_path) + "\""});
+                props.push_back({"dc:title", "\"" + sanitize_str(coll_path) + "\""});
+                props.push_back({"ab:collectionPath", "\"" + sanitize_str(coll_path) + "\""});
+
+                auto outbound = blackboard->get_outbound_links(coll_path, principal_id);
+                for (const auto& [dst_uuid, rel_label] : outbound) {
+                    std::string pred = predicate_for_relation(rel_label);
+                    std::string target_uri = format_target_uri(dst_uuid);
+                    props.push_back({pred, target_uri});
+                }
+
+                ss << subject_uri << " a schema:Collection, dcat:Catalog, ab:Collection";
+                for (const auto& [pred, val] : props) {
+                    ss << " ;\n    " << pred << " " << val;
+                }
+                ss << " .\n\n";
+            } catch (...) {}
+        } else if (has_type && type == "ARTIFACT") {
+            try {
+                ArtifactEntry art_node = ArtifactEntry::deserialize(buf);
+                std::string art_id = art_node.uuid.empty() ? hex_id : art_node.uuid;
+                std::string subject_uri = "<urn:ab:artifact:" + sanitize_iri(art_id) + ">";
+
+                std::vector<std::pair<std::string, std::string>> props;
+                if (!art_node.title.empty()) {
+                    props.push_back({"dc:title", "\"" + sanitize_str(art_node.title) + "\""});
+                    props.push_back({"schema:name", "\"" + sanitize_str(art_node.title) + "\""});
+                }
+                if (!art_node.abstract.empty()) {
+                    props.push_back({"dc:description", "\"" + sanitize_str(art_node.abstract) + "\""});
+                    props.push_back({"schema:abstract", "\"" + sanitize_str(art_node.abstract) + "\""});
+                }
+                if (!art_node.license.empty()) {
+                    props.push_back({"dc:license", "\"" + sanitize_str(art_node.license) + "\""});
+                    props.push_back({"schema:license", "\"" + sanitize_str(art_node.license) + "\""});
+                }
+                if (!art_node.version.empty()) {
+                    props.push_back({"schema:version", "\"" + sanitize_str(art_node.version) + "\""});
+                }
+                if (!art_node.mime_type.empty()) {
+                    props.push_back({"dc:format", "\"" + sanitize_str(art_node.mime_type) + "\""});
+                    props.push_back({"schema:encodingFormat", "\"" + sanitize_str(art_node.mime_type) + "\""});
+                }
+                if (art_node.byte_size > 0) {
+                    props.push_back({"schema:contentSize", std::to_string(art_node.byte_size)});
+                }
+                if (!art_node.content_hash.empty()) {
+                    props.push_back({"ab:contentHash", "\"" + sanitize_str(art_node.content_hash) + "\""});
+                }
+                if (!art_node.collection_path.empty()) {
+                    props.push_back({"ab:collectionPath", "\"" + sanitize_str(art_node.collection_path) + "\""});
+                }
+                if (!art_node.logical_name.empty()) {
+                    props.push_back({"ab:logicalName", "\"" + sanitize_str(art_node.logical_name) + "\""});
+                }
+                if (!art_node.pid.empty()) {
+                    std::string pid_uri = art_node.pid.starts_with("urn:") ? ("<" + sanitize_iri(art_node.pid) + ">") : ("<urn:ab:artifact:" + sanitize_iri(art_node.pid) + ">");
+                    props.push_back({"ab:specifies", pid_uri});
+                }
+                for (const auto& a : art_node.avus) {
+                    std::ostringstream bnode;
+                    bnode << "[\n        rdfs:label \"" << sanitize_str(a.attribute) << "\" ;\n";
+                    bnode << "        rdf:value \"" << sanitize_str(a.value) << "\"";
+                    if (!a.units.empty()) {
+                        bnode << " ;\n        ab:units \"" << sanitize_str(a.units) << "\"";
+                    }
+                    bnode << "\n    ]";
+                    props.push_back({"ab:attribute", bnode.str()});
+                }
+
+                auto outbound = blackboard->get_outbound_links(art_id, principal_id);
+                for (const auto& [dst_uuid, rel_label] : outbound) {
+                    std::string pred = predicate_for_relation(rel_label);
+                    std::string target_uri = format_target_uri(dst_uuid);
+                    props.push_back({pred, target_uri});
+                }
+
+                ss << subject_uri << " a schema:DigitalDocument, dcat:Distribution, ab:Artifact";
+                for (const auto& [pred, val] : props) {
+                    ss << " ;\n    " << pred << " " << val;
+                }
+                ss << " .\n\n";
+            } catch (...) {}
         } else {
             // Default: CPB_ENTRY / Knowledge Atom / Note / Recipe
             try {

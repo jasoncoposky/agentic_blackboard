@@ -48,6 +48,16 @@ std::string extract_uuid_from_buf(const lite3cpp::Buffer& buf) {
                 std::string u = std::string(buf.get_str(h_idx, "uuid"));
                 if (!u.empty()) return u;
             }
+            if (buf.get_type(h_idx, "path") == lite3cpp::Type::String) {
+                std::string u = std::string(buf.get_str(h_idx, "path"));
+                if (!u.empty()) return u;
+            }
+            if (buf.get_type(h_idx, "type") == lite3cpp::Type::String && buf.get_str(h_idx, "type") == "AVU") {
+                std::string attr = buf.get_type(0, "attribute") == lite3cpp::Type::String ? std::string(buf.get_str(0, "attribute")) : "";
+                std::string val = buf.get_type(0, "value") == lite3cpp::Type::String ? std::string(buf.get_str(0, "value")) : "";
+                std::string units = buf.get_type(0, "units") == lite3cpp::Type::String ? std::string(buf.get_str(0, "units")) : "";
+                return "avu:" + attr + ":" + val + ":" + units;
+            }
         }
     } catch (...) {}
     try {
@@ -59,6 +69,12 @@ std::string extract_uuid_from_buf(const lite3cpp::Buffer& buf) {
     try {
         if (buf.get_type(0, "uuid") == lite3cpp::Type::String) {
             std::string u = std::string(buf.get_str(0, "uuid"));
+            if (!u.empty()) return u;
+        }
+    } catch (...) {}
+    try {
+        if (buf.get_type(0, "path") == lite3cpp::Type::String) {
+            std::string u = std::string(buf.get_str(0, "path"));
             if (!u.empty()) return u;
         }
     } catch (...) {}
@@ -721,6 +737,26 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_backlinks(const
         }
     }
 
+    uint32_t eff_principal = (principal_id == 0) ? l3kv::ADMIN_UID : principal_id;
+    if (backlinks.size() > 0) {
+        auto target_buf = store->get(db_key, eff_principal);
+        if (target_buf.size() > 0) {
+            try {
+                ArtifactEntry art = ArtifactEntry::deserialize(target_buf);
+                if (!art.uuid.empty() && !art.collection_path.empty()) {
+                    char hbuf[17];
+                    std::snprintf(hbuf, sizeof(hbuf), "%016llx",
+                                  static_cast<unsigned long long>(engine_->get_resolver().parse_uuid(art.collection_path)));
+                    for (auto& [src_uuid, rel_label] : backlinks) {
+                        if (rel_label == rel::CONTAINS && src_uuid == hbuf) {
+                            src_uuid = art.collection_path;
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
+    }
+
     return backlinks;
 }
 
@@ -819,6 +855,37 @@ std::vector<std::pair<std::string, std::string>> Blackboard::get_outbound_links(
                 }
             }
         } catch (...) {}
+        try {
+            ArtifactEntry art = ArtifactEntry::deserialize(src_buf);
+            if (!art.uuid.empty()) {
+                for (auto& [dst_uuid, rel_label] : outbound) {
+                    if (dst_uuid.size() == 16) {
+                        if (rel_label == rel::SPECIFIES && !art.pid.empty()) {
+                            char hbuf[17];
+                            std::snprintf(hbuf, sizeof(hbuf), "%016llx",
+                                          static_cast<unsigned long long>(engine_->get_resolver().parse_uuid(art.pid)));
+                            if (dst_uuid == hbuf) dst_uuid = art.pid;
+                        } else if (rel_label == rel::STORED_AS && !art.primary_locator.empty()) {
+                            char hbuf[17];
+                            std::snprintf(hbuf, sizeof(hbuf), "%016llx",
+                                          static_cast<unsigned long long>(engine_->get_resolver().parse_uuid(art.primary_locator)));
+                            if (dst_uuid == hbuf) dst_uuid = art.primary_locator;
+                        } else if (rel_label == rel::ANNOTATED_WITH) {
+                            for (const auto& a : art.avus) {
+                                std::string avu_str = "avu:" + a.attribute + ":" + a.value + ":" + a.units;
+                                char hbuf[17];
+                                std::snprintf(hbuf, sizeof(hbuf), "%016llx",
+                                              static_cast<unsigned long long>(engine_->get_resolver().parse_uuid(avu_str)));
+                                if (dst_uuid == hbuf) {
+                                    dst_uuid = avu_str;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (...) {}
     }
 
     return outbound;
@@ -889,6 +956,9 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
             size_t h_idx = cbuf.set_obj(0, "header");
             cbuf.set_str(h_idx, "type", "COLLECTION");
             cbuf.set_str(h_idx, "path", coll_str);
+            cbuf.set_str(h_idx, "uuid", coll_str);
+            cbuf.set_str(0, "path", coll_str);
+            cbuf.set_str(0, "uuid", coll_str);
             batch.put_node(coll_id, std::string_view(reinterpret_cast<const char*>(cbuf.data()), cbuf.size()));
         }
         batch.add_edge(coll_id, rel::CONTAINS, 1.0, src_id);
@@ -897,12 +967,28 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
     // Link primary locator via STORED_AS if specified
     if (!adjusted.primary_locator.empty()) {
         uint64_t loc_id = engine_->get_resolver().parse_uuid(adjusted.primary_locator);
+        lite3cpp::Buffer lbuf;
+        lbuf.init_object();
+        size_t h_idx = lbuf.set_obj(0, "header");
+        lbuf.set_str(h_idx, "type", "LOCATOR");
+        lbuf.set_str(h_idx, "uuid", adjusted.primary_locator);
+        lbuf.set_str(0, "id", adjusted.primary_locator);
+        lbuf.set_str(0, "uuid", adjusted.primary_locator);
+        batch.put_node(loc_id, std::string_view(reinterpret_cast<const char*>(lbuf.data()), lbuf.size()));
         batch.add_edge(src_id, rel::STORED_AS, 1.0, loc_id);
     }
 
     // Link persistent identifier (PID) via SPECIFIES if specified
     if (!adjusted.pid.empty()) {
         uint64_t pid_id = engine_->get_resolver().parse_uuid(adjusted.pid);
+        lite3cpp::Buffer pbuf;
+        pbuf.init_object();
+        size_t h_idx = pbuf.set_obj(0, "header");
+        pbuf.set_str(h_idx, "type", "PID");
+        pbuf.set_str(h_idx, "uuid", adjusted.pid);
+        pbuf.set_str(0, "id", adjusted.pid);
+        pbuf.set_str(0, "uuid", adjusted.pid);
+        batch.put_node(pid_id, std::string_view(reinterpret_cast<const char*>(pbuf.data()), pbuf.size()));
         batch.add_edge(src_id, rel::SPECIFIES, 1.0, pid_id);
         batch.add_index("idx:Artifact:pid:" + adjusted.pid, adjusted.uuid);
     }
@@ -971,6 +1057,9 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
         avu_buf.init_object();
         size_t h_idx = avu_buf.set_obj(0, "header");
         avu_buf.set_str(h_idx, "type", "AVU");
+        avu_buf.set_str(h_idx, "uuid", avu_id_str);
+        avu_buf.set_str(0, "uuid", avu_id_str);
+        avu_buf.set_str(0, "id", avu_id_str);
         avu_buf.set_str(0, "attribute", a.attribute);
         avu_buf.set_str(0, "value", a.value);
         avu_buf.set_str(0, "units", a.units);
