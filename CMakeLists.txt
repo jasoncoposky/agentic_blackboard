@@ -36,6 +36,8 @@ set(AB_ENGINE_SOURCES
     src/PosixCasDriver.cpp
     src/StorageManager.cpp
     src/ArtifactIngestionService.cpp
+    src/GraphAnalogyEngine.cpp
+    src/GraphTopologyAuditor.cpp
 )
 
 add_library(ab_engine STATIC ${AB_ENGINE_SOURCES})

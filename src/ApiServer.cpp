@@ -737,7 +737,8 @@ ApiServer::~ApiServer() {
 }
 
 void ApiServer::start(Blackboard* blackboard, int port, const std::string& host,
-                      storage::StorageManager* storage_manager, Librarian* librarian) {
+                      storage::StorageManager* storage_manager, Librarian* librarian,
+                      ArtifactIngestionService* ingestion_service) {
     blackboard_ = blackboard;
     context_broker_.set_blackboard(blackboard);
     port_ = port;
@@ -765,7 +766,17 @@ void ApiServer::start(Blackboard* blackboard, int port, const std::string& host,
 
     if (librarian) {
         librarian_ = librarian;
-    } else if (!librarian_) {
+    }
+
+    if (ingestion_service) {
+        ingestion_service_ = ingestion_service;
+    } else if (librarian_) {
+        ingestion_service_ = &librarian_->ingestion_service();
+    } else if (!ingestion_service_) {
+        ingestion_service_ = &Librarian::instance().ingestion_service();
+    }
+
+    if (!librarian_) {
         librarian_ = &Librarian::instance();
     }
 
@@ -2514,12 +2525,12 @@ void ApiServer::listen_loop() {
                 return;
             }
 
-            auto* lib = librarian_ ? librarian_ : &Librarian::instance();
-            ArtifactEntry entry = lib->process_ingest_artifact(target_path, std::string_view(data_ptr, data_len), put_res.digest, active_user, agent_id, initial_avus);
+            auto* ing_svc = ingestion_service_ ? ingestion_service_ : (librarian_ ? &librarian_->ingestion_service() : &Librarian::instance().ingestion_service());
+            ArtifactEntry entry = ing_svc->ingest(target_path, std::string_view(data_ptr, data_len), put_res.digest, active_user, agent_id, initial_avus);
             entry.primary_locator = put_res.locator;
             if (!license.empty() && entry.license.empty()) {
                 entry.license = license;
-                double score = lib->calculate_fair_score(entry);
+                double score = ing_svc->calculate_fair_score(entry);
                 bool found = false;
                 for (auto& a : entry.avus) {
                     if (a.attribute == "fair:score") {

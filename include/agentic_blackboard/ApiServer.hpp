@@ -3,6 +3,7 @@
 #include <agentic_blackboard/Blackboard.hpp>
 #include <agentic_blackboard/StorageManager.hpp>
 #include <agentic_blackboard/Librarian.hpp>
+#include <agentic_blackboard/ArtifactIngestionService.hpp>
 #include <string>
 #include <memory>
 #include <atomic>
@@ -149,7 +150,8 @@ public:
      * @brief Start the API server on the specified port and host.
      */
     void start(Blackboard* blackboard, int port = 8081, const std::string& host = "0.0.0.0",
-               storage::StorageManager* storage_manager = nullptr, Librarian* librarian = nullptr);
+               storage::StorageManager* storage_manager = nullptr, Librarian* librarian = nullptr,
+               ArtifactIngestionService* ingestion_service = nullptr);
 
     /**
      * @brief Stop the API server.
@@ -158,9 +160,11 @@ public:
 
     void set_storage_manager(storage::StorageManager* sm) { storage_manager_ = sm; }
     void set_librarian(Librarian* lib) { librarian_ = lib; }
+    void set_ingestion_service(ArtifactIngestionService* svc) { ingestion_service_ = svc; }
 
     storage::StorageManager* storage_manager() const { return storage_manager_; }
     Librarian* librarian() const { return librarian_; }
+    ArtifactIngestionService* ingestion_service() const { return ingestion_service_; }
 
     ContextBroker& context_broker() { return context_broker_; }
     void broadcast_context_event(const std::string& context_id, const std::string& event_name, const std::string& json_data) {
@@ -185,6 +189,7 @@ private:
     storage::StorageManager* storage_manager_{nullptr};
     std::unique_ptr<storage::StorageManager> default_storage_manager_;
     Librarian* librarian_{nullptr};
+    ArtifactIngestionService* ingestion_service_{nullptr};
     int port_;
     std::string host_;
     ContextBroker context_broker_;

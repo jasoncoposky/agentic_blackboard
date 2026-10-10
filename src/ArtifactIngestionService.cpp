@@ -83,10 +83,12 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
         });
     }
 
-    bool is_markdown = (ext == ".md" || ext == ".markdown");
+    bool is_code = (ext == ".py" || ext == ".sh" || ext == ".cpp" || ext == ".c" ||
+                    ext == ".h" || ext == ".hpp" || ext == ".bash" || ext == ".zsh");
+    bool supports_headings = !is_code;
     bool is_text = false;
     if (!ext.empty()) {
-        if (is_markdown || ext == ".txt" || ext == ".text" ||
+        if (ext == ".md" || ext == ".markdown" || ext == ".txt" || ext == ".text" ||
             ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".csv" ||
             ext == ".tsv" || ext == ".xml" || ext == ".html" || ext == ".htm" ||
             ext == ".svg" || ext == ".toml" || ext == ".ini" || ext == ".cfg" ||
@@ -179,15 +181,15 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
                 // No frontmatter present
                 found_fm_start = true;
                 frontmatter_done = true;
-                // Check if first non-empty line is a heading (Markdown files only)
-                if (is_markdown && trimmed.starts_with("# ")) {
+                // Check if first non-empty line is a heading
+                if (supports_headings && trimmed.starts_with("# ")) {
                     std::string_view heading = trim_sv(trimmed.substr(2));
                     if (!heading.empty()) {
                         ctx.title = std::string(heading);
                         break; // Title heading found, early exit
                     }
                 }
-                if (!is_markdown) {
+                if (is_code) {
                     break;
                 }
                 continue;
@@ -198,8 +200,8 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
             if (trimmed == "---" || trimmed == "...") {
                 in_frontmatter = false;
                 frontmatter_done = true;
-                if (!ctx.title.empty() || !is_markdown) {
-                    break; // Title found in frontmatter, or non-markdown file, early exit
+                if (!ctx.title.empty() || is_code) {
+                    break; // Title found in frontmatter, or code file, early exit
                 }
                 continue;
             }
@@ -234,7 +236,7 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
                 }
             }
         } else if (frontmatter_done) {
-            if (ctx.title.empty() && is_markdown) {
+            if (ctx.title.empty() && supports_headings) {
                 if (trimmed.starts_with("# ")) {
                     std::string_view heading = trim_sv(trimmed.substr(2));
                     if (!heading.empty()) {

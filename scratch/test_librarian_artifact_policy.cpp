@@ -1,6 +1,8 @@
 #undef NDEBUG
 #include <cassert>
 #include "agentic_blackboard/Librarian.hpp"
+#include "ab/GraphAnalogyEngine.hpp"
+#include "ab/GraphTopologyAuditor.hpp"
 #include "agentic_blackboard/Blackboard.hpp"
 #include "agentic_blackboard/StorageManager.hpp"
 #include <iostream>
@@ -187,6 +189,32 @@ int main() {
     librarian.start(&bb);
     librarian.start(&bb);
     librarian.stop();
+
+    // 12. Test Librarian Facade accessors and DI constructor
+    assert(&librarian.ingestion_service() != nullptr);
+    assert(&librarian.analogy_engine() != nullptr);
+    assert(&librarian.topology_auditor() != nullptr);
+
+    auto custom_ingestion = std::make_unique<agentic_blackboard::ArtifactIngestionService>(&bb);
+    auto custom_analogy = std::make_unique<agentic_blackboard::GraphAnalogyEngine>(&bb);
+    auto custom_topology = std::make_unique<agentic_blackboard::GraphTopologyAuditor>(&bb);
+    agentic_blackboard::Librarian custom_lib(&bb, std::move(custom_ingestion), std::move(custom_analogy), std::move(custom_topology));
+    assert(&custom_lib.ingestion_service() != nullptr);
+    assert(&custom_lib.analogy_engine() != nullptr);
+    assert(&custom_lib.topology_auditor() != nullptr);
+
+    // Test facade methods delegation
+    custom_lib.perform_analysis();
+    custom_lib.audit_orphans();
+
+    // Test standalone engines directly
+    agentic_blackboard::GraphAnalogyEngine standalone_analogy(&bb);
+    size_t analogies = standalone_analogy.perform_analysis();
+    (void)analogies;
+
+    agentic_blackboard::GraphTopologyAuditor standalone_auditor(&bb);
+    size_t orphans = standalone_auditor.audit_orphans();
+    (void)orphans;
 
     std::filesystem::remove_all(db_path);
     std::cout << "[SUCCESS] Librarian artifact policy hooks passed!" << std::endl;

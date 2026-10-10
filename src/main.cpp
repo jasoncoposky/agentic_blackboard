@@ -233,14 +233,15 @@ int main(int argc, char* argv[]) {
         } else {
             vault_dir = db_path + "/vault";
         }
+        agentic_blackboard::Librarian librarian(&bb);
         agentic_blackboard::storage::StorageManager storage_mgr(vault_dir);
         agentic_blackboard::Monitor::instance().start(&bb);
-        agentic_blackboard::ApiServer::instance().start(&bb, port, host, &storage_mgr, &agentic_blackboard::Librarian::instance());
+        agentic_blackboard::ApiServer::instance().start(&bb, port, host, &storage_mgr, &librarian);
 
 
         // 4. Start Intelligence & Governance
 
-        agentic_blackboard::Librarian::instance().start(&bb);
+        librarian.start(&bb);
         // Validator is reactive, no thread needed yet.
 
         std::cout << "[AgenticBlackboard] Swarm Substrate Active. Governance Governor running." << std::endl;
@@ -276,7 +277,7 @@ int main(int argc, char* argv[]) {
         std::cout << "[AgenticBlackboard] Initiating graceful shutdown..." << std::endl;
         
         agentic_blackboard::ApiServer::instance().stop();    // Stop API server and disconnect SSE clients first
-        agentic_blackboard::Librarian::instance().stop();    // Stop intelligence second
+        librarian.stop();                                    // Stop intelligence second
         agentic_blackboard::Monitor::instance().stop();      // Stop metrics third
         agentic_blackboard::Orchestrator::instance().stop(); // Stop network fourth
         

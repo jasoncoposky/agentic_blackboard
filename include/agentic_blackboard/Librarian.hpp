@@ -2,26 +2,44 @@
 
 #include <agentic_blackboard/Blackboard.hpp>
 #include <agentic_blackboard/schema.hpp>
+#include <agentic_blackboard/ArtifactIngestionService.hpp>
+#include <agentic_blackboard/GraphAnalogyEngine.hpp>
+#include <agentic_blackboard/GraphTopologyAuditor.hpp>
 #include <thread>
 #include <atomic>
+#include <memory>
 #include <string_view>
 #include <vector>
 
 namespace agentic_blackboard {
 
 /**
- * @brief Singleton analyzer that creates "Synapses" (Edges) between CPB atoms
- *        and enforces data ingestion policies and FAIR metric scoring.
+ * @brief Facade orchestrating knowledge graph analysis, orphan auditing,
+ *        and artifact ingestion services.
  */
 class Librarian {
 public:
-    static Librarian& instance() {
-        static Librarian inst;
-        return inst;
-    }
+    static Librarian& instance();
 
-    explicit Librarian(Blackboard* blackboard = nullptr);
+    explicit Librarian(
+        Blackboard* blackboard = nullptr,
+        std::unique_ptr<ArtifactIngestionService> ingestion_svc = nullptr,
+        std::unique_ptr<GraphAnalogyEngine> analogy_engine = nullptr,
+        std::unique_ptr<GraphTopologyAuditor> topology_auditor = nullptr
+    );
     ~Librarian();
+
+    Librarian(const Librarian&) = delete;
+    Librarian& operator=(const Librarian&) = delete;
+    Librarian(Librarian&&) = delete;
+    Librarian& operator=(Librarian&&) = delete;
+
+    ArtifactIngestionService& ingestion_service() { return *ingestion_service_; }
+    const ArtifactIngestionService& ingestion_service() const { return *ingestion_service_; }
+    GraphAnalogyEngine& analogy_engine() { return *analogy_engine_; }
+    const GraphAnalogyEngine& analogy_engine() const { return *analogy_engine_; }
+    GraphTopologyAuditor& topology_auditor() { return *topology_auditor_; }
+    const GraphTopologyAuditor& topology_auditor() const { return *topology_auditor_; }
 
     /**
      * @brief Start the background analysis thread.
@@ -36,8 +54,7 @@ public:
     void audit_orphans();
 
     /**
-     * @brief Ingest an artifact: parses frontmatter, extracts headings, mints PID,
-     * calculates FAIR score, and populates AVUs.
+     * @brief Ingest an artifact: delegates to ArtifactIngestionService.
      */
     ArtifactEntry process_ingest_artifact(
         std::string_view logical_path,
@@ -57,9 +74,13 @@ public:
 private:
     void analysis_loop();
     
-    std::atomic<bool> running_;
+    std::atomic<bool> running_{false};
     std::thread thread_;
-    Blackboard* blackboard_;
+    Blackboard* blackboard_{nullptr};
+
+    std::unique_ptr<ArtifactIngestionService> ingestion_service_;
+    std::unique_ptr<GraphAnalogyEngine> analogy_engine_;
+    std::unique_ptr<GraphTopologyAuditor> topology_auditor_;
 };
 
 } // namespace agentic_blackboard
