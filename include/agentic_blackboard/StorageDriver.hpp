@@ -7,7 +7,7 @@
 #include <optional>
 #include <cstdint>
 
-namespace blackboard::storage {
+namespace agentic_blackboard::storage {
 
 struct ByteRange {
     uint64_t offset{0};
@@ -41,4 +41,12 @@ public:
     virtual StorageStats stat() = 0;
 };
 
-} // namespace blackboard::storage
+} // namespace agentic_blackboard::storage
+
+namespace ab {
+    namespace storage = agentic_blackboard::storage;
+}
+
+namespace blackboard {
+    namespace storage = agentic_blackboard::storage;
+}

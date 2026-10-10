@@ -11,7 +11,7 @@
 #include <future>
 #include <optional>
 
-namespace blackboard::storage {
+namespace agentic_blackboard::storage {
 
 class PosixCasDriver : public IStorageDriver {
 public:
@@ -46,9 +46,17 @@ public:
 private:
     std::filesystem::path vault_root_;
     std::string driver_id_;
-    std::atomic<uint32_t> active_streams_{0};
+    std::shared_ptr<std::atomic<uint32_t>> active_streams_{std::make_shared<std::atomic<uint32_t>>(0)};
     std::atomic<uint64_t> total_bytes_written_{0};
     std::atomic<uint64_t> total_write_time_ns_{0};
 };
 
-} // namespace blackboard::storage
+} // namespace agentic_blackboard::storage
+
+namespace ab {
+    namespace storage = agentic_blackboard::storage;
+}
+
+namespace blackboard {
+    namespace storage = agentic_blackboard::storage;
+}
