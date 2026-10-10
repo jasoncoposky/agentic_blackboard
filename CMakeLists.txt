@@ -33,6 +33,7 @@ set(AB_ENGINE_SOURCES
     src/Monitor.cpp
     src/ApiServer.cpp
     src/RdfExporter.cpp
+    src/PosixCasDriver.cpp
 )
 
 add_library(ab_engine STATIC ${AB_ENGINE_SOURCES})
@@ -88,6 +89,9 @@ target_link_libraries(force_seed PRIVATE ab_engine Threads::Threads $<$<BOOL:${W
 add_executable(inspect_keys scratch/inspect_keys.cpp)
 target_link_libraries(inspect_keys PRIVATE ab_engine Threads::Threads $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
 
+add_executable(test_posix_cas_driver scratch/test_posix_cas_driver.cpp)
+target_link_libraries(test_posix_cas_driver PRIVATE ab_engine Threads::Threads OpenSSL::Crypto)
+
 if(MSVC)
     target_compile_options(ab_verify PRIVATE /bigobj)
     target_compile_options(test_orphan_rejection PRIVATE /bigobj)
@@ -95,6 +99,7 @@ if(MSVC)
     target_compile_options(seed_and_wait PRIVATE /bigobj)
     target_compile_options(force_seed PRIVATE /bigobj)
     target_compile_options(inspect_keys PRIVATE /bigobj)
+    target_compile_options(test_posix_cas_driver PRIVATE /bigobj)
 endif()
 
 if(MSVC)
