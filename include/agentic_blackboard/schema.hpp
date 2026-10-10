@@ -3,10 +3,13 @@
 #include "buffer.hpp"
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <cstdint>
 #include <optional>
 #include <map>
+#include <chrono>
+#include <atomic>
 
 namespace agentic_blackboard {
 
@@ -1122,6 +1125,125 @@ struct ArtifactEntry {
 
         return ae;
     }
+};
+
+/**
+ * @brief Builder for creating ArtifactEntry with invariant validation.
+ */
+class ArtifactBuilder {
+public:
+    ArtifactBuilder() = default;
+    explicit ArtifactBuilder(ArtifactEntry entry) : entry_(std::move(entry)) {}
+
+    ArtifactBuilder& with_uuid(std::string_view uuid) {
+        entry_.uuid = std::string(uuid);
+        return *this;
+    }
+
+    ArtifactBuilder& with_pid(std::string_view pid) {
+        entry_.pid = std::string(pid);
+        return *this;
+    }
+
+    ArtifactBuilder& with_path(std::string_view collection_path, std::string_view logical_name) {
+        entry_.collection_path = std::string(collection_path);
+        entry_.logical_name = std::string(logical_name);
+        return *this;
+    }
+
+    ArtifactBuilder& with_content_hash(std::string_view hash) {
+        entry_.content_hash = std::string(hash);
+        return *this;
+    }
+
+    ArtifactBuilder& with_mime_type(std::string_view mime) {
+        entry_.mime_type = std::string(mime);
+        return *this;
+    }
+
+    ArtifactBuilder& with_byte_size(uint64_t size) {
+        entry_.byte_size = size;
+        return *this;
+    }
+
+    ArtifactBuilder& with_title(std::string_view title) {
+        entry_.title = std::string(title);
+        return *this;
+    }
+
+    ArtifactBuilder& with_abstract(std::string_view abstract) {
+        entry_.abstract = std::string(abstract);
+        return *this;
+    }
+
+    ArtifactBuilder& with_license(std::string_view license) {
+        entry_.license = std::string(license);
+        return *this;
+    }
+
+    ArtifactBuilder& with_version(std::string_view version) {
+        entry_.version = std::string(version);
+        return *this;
+    }
+
+    ArtifactBuilder& with_primary_locator(std::string_view locator) {
+        entry_.primary_locator = std::string(locator);
+        return *this;
+    }
+
+    ArtifactBuilder& with_created_at_ms(uint64_t ms) {
+        entry_.created_at_ms = ms;
+        return *this;
+    }
+
+    ArtifactBuilder& add_avu(const AVUTriple& avu) {
+        entry_.avus.push_back(avu);
+        return *this;
+    }
+
+    ArtifactBuilder& add_avu(std::string_view attr, std::string_view val, std::string_view units = "") {
+        entry_.avus.push_back(AVUTriple{std::string(attr), std::string(val), std::string(units)});
+        return *this;
+    }
+
+    ArtifactBuilder& add_derived_from(std::string_view uuid) {
+        entry_.derived_from_uuids.push_back(std::string(uuid));
+        return *this;
+    }
+
+    ArtifactEntry build() {
+        if (entry_.created_at_ms == 0) {
+            entry_.created_at_ms = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()
+                ).count()
+            );
+        }
+
+        if (entry_.uuid.empty()) {
+            static std::atomic<uint64_t> counter{1};
+            entry_.uuid = "art-" + std::to_string(entry_.created_at_ms) + "-" + std::to_string(counter.fetch_add(1));
+        }
+
+        if (entry_.pid.empty()) {
+            if (!entry_.collection_path.empty() && !entry_.logical_name.empty()) {
+                std::string coll = entry_.collection_path;
+                while (!coll.empty() && coll.front() == '/') coll.erase(coll.begin());
+                while (!coll.empty() && coll.back() == '/') coll.pop_back();
+
+                std::string log_name = entry_.logical_name;
+                while (!log_name.empty() && log_name.front() == '/') log_name.erase(log_name.begin());
+
+                std::string full_p = coll.empty() ? log_name : (coll + "/" + log_name);
+                entry_.pid = "urn:ab:artifact:" + full_p;
+            }
+        }
+
+        return entry_;
+    }
+
+private:
+    ArtifactEntry entry_;
 };
 
 } // namespace agentic_blackboard

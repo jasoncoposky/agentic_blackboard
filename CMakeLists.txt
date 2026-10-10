@@ -102,6 +102,12 @@ target_link_libraries(test_librarian_artifact_policy PRIVATE ab_engine Threads::
 add_executable(test_api_artifacts scratch/test_api_artifacts.cpp)
 target_link_libraries(test_api_artifacts PRIVATE ab_engine Threads::Threads OpenSSL::Crypto $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
 
+add_executable(test_artifact_builder scratch/test_artifact_builder.cpp)
+target_link_libraries(test_artifact_builder PRIVATE ab_engine)
+if (WIN32)
+    target_link_libraries(test_artifact_builder PRIVATE ws2_32 bcrypt)
+endif()
+
 if(MSVC)
     target_compile_options(ab_verify PRIVATE /bigobj)
     target_compile_options(test_orphan_rejection PRIVATE /bigobj)
@@ -113,6 +119,7 @@ if(MSVC)
     target_compile_options(test_storage_manager PRIVATE /bigobj)
     target_compile_options(test_librarian_artifact_policy PRIVATE /bigobj)
     target_compile_options(test_api_artifacts PRIVATE /bigobj)
+    target_compile_options(test_artifact_builder PRIVATE /bigobj)
 endif()
 
 if(MSVC)
