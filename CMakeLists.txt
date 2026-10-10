@@ -35,6 +35,7 @@ set(AB_ENGINE_SOURCES
     src/RdfExporter.cpp
     src/PosixCasDriver.cpp
     src/StorageManager.cpp
+    src/ArtifactIngestionService.cpp
 )
 
 add_library(ab_engine STATIC ${AB_ENGINE_SOURCES})
@@ -114,6 +115,9 @@ if (WIN32)
     target_link_libraries(test_fair_score_strategy PRIVATE ws2_32 bcrypt)
 endif()
 
+add_executable(test_ingestion_service scratch/test_ingestion_service.cpp)
+target_link_libraries(test_ingestion_service PRIVATE ab_engine Threads::Threads OpenSSL::Crypto $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
+
 if(MSVC)
     target_compile_options(ab_verify PRIVATE /bigobj)
     target_compile_options(test_orphan_rejection PRIVATE /bigobj)
@@ -127,6 +131,7 @@ if(MSVC)
     target_compile_options(test_api_artifacts PRIVATE /bigobj)
     target_compile_options(test_artifact_builder PRIVATE /bigobj)
     target_compile_options(test_fair_score_strategy PRIVATE /bigobj)
+    target_compile_options(test_ingestion_service PRIVATE /bigobj)
 endif()
 
 if(MSVC)
