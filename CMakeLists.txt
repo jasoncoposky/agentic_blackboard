@@ -97,7 +97,7 @@ add_executable(test_storage_manager scratch/test_storage_manager.cpp)
 target_link_libraries(test_storage_manager PRIVATE ab_engine Threads::Threads OpenSSL::Crypto)
 
 add_executable(test_librarian_artifact_policy scratch/test_librarian_artifact_policy.cpp)
-target_link_libraries(test_librarian_artifact_policy PRIVATE ab_engine Threads::Threads OpenSSL::Crypto)
+target_link_libraries(test_librarian_artifact_policy PRIVATE ab_engine Threads::Threads OpenSSL::Crypto $<$<BOOL:${WIN32}>:ws2_32> $<$<BOOL:${WIN32}>:bcrypt> $<$<BOOL:${WIN32}>:iphlpapi>)
 
 if(MSVC)
     target_compile_options(ab_verify PRIVATE /bigobj)

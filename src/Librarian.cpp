@@ -45,12 +45,12 @@ double Librarian::calculate_fair_score(const ArtifactEntry& entry) const {
     double score = 0.0;
 
     // Findable (max 30): Has non-empty PID (+15), has non-empty Title (+15)
-    if (!entry.pid.empty()) score += 15.0;
+    if (!entry.pid.empty() && entry.pid != "urn:ab:artifact:") score += 15.0;
     if (!entry.title.empty()) score += 15.0;
 
     // Accessible (max 25): Has non-empty content_hash (+15), has logical path (+10)
     if (!entry.content_hash.empty()) score += 15.0;
-    if (!entry.collection_path.empty() || !entry.logical_name.empty()) score += 10.0;
+    if (!entry.collection_path.empty() && !entry.logical_name.empty()) score += 10.0;
 
     // Interoperable (max 20): Known MIME type (+10), version specified (+10)
     if (!entry.mime_type.empty() && entry.mime_type != "application/octet-stream") score += 10.0;
@@ -75,21 +75,29 @@ ArtifactEntry Librarian::process_ingest_artifact(
     ArtifactEntry entry;
 
     // 1. Path normalization
-    std::filesystem::path p(logical_path);
-    entry.logical_name = p.filename().string();
-    std::string coll = p.parent_path().string();
-    if (coll.empty()) {
-        coll = "/";
-    } else if (coll[0] != '/') {
-        coll = "/" + coll;
+    std::filesystem::path p = std::filesystem::path(logical_path).lexically_normal();
+    std::string norm_path = p.string();
+    size_t start_idx = norm_path.find_first_not_of('/');
+    std::string path_no_leading = (start_idx != std::string::npos) ? norm_path.substr(start_idx) : "";
+    if (path_no_leading == ".") {
+        path_no_leading = "";
     }
-    entry.collection_path = coll;
 
-    // Mint PID: urn:ab:artifact:{normalized_path_without_leading_slash}
-    std::string raw_path(logical_path);
-    size_t start_idx = raw_path.find_first_not_of('/');
-    std::string path_no_leading = (start_idx != std::string::npos) ? raw_path.substr(start_idx) : "";
-    entry.pid = "urn:ab:artifact:" + path_no_leading;
+    if (path_no_leading.empty()) {
+        entry.pid = "";
+        entry.collection_path = "";
+        entry.logical_name = "";
+    } else {
+        entry.logical_name = p.filename().string();
+        std::string coll = p.parent_path().string();
+        if (coll.empty()) {
+            coll = "/";
+        } else if (coll[0] != '/') {
+            coll = "/" + coll;
+        }
+        entry.collection_path = coll;
+        entry.pid = "urn:ab:artifact:" + path_no_leading;
+    }
 
     // 2. Frontmatter parser & Heading fallback
     auto trim_sv = [](std::string_view s) -> std::string_view {
@@ -100,6 +108,26 @@ ArtifactEntry Librarian::process_ingest_artifact(
             s.remove_suffix(1);
         }
         return s;
+    };
+
+    auto strip_comment = [&trim_sv](std::string_view s) -> std::string_view {
+        bool in_single = false;
+        bool in_double = false;
+        for (size_t i = 0; i < s.size(); ++i) {
+            char c = s[i];
+            if (c == '\\' && in_double && i + 1 < s.size()) {
+                ++i;
+                continue;
+            }
+            if (c == '\'' && !in_double) {
+                in_single = !in_single;
+            } else if (c == '"' && !in_single) {
+                in_double = !in_double;
+            } else if (c == '#' && !in_single && !in_double) {
+                return trim_sv(s.substr(0, i));
+            }
+        }
+        return trim_sv(s);
     };
 
     auto unquote = [](std::string_view s) -> std::string {
@@ -153,7 +181,7 @@ ArtifactEntry Librarian::process_ingest_artifact(
             if (colon == std::string_view::npos) continue;
 
             std::string_view key_sv = trim_sv(line.substr(0, colon));
-            std::string_view val_sv = trim_sv(line.substr(colon + 1));
+            std::string_view val_sv = strip_comment(line.substr(colon + 1));
             std::string val = unquote(val_sv);
 
             std::string key(key_sv);
@@ -212,14 +240,21 @@ ArtifactEntry Librarian::process_ingest_artifact(
         entry.uuid = "art-" + std::string(hex);
     }
 
-    // 5. Populate AVUs: add initial_avus and auto-tag {"fair:score", std::to_string((int)score), "points"}
-    entry.avus = initial_avus;
+    // 5. Populate AVUs: add initial_avus (excluding any pre-existing fair:score) and auto-tag verified fair:score
+    entry.avus.clear();
+    for (const auto& avu : initial_avus) {
+        if (avu.attribute != "fair:score") {
+            entry.avus.push_back(avu);
+        }
+    }
     double score = calculate_fair_score(entry);
     entry.avus.push_back(AVUTriple{"fair:score", std::to_string(static_cast<int>(score)), "points"});
 
     // 6. Commit to Blackboard if available
     if (blackboard_) {
-        blackboard_->commit_artifact(entry, user_id, agent_id);
+        if (!blackboard_->commit_artifact(entry, user_id, agent_id)) {
+            std::cerr << "[Librarian] Warning: Failed to commit artifact to blackboard: " << entry.uuid << std::endl;
+        }
     }
 
     return entry;
@@ -251,6 +286,7 @@ Librarian::~Librarian() {
 }
 
 void Librarian::start(Blackboard* blackboard) {
+    if (running_) stop();
     blackboard_ = blackboard;
     running_ = true;
     thread_ = std::thread(&Librarian::analysis_loop, this);
