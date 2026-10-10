@@ -1,6 +1,9 @@
 #undef NDEBUG
 #include <cassert>
 #include <iostream>
+#include <thread>
+#include <vector>
+#include <unordered_set>
 #include <agentic_blackboard/schema.hpp>
 
 int main() {
@@ -63,6 +66,71 @@ int main() {
     assert(entry3.pid.empty());
     assert(entry3.collection_path.empty());
     assert(entry3.logical_name.empty());
+
+    // Test 4: Slashes-only path ("/", "/") and ("///", "///") leaves PID empty
+    auto entry_slash1 = agentic_blackboard::ArtifactBuilder()
+        .with_path("/", "/")
+        .build();
+    assert(entry_slash1.pid.empty());
+
+    auto entry_slash2 = agentic_blackboard::ArtifactBuilder()
+        .with_path("///", "///")
+        .build();
+    assert(entry_slash2.pid.empty());
+
+    // Test 5: Root collection ("", "file.txt") generates correct URN
+    auto entry_root = agentic_blackboard::ArtifactBuilder()
+        .with_path("", "file.txt")
+        .build();
+    assert(entry_root.pid == "urn:ab:artifact:file.txt");
+
+    // Test 6: Trailing slashes in logical name ("dir", "file.txt/") trimmed cleanly
+    auto entry_trailing = agentic_blackboard::ArtifactBuilder()
+        .with_path("dir", "file.txt/")
+        .build();
+    assert(entry_trailing.pid == "urn:ab:artifact:dir/file.txt");
+
+    // Test 7: with_logical_path splits into collection path and logical name
+    auto entry_log_path = agentic_blackboard::ArtifactBuilder()
+        .with_logical_path("/nucleus/specs/doc.md")
+        .build();
+    assert(entry_log_path.collection_path == "/nucleus/specs");
+    assert(entry_log_path.logical_name == "doc.md");
+    assert(entry_log_path.pid == "urn:ab:artifact:nucleus/specs/doc.md");
+
+    // Test 8: AVUTriple&& rvalue move overload
+    agentic_blackboard::AVUTriple avu_moved{"science:metric", "42", "joules"};
+    auto entry_avu = agentic_blackboard::ArtifactBuilder()
+        .add_avu(std::move(avu_moved))
+        .build();
+    assert(entry_avu.avus.size() == 1);
+    assert(entry_avu.avus[0].attribute == "science:metric");
+    assert(entry_avu.avus[0].value == "42");
+    assert(entry_avu.avus[0].units == "joules");
+
+    // Test 9: Multi-threaded concurrency test (8 threads x 100 artifacts = 800 unique UUIDs)
+    constexpr int num_threads = 8;
+    constexpr int artifacts_per_thread = 100;
+    std::vector<std::thread> threads;
+    std::vector<std::string> uuids(num_threads * artifacts_per_thread);
+
+    for (int t = 0; t < num_threads; ++t) {
+        threads.emplace_back([t, &uuids]() {
+            for (int i = 0; i < artifacts_per_thread; ++i) {
+                auto entry = agentic_blackboard::ArtifactBuilder()
+                    .with_path("/data", "file" + std::to_string(i))
+                    .build();
+                uuids[t * artifacts_per_thread + i] = std::move(entry.uuid);
+            }
+        });
+    }
+
+    for (auto& th : threads) {
+        th.join();
+    }
+
+    std::unordered_set<std::string> unique_uuids(uuids.begin(), uuids.end());
+    assert(unique_uuids.size() == static_cast<size_t>(num_threads * artifacts_per_thread));
 
     std::cout << "[SUCCESS] ArtifactBuilder verification passed!" << std::endl;
     return 0;

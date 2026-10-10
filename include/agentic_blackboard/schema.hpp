@@ -1151,6 +1151,24 @@ public:
         return *this;
     }
 
+    ArtifactBuilder& with_logical_path(std::string_view full_path) {
+        while (full_path.size() > 1 && full_path.back() == '/') {
+            full_path.remove_suffix(1);
+        }
+        size_t last_slash = full_path.find_last_of('/');
+        if (last_slash == std::string_view::npos) {
+            entry_.collection_path.clear();
+            entry_.logical_name = std::string(full_path);
+        } else if (last_slash == 0) {
+            entry_.collection_path = "/";
+            entry_.logical_name = std::string(full_path.substr(1));
+        } else {
+            entry_.collection_path = std::string(full_path.substr(0, last_slash));
+            entry_.logical_name = std::string(full_path.substr(last_slash + 1));
+        }
+        return *this;
+    }
+
     ArtifactBuilder& with_content_hash(std::string_view hash) {
         entry_.content_hash = std::string(hash);
         return *this;
@@ -1201,6 +1219,11 @@ public:
         return *this;
     }
 
+    ArtifactBuilder& add_avu(AVUTriple&& avu) {
+        entry_.avus.push_back(std::move(avu));
+        return *this;
+    }
+
     ArtifactBuilder& add_avu(std::string_view attr, std::string_view val, std::string_view units = "") {
         entry_.avus.push_back(AVUTriple{std::string(attr), std::string(val), std::string(units)});
         return *this;
@@ -1212,6 +1235,12 @@ public:
     }
 
     ArtifactEntry build() {
+        finalize();
+        return std::move(entry_);
+    }
+
+private:
+    void finalize() {
         if (entry_.created_at_ms == 0) {
             entry_.created_at_ms = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1222,27 +1251,28 @@ public:
 
         if (entry_.uuid.empty()) {
             static std::atomic<uint64_t> counter{1};
-            entry_.uuid = "art-" + std::to_string(entry_.created_at_ms) + "-" + std::to_string(counter.fetch_add(1));
+            auto now = std::chrono::system_clock::now().time_since_epoch();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+            uint32_t salt = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this) ^ (ms & 0xFFFF));
+            entry_.uuid = "art-" + std::to_string(ms) + "-" + std::to_string(salt) + "-" + std::to_string(counter.fetch_add(1));
         }
 
-        if (entry_.pid.empty()) {
-            if (!entry_.collection_path.empty() && !entry_.logical_name.empty()) {
-                std::string coll = entry_.collection_path;
-                while (!coll.empty() && coll.front() == '/') coll.erase(coll.begin());
-                while (!coll.empty() && coll.back() == '/') coll.pop_back();
+        if (entry_.pid.empty() && !entry_.logical_name.empty()) {
+            std::string_view coll = entry_.collection_path;
+            while (!coll.empty() && coll.front() == '/') coll.remove_prefix(1);
+            while (!coll.empty() && coll.back() == '/') coll.remove_suffix(1);
 
-                std::string log_name = entry_.logical_name;
-                while (!log_name.empty() && log_name.front() == '/') log_name.erase(log_name.begin());
+            std::string_view log_name = entry_.logical_name;
+            while (!log_name.empty() && log_name.front() == '/') log_name.remove_prefix(1);
+            while (!log_name.empty() && log_name.back() == '/') log_name.remove_suffix(1);
 
-                std::string full_p = coll.empty() ? log_name : (coll + "/" + log_name);
+            if (!log_name.empty()) {
+                std::string full_p = coll.empty() ? std::string(log_name) : (std::string(coll) + "/" + std::string(log_name));
                 entry_.pid = "urn:ab:artifact:" + full_p;
             }
         }
-
-        return entry_;
     }
 
-private:
     ArtifactEntry entry_;
 };
 
