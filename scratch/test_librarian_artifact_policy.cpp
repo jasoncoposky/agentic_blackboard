@@ -1,7 +1,8 @@
+#undef NDEBUG
+#include <cassert>
 #include "agentic_blackboard/Librarian.hpp"
 #include "agentic_blackboard/Blackboard.hpp"
 #include "agentic_blackboard/StorageManager.hpp"
-#include <cassert>
 #include <iostream>
 #include <filesystem>
 #include <sstream>
@@ -130,11 +131,27 @@ int main() {
     double slashes_score = librarian.calculate_fair_score(slashes_entry);
     assert(slashes_score == 15.0 && "Slashes-only path artifact must score 15");
 
+    auto dotdot_entry = librarian.process_ingest_artifact(
+        "../../escaped.md",
+        "Content with traversal path",
+        "blake3:escape"
+    );
+    assert(dotdot_entry.pid.empty() && "Traversal path must yield empty PID");
+    assert(dotdot_entry.collection_path.empty() && "Traversal path must yield empty collection_path");
+    assert(dotdot_entry.logical_name.empty() && "Traversal path must yield empty logical_name");
+
+    auto dotdot_only = librarian.process_ingest_artifact(
+        "..",
+        "Content with parent dir path",
+        "blake3:dotdot"
+    );
+    assert(dotdot_only.pid.empty() && "Parent dir path must yield empty PID");
+
     // 9. Boundary Case: Frontmatter with inline comments (outside and inside quotes)
     std::string markdown_comments =
         "---\n"
         "title: \"CPG Swarm Coordination #1\" # primary title with inline comment\n"
-        "license: SPDX:Apache-2.0 # permissive license\n"
+        "license: SPDX:Apache-2.0#custom-suffix # permissive license\n"
         "version: '2.1.0' # semantic version\n"
         "abstract: Swarm coordination skill # brief abstract\n"
         "---\n"
@@ -145,7 +162,7 @@ int main() {
         "blake3:commenthash"
     );
     assert(commented_entry.title == "CPG Swarm Coordination #1");
-    assert(commented_entry.license == "SPDX:Apache-2.0");
+    assert(commented_entry.license == "SPDX:Apache-2.0#custom-suffix");
     assert(commented_entry.version == "2.1.0");
     assert(commented_entry.abstract == "Swarm coordination skill");
 

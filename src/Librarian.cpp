@@ -79,7 +79,7 @@ ArtifactEntry Librarian::process_ingest_artifact(
     std::string norm_path = p.string();
     size_t start_idx = norm_path.find_first_not_of('/');
     std::string path_no_leading = (start_idx != std::string::npos) ? norm_path.substr(start_idx) : "";
-    if (path_no_leading == ".") {
+    if (path_no_leading == "." || path_no_leading == ".." || path_no_leading.rfind("../", 0) == 0) {
         path_no_leading = "";
     }
 
@@ -123,7 +123,7 @@ ArtifactEntry Librarian::process_ingest_artifact(
                 in_single = !in_single;
             } else if (c == '"' && !in_single) {
                 in_double = !in_double;
-            } else if (c == '#' && !in_single && !in_double) {
+            } else if (c == '#' && !in_single && !in_double && (i == 0 || s[i - 1] == ' ' || s[i - 1] == '\t')) {
                 return trim_sv(s.substr(0, i));
             }
         }
@@ -286,7 +286,7 @@ Librarian::~Librarian() {
 }
 
 void Librarian::start(Blackboard* blackboard) {
-    if (running_) stop();
+    if (running_ || thread_.joinable()) stop();
     blackboard_ = blackboard;
     running_ = true;
     thread_ = std::thread(&Librarian::analysis_loop, this);

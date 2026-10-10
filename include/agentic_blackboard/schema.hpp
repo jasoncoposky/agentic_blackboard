@@ -1019,7 +1019,7 @@ struct ArtifactEntry {
     std::string title;
     std::string abstract;
     std::string license;
-    std::string version{"1.0.0"};
+    std::string version;
     std::string collection_path;
     std::string logical_name;
     std::string primary_locator;
