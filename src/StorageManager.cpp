@@ -1,4 +1,6 @@
 #include "agentic_blackboard/StorageManager.hpp"
+#include "agentic_blackboard/PosixCasDriver.hpp"
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -38,7 +40,8 @@ void StorageManager::register_driver(const std::string& driver_id, std::shared_p
 
 bool StorageManager::has_driver(const std::string& driver_id) const {
     std::shared_lock lock(mutex_);
-    return drivers_.find(driver_id) != drivers_.end();
+    const std::string& target_id = driver_id.empty() ? default_driver_id_ : driver_id;
+    return drivers_.find(target_id) != drivers_.end();
 }
 
 std::shared_ptr<IStorageDriver> StorageManager::get_driver(const std::string& driver_id) const {
@@ -84,23 +87,27 @@ std::unique_ptr<std::istream> StorageManager::retrieve(
         return driver->get_stream(locator, range);
     }
 
-    // Fallback routing: query default driver first
-    auto default_drv = get_driver("");
-    if (default_drv) {
-        auto stream = default_drv->get_stream(locator, range);
-        if (stream) {
-            return stream;
+    // Fallback routing: snapshot default and fallback drivers under shared_lock
+    std::vector<std::shared_ptr<IStorageDriver>> fallback_drivers;
+    {
+        std::shared_lock lock(mutex_);
+        auto def_it = drivers_.find(default_driver_id_);
+        std::shared_ptr<IStorageDriver> default_drv = (def_it != drivers_.end()) ? def_it->second : nullptr;
+        if (default_drv) {
+            fallback_drivers.push_back(default_drv);
+        }
+        for (const auto& [id, driver] : drivers_) {
+            if (driver && std::find(fallback_drivers.begin(), fallback_drivers.end(), driver) == fallback_drivers.end()) {
+                fallback_drivers.push_back(driver);
+            }
         }
     }
 
-    // Fallback across remaining drivers
-    std::shared_lock lock(mutex_);
-    for (const auto& [id, driver] : drivers_) {
-        if (driver && driver != default_drv) {
-            auto stream = driver->get_stream(locator, range);
-            if (stream) {
-                return stream;
-            }
+    // Perform synchronous I/O outside lock scope
+    for (const auto& driver : fallback_drivers) {
+        auto stream = driver->get_stream(locator, range);
+        if (stream) {
+            return stream;
         }
     }
 
@@ -127,18 +134,26 @@ bool StorageManager::verify(
         return driver->verify_digest(locator, expected_hash);
     }
 
-    // Fallback routing: check default driver first
-    auto default_drv = get_driver("");
-    if (default_drv && default_drv->verify_digest(locator, expected_hash)) {
-        return true;
+    // Fallback routing: snapshot default and fallback drivers under shared_lock
+    std::vector<std::shared_ptr<IStorageDriver>> fallback_drivers;
+    {
+        std::shared_lock lock(mutex_);
+        auto def_it = drivers_.find(default_driver_id_);
+        std::shared_ptr<IStorageDriver> default_drv = (def_it != drivers_.end()) ? def_it->second : nullptr;
+        if (default_drv) {
+            fallback_drivers.push_back(default_drv);
+        }
+        for (const auto& [id, driver] : drivers_) {
+            if (driver && std::find(fallback_drivers.begin(), fallback_drivers.end(), driver) == fallback_drivers.end()) {
+                fallback_drivers.push_back(driver);
+            }
+        }
     }
 
-    std::shared_lock lock(mutex_);
-    for (const auto& [id, driver] : drivers_) {
-        if (driver && driver != default_drv) {
-            if (driver->verify_digest(locator, expected_hash)) {
-                return true;
-            }
+    // Perform synchronous I/O outside lock scope
+    for (const auto& driver : fallback_drivers) {
+        if (driver->verify_digest(locator, expected_hash)) {
+            return true;
         }
     }
 
@@ -164,22 +179,31 @@ bool StorageManager::unlink(
         return driver->unlink(locator);
     }
 
-    // Fallback routing: check default driver first
-    auto default_drv = get_driver("");
-    if (default_drv && default_drv->unlink(locator)) {
-        return true;
-    }
-
-    std::shared_lock lock(mutex_);
-    for (const auto& [id, driver] : drivers_) {
-        if (driver && driver != default_drv) {
-            if (driver->unlink(locator)) {
-                return true;
+    // Fallback routing: snapshot default and fallback drivers under shared_lock
+    std::vector<std::shared_ptr<IStorageDriver>> fallback_drivers;
+    {
+        std::shared_lock lock(mutex_);
+        auto def_it = drivers_.find(default_driver_id_);
+        std::shared_ptr<IStorageDriver> default_drv = (def_it != drivers_.end()) ? def_it->second : nullptr;
+        if (default_drv) {
+            fallback_drivers.push_back(default_drv);
+        }
+        for (const auto& [id, driver] : drivers_) {
+            if (driver && std::find(fallback_drivers.begin(), fallback_drivers.end(), driver) == fallback_drivers.end()) {
+                fallback_drivers.push_back(driver);
             }
         }
     }
 
-    return false;
+    // Perform synchronous I/O outside lock scope across all drivers
+    bool any_unlinked = false;
+    for (const auto& driver : fallback_drivers) {
+        if (driver->unlink(locator)) {
+            any_unlinked = true;
+        }
+    }
+
+    return any_unlinked;
 }
 
 bool StorageManager::unlink(

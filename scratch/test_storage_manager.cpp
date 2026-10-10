@@ -1,4 +1,5 @@
 #include "agentic_blackboard/StorageManager.hpp"
+#include "agentic_blackboard/PosixCasDriver.hpp"
 #include <cassert>
 #include <filesystem>
 #include <iostream>
@@ -17,6 +18,7 @@ void test_basic_and_fallback_routing() {
     blackboard::storage::StorageManager mgr(test_dir);
 
     // 1. Verify default POSIX driver is registered
+    assert(mgr.has_driver(""));
     assert(mgr.has_driver("default_posix_cas"));
     assert(!mgr.has_driver("non_existent_driver"));
     assert(mgr.get_driver("") != nullptr);
@@ -125,6 +127,40 @@ void test_multi_driver_and_cross_fallback() {
     assert(mgr.unlink("", res.locator));
     assert(mgr.retrieve("", res.locator) == nullptr);
 
+    // Multi-driver fallback unlink test: store duplicate content into both drivers
+    std::string dup_content = "Duplicate content across drivers";
+    std::istringstream dup_in1(dup_content);
+    auto dup_res1 = mgr.store("default_posix_cas", dup_in1).get();
+    std::istringstream dup_in2(dup_content);
+    auto dup_res2 = mgr.store("posix_secondary", dup_in2).get();
+    assert(dup_res1.locator == dup_res2.locator);
+
+    // Verify present in both drivers
+    assert(mgr.retrieve("default_posix_cas", dup_res1.locator) != nullptr);
+    assert(mgr.retrieve("posix_secondary", dup_res2.locator) != nullptr);
+
+    // Fallback unlink without driver_id removes across ALL drivers (preventing ghost copies)
+    assert(mgr.unlink("", dup_res1.locator));
+    assert(mgr.retrieve("default_posix_cas", dup_res1.locator) == nullptr);
+    assert(mgr.retrieve("posix_secondary", dup_res2.locator) == nullptr);
+
+    // Test set_default_driver valid switch and invalid driver rejection
+    mgr.set_default_driver("posix_secondary");
+    assert(mgr.default_driver_id() == "posix_secondary");
+    assert(mgr.get_driver("") == driver2);
+
+    bool caught_invalid_default = false;
+    try {
+        mgr.set_default_driver("non_existent_driver");
+    } catch (const std::invalid_argument&) {
+        caught_invalid_default = true;
+    }
+    assert(caught_invalid_default);
+
+    // Switch back to original default
+    mgr.set_default_driver("default_posix_cas");
+    assert(mgr.default_driver_id() == "default_posix_cas");
+
     // Error handling: register with empty name or null driver
     bool caught_invalid = false;
     try {
@@ -204,6 +240,43 @@ void test_concurrent_access() {
     std::cout << "[PASS] Concurrent access tests passed." << std::endl;
 }
 
+void test_move_semantics() {
+    std::string test_dir1 = "/tmp/test_storage_mgr_move1_" + std::to_string(time(nullptr));
+    std::filesystem::create_directories(test_dir1);
+
+    blackboard::storage::StorageManager mgr1(test_dir1);
+    std::string content = "Payload for move semantics verification";
+    std::istringstream stream_in(content);
+    auto res = mgr1.store(stream_in).get();
+
+    // 1. Test move constructor
+    blackboard::storage::StorageManager mgr2(std::move(mgr1));
+    assert(mgr2.has_driver(""));
+    assert(mgr2.has_driver("default_posix_cas"));
+    assert(mgr2.default_driver_id() == "default_posix_cas");
+    auto stream2 = mgr2.retrieve(res.locator);
+    assert(stream2 != nullptr);
+    std::string body2((std::istreambuf_iterator<char>(*stream2)), std::istreambuf_iterator<char>());
+    assert(body2 == content);
+
+    // 2. Test move assignment
+    std::string test_dir2 = "/tmp/test_storage_mgr_move2_" + std::to_string(time(nullptr));
+    std::filesystem::create_directories(test_dir2);
+    blackboard::storage::StorageManager mgr3(test_dir2);
+    mgr3 = std::move(mgr2);
+    assert(mgr3.has_driver(""));
+    assert(mgr3.has_driver("default_posix_cas"));
+    assert(mgr3.default_driver_id() == "default_posix_cas");
+    auto stream3 = mgr3.retrieve(res.locator);
+    assert(stream3 != nullptr);
+    std::string body3((std::istreambuf_iterator<char>(*stream3)), std::istreambuf_iterator<char>());
+    assert(body3 == content);
+
+    std::filesystem::remove_all(test_dir1);
+    std::filesystem::remove_all(test_dir2);
+    std::cout << "[PASS] Move semantics tests passed." << std::endl;
+}
+
 int main() {
     // Standard test required by plan
     std::string test_dir = "/tmp/test_storage_mgr_" + std::to_string(time(nullptr));
@@ -234,6 +307,7 @@ int main() {
     test_basic_and_fallback_routing();
     test_multi_driver_and_cross_fallback();
     test_concurrent_access();
+    test_move_semantics();
 
     std::cout << "[SUCCESS] StorageManager routing tests passed!" << std::endl;
     return 0;
