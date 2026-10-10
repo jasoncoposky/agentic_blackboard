@@ -469,5 +469,14 @@ def test_build_mcp_server_data_tools(daemon):
     asyncio.run(_verify_all())
 
 
+def test_cli_data_ls_root(daemon):
+    connect_url = daemon
+    proc = run_ab_ctl(["--connect", connect_url, "data", "ls", "/"])
+    assert proc.returncode == 0
+    # Should list artifacts without error or 'No artifacts found' when artifacts exist
+    assert "UUID" in proc.stdout
+    assert "PID" in proc.stdout
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", __file__]))

@@ -1936,10 +1936,12 @@ def handle_data_ls(args, cfg: dict) -> int:
 
     artifacts = res
     if collection:
-        norm_coll = "/" + collection.strip("/")
+        stripped = collection.strip("/")
+        norm_coll = "/" + stripped if stripped else "/"
         artifacts = [
             a for a in artifacts
-            if a.get("collection_path", "").rstrip("/") == norm_coll
+            if norm_coll == "/"
+            or a.get("collection_path", "").rstrip("/") == norm_coll
             or a.get("collection_path", "").startswith(norm_coll + "/")
         ]
 
