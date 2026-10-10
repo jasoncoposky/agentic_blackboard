@@ -19,31 +19,6 @@ static size_t count_files_in_dir(const std::filesystem::path& dir) {
     return count;
 }
 
-// A custom streambuf that fails after reading a certain number of bytes
-class FaultyStreamBuf : public std::streambuf {
-public:
-    FaultyStreamBuf(std::string data, size_t fail_after)
-        : data_(std::move(data)), fail_after_(fail_after), read_count_(0) {}
-
-protected:
-    int_type underflow() override {
-        if (read_count_ >= fail_after_) {
-            return traits_type::eof();
-        }
-        if (pos_ >= data_.size()) {
-            return traits_type::eof();
-        }
-        char c = data_[pos_++];
-        read_count_++;
-        return traits_type::to_int_type(static_cast<unsigned char>(c));
-    }
-
-private:
-    std::string data_;
-    size_t fail_after_;
-    size_t read_count_;
-    size_t pos_{0};
-};
 
 int main() {
     std::string test_vault = "/tmp/test_ab_cas_vault_" + std::to_string(time(nullptr));
@@ -305,6 +280,9 @@ int main() {
 
         // Second unlink returns false
         assert(driver.unlink(res_unlink.locator) == false);
+
+        // Directory unlink returns false (non-regular file)
+        assert(driver.unlink(test_vault + "/.tmp") == false);
 
         std::cout << "[PASS] driver.unlink(...) verified" << std::endl;
     }

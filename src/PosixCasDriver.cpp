@@ -59,7 +59,7 @@ public:
         }
     }
 
-    bool is_open() const { return file_.is_open(); }
+    bool is_open() const { return file_.is_open() && static_cast<bool>(file_); }
 
 protected:
     int_type underflow() override {
@@ -270,16 +270,7 @@ PutResult PosixCasDriver::put_stream_sync(std::istream& in, std::string_view exp
     std::filesystem::create_directories(tmp_dir);
     std::filesystem::path tmp_path = tmp_dir / tmp_name;
 
-    struct TempFileGuard {
-        std::filesystem::path path;
-        bool committed{false};
-        ~TempFileGuard() {
-            if (!committed && !path.empty()) {
-                std::error_code ec;
-                std::filesystem::remove(path, ec);
-            }
-        }
-    } guard{tmp_path};
+    TempFileGuard guard{tmp_path};
 
     std::ofstream out(tmp_path, std::ios::binary);
     if (!out.is_open()) {
@@ -495,6 +486,9 @@ bool PosixCasDriver::unlink(std::string_view locator) {
         return false;
     }
     std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) {
+        return false;
+    }
     return std::filesystem::remove(path, ec);
 }
 
