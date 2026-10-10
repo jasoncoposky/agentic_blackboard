@@ -96,6 +96,9 @@ target_link_libraries(test_posix_cas_driver PRIVATE ab_engine Threads::Threads O
 add_executable(test_storage_manager scratch/test_storage_manager.cpp)
 target_link_libraries(test_storage_manager PRIVATE ab_engine Threads::Threads OpenSSL::Crypto)
 
+add_executable(test_librarian_artifact_policy scratch/test_librarian_artifact_policy.cpp)
+target_link_libraries(test_librarian_artifact_policy PRIVATE ab_engine Threads::Threads OpenSSL::Crypto)
+
 if(MSVC)
     target_compile_options(ab_verify PRIVATE /bigobj)
     target_compile_options(test_orphan_rejection PRIVATE /bigobj)
@@ -105,6 +108,7 @@ if(MSVC)
     target_compile_options(inspect_keys PRIVATE /bigobj)
     target_compile_options(test_posix_cas_driver PRIVATE /bigobj)
     target_compile_options(test_storage_manager PRIVATE /bigobj)
+    target_compile_options(test_librarian_artifact_policy PRIVATE /bigobj)
 endif()
 
 if(MSVC)
