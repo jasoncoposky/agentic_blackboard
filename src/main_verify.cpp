@@ -1566,7 +1566,20 @@ void verify_artifact_graph_model(blackboard::Blackboard& bb) {
     auto negative_matches = bb.query_by_avu("fair_tier", "platinum");
     assert(negative_matches.empty() && "Negative AVU query must return empty");
 
-    std::cout << "[PASS] Artifact graph model and AVU deduplicated indexes verified!" << std::endl;
+    // Verify resolve_artifact by UUID, PID, and logical paths
+    assert(bb.resolve_artifact("art-test-001").has_value());
+    assert(bb.resolve_artifact("art-test-001")->uuid == "art-test-001");
+    assert(bb.resolve_artifact("urn:ab:artifact:nucleus/specs/design.md").has_value());
+    assert(bb.resolve_artifact("urn:ab:artifact:nucleus/specs/design.md")->uuid == "art-test-001");
+    assert(bb.resolve_artifact("/nucleus/specs/design.md").has_value());
+    assert(bb.resolve_artifact("/nucleus/specs/design.md")->uuid == "art-test-001");
+    assert(bb.resolve_artifact("nucleus/specs/design.md").has_value());
+    assert(bb.resolve_artifact("nucleus/specs/design.md")->uuid == "art-test-001");
+    assert(bb.resolve_artifact("design.md").has_value());
+    assert(bb.resolve_artifact("design.md")->uuid == "art-test-001");
+    assert(!bb.resolve_artifact("non-existent-path").has_value());
+
+    std::cout << "[PASS] Artifact graph model, resolve_artifact, and AVU indexes verified!" << std::endl;
 }
 
 int main() {

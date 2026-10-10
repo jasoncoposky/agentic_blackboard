@@ -1,6 +1,8 @@
 #pragma once
 
 #include <agentic_blackboard/Blackboard.hpp>
+#include <agentic_blackboard/StorageManager.hpp>
+#include <agentic_blackboard/Librarian.hpp>
 #include <string>
 #include <memory>
 #include <atomic>
@@ -146,17 +148,26 @@ public:
     /**
      * @brief Start the API server on the specified port and host.
      */
-    void start(Blackboard* blackboard, int port = 8081, const std::string& host = "0.0.0.0");
+    void start(Blackboard* blackboard, int port = 8081, const std::string& host = "0.0.0.0",
+               storage::StorageManager* storage_manager = nullptr, Librarian* librarian = nullptr);
 
     /**
      * @brief Stop the API server.
      */
     void stop();
 
+    void set_storage_manager(storage::StorageManager* sm) { storage_manager_ = sm; }
+    void set_librarian(Librarian* lib) { librarian_ = lib; }
+
+    storage::StorageManager* storage_manager() const { return storage_manager_; }
+    Librarian* librarian() const { return librarian_; }
+
     ContextBroker& context_broker() { return context_broker_; }
     void broadcast_context_event(const std::string& context_id, const std::string& event_name, const std::string& json_data) {
         context_broker_.broadcast(context_id, event_name, json_data);
     }
+
+    std::optional<ArtifactEntry> resolve_artifact(const std::string& id_or_path);
 
 private:
     ApiServer() : running_(false), blackboard_(nullptr), port_(8081), host_("0.0.0.0") {}
@@ -171,6 +182,9 @@ private:
     std::atomic<bool> running_;
     std::thread thread_;
     Blackboard* blackboard_;
+    storage::StorageManager* storage_manager_{nullptr};
+    std::unique_ptr<storage::StorageManager> default_storage_manager_;
+    Librarian* librarian_{nullptr};
     int port_;
     std::string host_;
     ContextBroker context_broker_;

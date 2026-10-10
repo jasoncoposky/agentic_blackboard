@@ -101,7 +101,7 @@ std::string resolve_node_uuid(l3kvg::Engine* engine, uint64_t nid, uint32_t prin
 
 namespace agentic_blackboard {
 
-Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) {
+Blackboard::Blackboard(const std::string& db_path, uint32_t node_id) : db_path_(db_path) {
     engine_ = std::make_unique<l3kvg::Engine>(db_path, node_id);
     try {
         auto* store = engine_->get_store();
@@ -904,6 +904,31 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
     if (!adjusted.pid.empty()) {
         uint64_t pid_id = engine_->get_resolver().parse_uuid(adjusted.pid);
         batch.add_edge(src_id, rel::SPECIFIES, 1.0, pid_id);
+        batch.add_index("idx:Artifact:pid:" + adjusted.pid, adjusted.uuid);
+    }
+
+    // Maintain path indexes
+    if (!adjusted.logical_name.empty()) {
+        std::string full_path;
+        if (!adjusted.collection_path.empty()) {
+            if (adjusted.collection_path == "/") {
+                full_path = "/" + adjusted.logical_name;
+            } else {
+                full_path = adjusted.collection_path + "/" + adjusted.logical_name;
+            }
+        } else {
+            full_path = adjusted.logical_name;
+        }
+        std::string path_no_slash = (full_path.front() == '/') ? full_path.substr(1) : full_path;
+        std::string path_with_slash = (full_path.front() == '/') ? full_path : ("/" + full_path);
+
+        batch.add_index("idx:Artifact:path:" + path_with_slash, adjusted.uuid);
+        batch.add_index("idx:Artifact:path:" + path_no_slash, adjusted.uuid);
+        if (adjusted.logical_name != path_no_slash) {
+            batch.add_index("idx:Artifact:path:" + adjusted.logical_name, adjusted.uuid);
+        }
+    } else if (!adjusted.collection_path.empty()) {
+        batch.add_index("idx:Artifact:path:" + adjusted.collection_path, adjusted.uuid);
     }
 
     // Link derivation history
@@ -911,6 +936,23 @@ bool Blackboard::commit_artifact(const ArtifactEntry& entry, std::string_view us
         if (!parent_uuid.empty()) {
             uint64_t parent_id = engine_->get_resolver().parse_uuid(parent_uuid);
             batch.add_edge(src_id, rel::DERIVED_FROM, 1.0, parent_id);
+        }
+    }
+
+    // Clean up stale AVU indexes if re-committing/updating
+    auto existing_opt = get_artifact(adjusted.uuid);
+    if (existing_opt) {
+        for (const auto& old_a : existing_opt->avus) {
+            bool still_present = false;
+            for (const auto& new_a : adjusted.avus) {
+                if (old_a.attribute == new_a.attribute && old_a.value == new_a.value) {
+                    still_present = true;
+                    break;
+                }
+            }
+            if (!still_present) {
+                batch.del_raw("idx:Metadata:av:" + old_a.attribute + ":" + old_a.value + ":" + adjusted.uuid);
+            }
         }
     }
 
@@ -1033,6 +1075,65 @@ std::vector<std::string> Blackboard::query_by_avu(std::string_view attribute, st
         }
     }
     return results;
+}
+
+std::optional<ArtifactEntry> Blackboard::resolve_artifact(std::string_view id_or_path) {
+    if (id_or_path.empty() || !engine_) return std::nullopt;
+
+    // 1. First try direct get_artifact (by UUID)
+    auto art = get_artifact(id_or_path);
+    if (art) return art;
+
+    auto* store = engine_->get_store();
+    if (!store) return std::nullopt;
+
+    std::string target(id_or_path);
+
+    // 2. Check PID index
+    {
+        auto buf = store->get("idx:Artifact:pid:" + target, l3kv::INTERNAL_UID);
+        if (buf.size() > 0) {
+            std::string u(reinterpret_cast<const char*>(buf.data()), buf.size());
+            auto a = get_artifact(u);
+            if (a) return a;
+        }
+        if (!target.starts_with("urn:ab:artifact:")) {
+            buf = store->get("idx:Artifact:pid:urn:ab:artifact:" + target, l3kv::INTERNAL_UID);
+            if (buf.size() > 0) {
+                std::string u(reinterpret_cast<const char*>(buf.data()), buf.size());
+                auto a = get_artifact(u);
+                if (a) return a;
+            }
+        }
+    }
+
+    // 3. Check path index
+    {
+        auto buf = store->get("idx:Artifact:path:" + target, l3kv::INTERNAL_UID);
+        if (buf.size() > 0) {
+            std::string u(reinterpret_cast<const char*>(buf.data()), buf.size());
+            auto a = get_artifact(u);
+            if (a) return a;
+        }
+        if (!target.empty() && target.front() != '/') {
+            buf = store->get("idx:Artifact:path:/" + target, l3kv::INTERNAL_UID);
+            if (buf.size() > 0) {
+                std::string u(reinterpret_cast<const char*>(buf.data()), buf.size());
+                auto a = get_artifact(u);
+                if (a) return a;
+            }
+        }
+        if (target.size() > 1 && target.front() == '/') {
+            buf = store->get("idx:Artifact:path:" + target.substr(1), l3kv::INTERNAL_UID);
+            if (buf.size() > 0) {
+                std::string u(reinterpret_cast<const char*>(buf.data()), buf.size());
+                auto a = get_artifact(u);
+                if (a) return a;
+            }
+        }
+    }
+
+    return std::nullopt;
 }
 
 } // namespace agentic_blackboard

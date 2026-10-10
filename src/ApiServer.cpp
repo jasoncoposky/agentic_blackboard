@@ -21,6 +21,34 @@ using json = nlohmann::json;
 
 namespace {
 
+json artifact_to_json(const agentic_blackboard::ArtifactEntry& entry) {
+    json avus_arr = json::array();
+    for (const auto& a : entry.avus) {
+        avus_arr.push_back(json{
+            {"attribute", a.attribute},
+            {"value", a.value},
+            {"units", a.units}
+        });
+    }
+    return json{
+        {"uuid", entry.uuid},
+        {"pid", entry.pid},
+        {"content_hash", entry.content_hash},
+        {"mime_type", entry.mime_type},
+        {"byte_size", entry.byte_size},
+        {"title", entry.title},
+        {"abstract", entry.abstract},
+        {"license", entry.license},
+        {"version", entry.version},
+        {"collection_path", entry.collection_path},
+        {"logical_name", entry.logical_name},
+        {"primary_locator", entry.primary_locator},
+        {"avus", avus_arr},
+        {"derived_from_uuids", entry.derived_from_uuids},
+        {"created_at_ms", entry.created_at_ms}
+    };
+}
+
 std::string hash_token_sha256(const std::string& token) {
     const std::string salt = "ab_salt_token_v1:";
     std::string salted = salt + token;
@@ -700,11 +728,39 @@ ApiServer::~ApiServer() {
     stop();
 }
 
-void ApiServer::start(Blackboard* blackboard, int port, const std::string& host) {
+void ApiServer::start(Blackboard* blackboard, int port, const std::string& host,
+                      storage::StorageManager* storage_manager, Librarian* librarian) {
     blackboard_ = blackboard;
     context_broker_.set_blackboard(blackboard);
     port_ = port;
     host_ = host.empty() ? "0.0.0.0" : host;
+
+    if (storage_manager) {
+        default_storage_manager_.reset();
+        storage_manager_ = storage_manager;
+    } else if (!storage_manager_) {
+        std::string vault_dir;
+        if (blackboard) {
+            std::filesystem::path db_p(blackboard->get_db_path());
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(db_p, ec)) {
+                vault_dir = blackboard->get_db_path() + "_vault";
+            } else {
+                vault_dir = blackboard->get_db_path() + "/vault";
+            }
+        } else {
+            vault_dir = "/tmp/ab_vault";
+        }
+        default_storage_manager_ = std::make_unique<storage::StorageManager>(vault_dir);
+        storage_manager_ = default_storage_manager_.get();
+    }
+
+    if (librarian) {
+        librarian_ = librarian;
+    } else if (!librarian_) {
+        librarian_ = &Librarian::instance();
+    }
+
     running_ = true;
     thread_ = std::thread(&ApiServer::listen_loop, this);
 }
@@ -720,6 +776,13 @@ void ApiServer::stop() {
     if (thread_.joinable())
         thread_.join();
     s_server.store(nullptr);
+    default_storage_manager_.reset();
+    storage_manager_ = nullptr;
+}
+
+std::optional<ArtifactEntry> ApiServer::resolve_artifact(const std::string& id_or_path) {
+    if (!blackboard_) return std::nullopt;
+    return blackboard_->resolve_artifact(id_or_path);
 }
 
 bool ApiServer::authenticate_request(const httplib::Request& req, httplib::Response& res,
@@ -2264,6 +2327,489 @@ void ApiServer::listen_loop() {
         } catch (const std::exception& e) {
             res.status = 500;
             res.set_content(e.what(), "text/plain");
+        }
+    });
+
+    // =========================================================================
+    // FAIR CAS Artifact & Metadata REST Endpoints
+    // =========================================================================
+
+    // 1. POST /api/v1/artifacts/upload
+    svr.Post("/api/v1/artifacts/upload", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            nlohmann::json token_meta;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role, &token_meta)) {
+                return;
+            }
+
+            std::string agent_id;
+            if (req.has_header("X-Agent-ID")) {
+                agent_id = req.get_header_value("X-Agent-ID");
+            } else if (token_meta.contains("agent") && token_meta["agent"].is_string()) {
+                agent_id = token_meta["agent"].get<std::string>();
+            } else if (token_meta.contains("agent_id") && token_meta["agent_id"].is_string()) {
+                agent_id = token_meta["agent_id"].get<std::string>();
+            }
+            if (active_user.empty() && req.has_header("X-Active-User")) {
+                active_user = req.get_header_value("X-Active-User");
+            }
+
+            std::string file_content;
+            std::string file_name;
+            std::string content_type;
+            std::string target_path;
+            std::string license;
+            std::string avus_json_str;
+            std::string driver_id;
+
+            if (req.form.has_file("file")) {
+                auto file_data = req.form.get_file("file");
+                file_content = file_data.content;
+                file_name = file_data.filename;
+                content_type = file_data.content_type;
+            } else if (!req.body.empty() || req.has_header("X-Logical-Path") || req.has_header("X-File-Name")) {
+                file_content = req.body;
+                if (req.has_header("X-File-Name")) file_name = req.get_header_value("X-File-Name");
+                if (req.has_header("Content-Type")) content_type = req.get_header_value("Content-Type");
+            } else {
+                res.status = 400;
+                res.set_content(json({{"error", "Bad Request"}, {"message", "Missing file or body content"}}).dump(), "application/json");
+                return;
+            }
+
+            if (req.form.has_field("path")) {
+                target_path = req.form.get_field("path");
+            } else if (req.has_header("X-Logical-Path")) {
+                target_path = req.get_header_value("X-Logical-Path");
+            } else if (!file_name.empty()) {
+                target_path = file_name;
+            } else {
+                target_path = "artifact.bin";
+            }
+
+            if (req.form.has_field("license")) {
+                license = req.form.get_field("license");
+            } else if (req.has_header("X-License")) {
+                license = req.get_header_value("X-License");
+            }
+
+            if (req.form.has_field("avus")) {
+                avus_json_str = req.form.get_field("avus");
+            } else if (req.has_header("X-AVUs")) {
+                avus_json_str = req.get_header_value("X-AVUs");
+            }
+
+            if (req.form.has_field("driver")) {
+                driver_id = req.form.get_field("driver");
+            } else if (req.has_header("X-Driver")) {
+                driver_id = req.get_header_value("X-Driver");
+            }
+
+            std::vector<AVUTriple> initial_avus;
+            if (!avus_json_str.empty()) {
+                try {
+                    auto aj = json::parse(avus_json_str);
+                    if (aj.is_array()) {
+                        for (const auto& item : aj) {
+                            AVUTriple avu;
+                            if (item.contains("attribute")) avu.attribute = item["attribute"].get<std::string>();
+                            if (item.contains("value")) avu.value = item["value"].get<std::string>();
+                            if (item.contains("units")) avu.units = item["units"].get<std::string>();
+                            initial_avus.push_back(std::move(avu));
+                        }
+                    } else if (aj.is_object()) {
+                        if (aj.contains("attribute")) {
+                            AVUTriple avu;
+                            avu.attribute = aj["attribute"].get<std::string>();
+                            if (aj.contains("value")) avu.value = aj["value"].get<std::string>();
+                            if (aj.contains("units")) avu.units = aj["units"].get<std::string>();
+                            initial_avus.push_back(std::move(avu));
+                        } else {
+                            for (auto it = aj.begin(); it != aj.end(); ++it) {
+                                AVUTriple avu;
+                                avu.attribute = it.key();
+                                if (it.value().is_string()) avu.value = it.value().get<std::string>();
+                                else avu.value = it.value().dump();
+                                initial_avus.push_back(std::move(avu));
+                            }
+                        }
+                    }
+                } catch (...) {}
+            }
+
+            if (!storage_manager_) {
+                res.status = 503;
+                res.set_content(json({{"error", "StorageManager not available"}}).dump(), "application/json");
+                return;
+            }
+
+            std::istringstream stream_in(file_content);
+            storage::PutResult put_res;
+            try {
+                auto fut = storage_manager_->store(driver_id, stream_in);
+                put_res = fut.get();
+            } catch (const std::exception& e) {
+                res.status = 500;
+                res.set_content(json({{"error", "Failed to store content"}, {"message", e.what()}}).dump(), "application/json");
+                return;
+            }
+
+            if (!librarian_) librarian_ = &Librarian::instance();
+            ArtifactEntry entry = librarian_->process_ingest_artifact(target_path, file_content, put_res.digest, active_user, agent_id, initial_avus);
+            entry.primary_locator = put_res.locator;
+            if (!license.empty() && entry.license.empty()) {
+                entry.license = license;
+            }
+            if (!content_type.empty() && content_type != "application/x-www-form-urlencoded" && content_type.find("multipart/form-data") == std::string::npos) {
+                if (entry.mime_type.empty() || entry.mime_type == "application/octet-stream") {
+                    entry.mime_type = content_type;
+                }
+            }
+
+            if (!blackboard_->commit_artifact(entry, active_user, agent_id)) {
+                res.status = 500;
+                res.set_content(json({{"error", "Failed to commit artifact metadata"}}).dump(), "application/json");
+                return;
+            }
+
+            res.status = 200;
+            res.set_content(artifact_to_json(entry).dump(2), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    // 2. GET /api/v1/artifacts/query
+    svr.Get("/api/v1/artifacts/query", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            std::string attr = req.get_param_value("attribute");
+            std::string val = req.has_param("value") ? req.get_param_value("value") : "";
+
+            auto uuids = blackboard_->query_by_avu(attr, val);
+            json arr = json::array();
+            for (const auto& u : uuids) {
+                auto art = blackboard_->get_artifact(u);
+                if (art) {
+                    arr.push_back(artifact_to_json(*art));
+                }
+            }
+
+            res.status = 200;
+            res.set_content(arr.dump(2), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    // 3. GET /api/v1/artifacts/(.+)/content
+    svr.Get(R"(/api/v1/artifacts/(.+)/content)", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            std::string id_or_path = httplib::decode_uri(req.matches[1]);
+            auto art_opt = resolve_artifact(id_or_path);
+            if (!art_opt) {
+                res.status = 404;
+                res.set_content(json({{"error", "Artifact not found"}}).dump(), "application/json");
+                return;
+            }
+            const auto& entry = *art_opt;
+
+            if (!storage_manager_) {
+                res.status = 503;
+                res.set_content(json({{"error", "StorageManager not available"}}).dump(), "application/json");
+                return;
+            }
+
+            bool has_range = req.has_header("Range") || !req.ranges.empty();
+            if (has_range) {
+                ssize_t first_byte = -1;
+                ssize_t last_byte = -1;
+
+                if (!req.ranges.empty()) {
+                    first_byte = req.ranges[0].first;
+                    last_byte = req.ranges[0].second;
+                } else {
+                    std::string rv = req.get_header_value("Range");
+                    size_t eq = rv.find('=');
+                    if (eq != std::string::npos) {
+                        std::string spec = rv.substr(eq + 1);
+                        size_t dash = spec.find('-');
+                        if (dash != std::string::npos) {
+                            std::string s1 = spec.substr(0, dash);
+                            std::string s2 = spec.substr(dash + 1);
+                            if (!s1.empty()) first_byte = std::stoll(s1);
+                            if (!s2.empty()) last_byte = std::stoll(s2);
+                        }
+                    }
+                }
+
+                uint64_t total_size = entry.byte_size;
+                if (first_byte < 0 && last_byte >= 0) {
+                    first_byte = static_cast<ssize_t>(total_size) - last_byte;
+                    last_byte = static_cast<ssize_t>(total_size) - 1;
+                } else if (first_byte >= 0 && last_byte < 0) {
+                    last_byte = static_cast<ssize_t>(total_size) - 1;
+                }
+
+                if (first_byte < 0 || total_size == 0 || static_cast<uint64_t>(first_byte) >= total_size || last_byte < first_byte) {
+                    res.status = 416; // Range Not Satisfiable
+                    res.set_header("Content-Range", "bytes */" + std::to_string(total_size));
+                    const_cast<httplib::Request&>(req).ranges.clear();
+                    return;
+                }
+
+                if (static_cast<uint64_t>(last_byte) >= total_size) {
+                    last_byte = static_cast<ssize_t>(total_size) - 1;
+                }
+
+                uint64_t range_len = static_cast<uint64_t>(last_byte - first_byte + 1);
+                storage::ByteRange br{static_cast<uint64_t>(first_byte), range_len};
+
+                auto stream = storage_manager_->retrieve("", entry.primary_locator, br);
+                if (!stream) {
+                    res.status = 404;
+                    res.set_content(json({{"error", "Content not found in CAS vault"}}).dump(), "application/json");
+                    const_cast<httplib::Request&>(req).ranges.clear();
+                    return;
+                }
+
+                std::string range_bytes;
+                range_bytes.resize(range_len);
+                stream->read(&range_bytes[0], range_len);
+                std::streamsize bytes_read = stream->gcount();
+                if (bytes_read > 0 && static_cast<size_t>(bytes_read) < range_bytes.size()) {
+                    range_bytes.resize(bytes_read);
+                }
+
+                const_cast<httplib::Request&>(req).ranges.clear();
+
+                res.status = 206;
+                res.set_header("Content-Range", "bytes " + std::to_string(first_byte) + "-" + std::to_string(last_byte) + "/" + std::to_string(total_size));
+                res.set_header("Accept-Ranges", "bytes");
+                res.set_header("ETag", "\"" + entry.content_hash + "\"");
+                res.set_content(range_bytes, entry.mime_type.empty() ? "application/octet-stream" : entry.mime_type);
+            } else {
+                auto stream = storage_manager_->retrieve("", entry.primary_locator);
+                if (!stream) {
+                    res.status = 404;
+                    res.set_content(json({{"error", "Content not found in CAS vault"}}).dump(), "application/json");
+                    return;
+                }
+
+                std::string content((std::istreambuf_iterator<char>(*stream)), std::istreambuf_iterator<char>());
+
+                res.status = 200;
+                res.set_header("Accept-Ranges", "bytes");
+                res.set_header("ETag", "\"" + entry.content_hash + "\"");
+                res.set_header("Content-Disposition", "inline; filename=\"" + (entry.logical_name.empty() ? "artifact" : entry.logical_name) + "\"");
+                res.set_content(content, entry.mime_type.empty() ? "application/octet-stream" : entry.mime_type);
+            }
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    // 4. GET /api/v1/artifacts/(.+)/metadata
+    svr.Get(R"(/api/v1/artifacts/(.+)/metadata)", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            std::string id_or_path = httplib::decode_uri(req.matches[1]);
+            auto art_opt = resolve_artifact(id_or_path);
+            if (!art_opt) {
+                res.status = 404;
+                res.set_content(json({{"error", "Artifact not found"}}).dump(), "application/json");
+                return;
+            }
+            const auto& entry = *art_opt;
+
+            json avus_arr = json::array();
+            for (const auto& a : entry.avus) {
+                avus_arr.push_back(json{
+                    {"attribute", a.attribute},
+                    {"value", a.value},
+                    {"units", a.units}
+                });
+            }
+
+            json resp = {
+                {"uuid", entry.uuid},
+                {"pid", entry.pid},
+                {"avus", avus_arr}
+            };
+            res.status = 200;
+            res.set_content(resp.dump(2), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    // 5. POST /api/v1/artifacts/(.+)/metadata
+    svr.Post(R"(/api/v1/artifacts/(.+)/metadata)", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            nlohmann::json token_meta;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role, &token_meta)) {
+                return;
+            }
+
+            std::string agent_id;
+            if (req.has_header("X-Agent-ID")) {
+                agent_id = req.get_header_value("X-Agent-ID");
+            } else if (token_meta.contains("agent") && token_meta["agent"].is_string()) {
+                agent_id = token_meta["agent"].get<std::string>();
+            } else if (token_meta.contains("agent_id") && token_meta["agent_id"].is_string()) {
+                agent_id = token_meta["agent_id"].get<std::string>();
+            }
+            if (active_user.empty() && req.has_header("X-Active-User")) {
+                active_user = req.get_header_value("X-Active-User");
+            }
+
+            std::string id_or_path = httplib::decode_uri(req.matches[1]);
+            auto art_opt = resolve_artifact(id_or_path);
+            if (!art_opt) {
+                res.status = 404;
+                res.set_content(json({{"error", "Artifact not found"}}).dump(), "application/json");
+                return;
+            }
+            ArtifactEntry entry = *art_opt;
+
+            auto j = json::parse(req.body);
+            std::vector<AVUTriple> incoming_avus;
+            if (j.contains("avus") && j["avus"].is_array()) {
+                for (const auto& item : j["avus"]) {
+                    AVUTriple avu;
+                    if (item.contains("attribute")) avu.attribute = item["attribute"].get<std::string>();
+                    if (item.contains("value")) avu.value = item["value"].get<std::string>();
+                    if (item.contains("units")) avu.units = item["units"].get<std::string>();
+                    incoming_avus.push_back(std::move(avu));
+                }
+            } else if (j.is_array()) {
+                for (const auto& item : j) {
+                    AVUTriple avu;
+                    if (item.contains("attribute")) avu.attribute = item["attribute"].get<std::string>();
+                    if (item.contains("value")) avu.value = item["value"].get<std::string>();
+                    if (item.contains("units")) avu.units = item["units"].get<std::string>();
+                    incoming_avus.push_back(std::move(avu));
+                }
+            } else if (j.contains("attribute")) {
+                AVUTriple avu;
+                avu.attribute = j["attribute"].get<std::string>();
+                if (j.contains("value")) avu.value = j["value"].get<std::string>();
+                if (j.contains("units")) avu.units = j["units"].get<std::string>();
+                incoming_avus.push_back(std::move(avu));
+            }
+
+            for (const auto& inc : incoming_avus) {
+                bool updated = false;
+                for (auto& existing_avu : entry.avus) {
+                    if (existing_avu.attribute == inc.attribute) {
+                        existing_avu.value = inc.value;
+                        existing_avu.units = inc.units;
+                        updated = true;
+                        break;
+                    }
+                }
+                if (!updated) {
+                    entry.avus.push_back(inc);
+                }
+            }
+
+            if (!blackboard_->commit_artifact(entry, active_user, agent_id)) {
+                res.status = 500;
+                res.set_content(json({{"error", "Failed to update artifact metadata"}}).dump(), "application/json");
+                return;
+            }
+
+            json avus_arr = json::array();
+            for (const auto& a : entry.avus) {
+                avus_arr.push_back(json{
+                    {"attribute", a.attribute},
+                    {"value", a.value},
+                    {"units", a.units}
+                });
+            }
+
+            json resp = {
+                {"status", "OK"},
+                {"uuid", entry.uuid},
+                {"pid", entry.pid},
+                {"avus", avus_arr}
+            };
+            res.status = 200;
+            res.set_content(resp.dump(2), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 400;
+            res.set_content(json({{"error", "Invalid JSON payload"}, {"message", e.what()}}).dump(), "application/json");
+        }
+    });
+
+    // 6. GET /api/v1/artifacts/(.+)
+    svr.Get(R"(/api/v1/artifacts/(.+))", [this](const httplib::Request& req, httplib::Response& res) {
+        try {
+            std::string active_user;
+            std::string auth_role;
+            uint32_t principal_id = 0;
+            if (!authenticate_request(req, res, principal_id, active_user, auth_role)) {
+                return;
+            }
+
+            std::string id_or_path = httplib::decode_uri(req.matches[1]);
+            if (id_or_path == "query") {
+                std::string attr = req.get_param_value("attribute");
+                std::string val = req.has_param("value") ? req.get_param_value("value") : "";
+                auto uuids = blackboard_->query_by_avu(attr, val);
+                json arr = json::array();
+                for (const auto& u : uuids) {
+                    auto art = blackboard_->get_artifact(u);
+                    if (art) {
+                        arr.push_back(artifact_to_json(*art));
+                    }
+                }
+                res.status = 200;
+                res.set_content(arr.dump(2), "application/json");
+                return;
+            }
+
+            auto art_opt = resolve_artifact(id_or_path);
+            if (!art_opt) {
+                res.status = 404;
+                res.set_content(json({{"error", "Artifact not found"}}).dump(), "application/json");
+                return;
+            }
+
+            res.status = 200;
+            res.set_content(artifact_to_json(*art_opt).dump(2), "application/json");
+        } catch (const std::exception& e) {
+            res.status = 500;
+            res.set_content(json({{"error", e.what()}}).dump(), "application/json");
         }
     });
 

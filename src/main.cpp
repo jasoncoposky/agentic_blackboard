@@ -10,6 +10,7 @@
 #include <agentic_blackboard/Validator.hpp>
 #include <agentic_blackboard/Monitor.hpp>
 #include <agentic_blackboard/ApiServer.hpp>
+#include <agentic_blackboard/StorageManager.hpp>
 
 #include "L3KVG/KeyBuilder.hpp"
 #include "engine/store.hpp"
@@ -223,9 +224,18 @@ int main(int argc, char* argv[]) {
         int zmq_port = (port != 8085) ? (port + 5) : 8090;
         agentic_blackboard::Orchestrator::instance().start(&bb, loc, zmq_port, zmq_port);
         
-        // 3. Start Observability & API
+        // 3. Start Storage, Observability & API
+        std::string vault_dir;
+        std::filesystem::path db_p(db_path);
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(db_p, ec)) {
+            vault_dir = db_path + "_vault";
+        } else {
+            vault_dir = db_path + "/vault";
+        }
+        agentic_blackboard::storage::StorageManager storage_mgr(vault_dir);
         agentic_blackboard::Monitor::instance().start(&bb);
-        agentic_blackboard::ApiServer::instance().start(&bb, port, host);
+        agentic_blackboard::ApiServer::instance().start(&bb, port, host, &storage_mgr, &agentic_blackboard::Librarian::instance());
 
 
         // 4. Start Intelligence & Governance

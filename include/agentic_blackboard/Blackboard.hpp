@@ -96,10 +96,18 @@ public:
      */
     std::vector<std::string> query_by_avu(std::string_view attribute, std::string_view value = "");
 
+    /**
+     * @brief Resolve an artifact by UUID, PID, or logical path.
+     */
+    std::optional<ArtifactEntry> resolve_artifact(std::string_view id_or_path);
+
+    const std::string& get_db_path() const { return db_path_; }
+
     // Graph Access
     l3kvg::Engine* get_engine() { return engine_.get(); }
 
 private:
+    std::string db_path_;
     std::unique_ptr<l3kvg::Engine> engine_;
     std::string auth_mode_{"trusted_network"};
     mutable std::shared_mutex auth_mutex_;
