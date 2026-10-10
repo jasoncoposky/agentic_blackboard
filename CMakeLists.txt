@@ -34,6 +34,7 @@ set(AB_ENGINE_SOURCES
     src/ApiServer.cpp
     src/RdfExporter.cpp
     src/PosixCasDriver.cpp
+    src/StorageManager.cpp
 )
 
 add_library(ab_engine STATIC ${AB_ENGINE_SOURCES})
@@ -92,6 +93,9 @@ target_link_libraries(inspect_keys PRIVATE ab_engine Threads::Threads $<$<BOOL:$
 add_executable(test_posix_cas_driver scratch/test_posix_cas_driver.cpp)
 target_link_libraries(test_posix_cas_driver PRIVATE ab_engine Threads::Threads OpenSSL::Crypto)
 
+add_executable(test_storage_manager scratch/test_storage_manager.cpp)
+target_link_libraries(test_storage_manager PRIVATE ab_engine Threads::Threads OpenSSL::Crypto)
+
 if(MSVC)
     target_compile_options(ab_verify PRIVATE /bigobj)
     target_compile_options(test_orphan_rejection PRIVATE /bigobj)
@@ -100,6 +104,7 @@ if(MSVC)
     target_compile_options(force_seed PRIVATE /bigobj)
     target_compile_options(inspect_keys PRIVATE /bigobj)
     target_compile_options(test_posix_cas_driver PRIVATE /bigobj)
+    target_compile_options(test_storage_manager PRIVATE /bigobj)
 endif()
 
 if(MSVC)
