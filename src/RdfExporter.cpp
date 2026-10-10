@@ -92,9 +92,11 @@ std::string format_target_uri(const std::string& target) {
     if (target.starts_with("project:")) return make_project_iri(target.substr(8));
     if (target.starts_with("atom:")) return make_atom_iri(target.substr(5));
     if (target.starts_with("art-")) return "<urn:ab:artifact:" + sanitize_iri(target) + ">";
+    if (target.starts_with("vault/") || target.find("vault/") != std::string::npos) {
+        return "<urn:ab:locator:" + sanitize_iri(target) + ">";
+    }
     if (target.starts_with("/")) return "<urn:ab:collection:" + sanitize_iri(target.substr(1)) + ">";
     if (target.starts_with("avu:")) return "<urn:ab:avu:" + sanitize_iri(target.substr(4)) + ">";
-    if (target.starts_with("vault/")) return "<urn:ab:locator:" + sanitize_iri(target) + ">";
     return make_atom_iri(target);
 }
 
@@ -151,7 +153,9 @@ std::string predicate_for_relation(const std::string& rel) {
     if (rel.starts_with("ab:") || rel.starts_with("rdfs:") || rel.starts_with("schema:") || rel.starts_with("prov:") || rel.starts_with("dc:") || rel.starts_with("geo:")) {
         return rel;
     }
-    return "ab:" + rel;
+    std::string safe_rel = rel;
+    std::replace(safe_rel.begin(), safe_rel.end(), ' ', '_');
+    return "ab:" + safe_rel;
 }
 
 } // anonymous namespace

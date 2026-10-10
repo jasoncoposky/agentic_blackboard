@@ -31,6 +31,7 @@ json artifact_to_json(const agentic_blackboard::ArtifactEntry& entry) {
         });
     }
     return json{
+        {"type", "ARTIFACT"},
         {"uuid", entry.uuid},
         {"pid", entry.pid},
         {"content_hash", entry.content_hash},
@@ -2079,8 +2080,12 @@ void ApiServer::listen_loop() {
                                 return std::string(target_buf.get_str(0, "display_name"));
                             } catch (...) {
                                 try {
-                                    return std::string(target_buf.get_str(0, "description"));
-                                } catch (...) {}
+                                    return std::string(target_buf.get_str(0, "title"));
+                                } catch (...) {
+                                    try {
+                                        return std::string(target_buf.get_str(0, "description"));
+                                    } catch (...) {}
+                                }
                             }
                         }
                     }
@@ -2187,6 +2192,44 @@ void ApiServer::listen_loop() {
                     {"found", true}
                 };
                 res.set_content(node_json.dump(2), "application/json");
+            } else if (has_type && type == "ARTIFACT") {
+                ArtifactEntry ae = ArtifactEntry::deserialize(buf);
+                json art_json = artifact_to_json(ae);
+                art_json["id"] = ae.uuid;
+                art_json["found"] = true;
+                res.status = 200;
+                res.set_content(art_json.dump(2), "application/json");
+                return;
+            } else if (has_type && type == "COLLECTION") {
+                std::string path_val = "";
+                try {
+                    path_val = std::string(buf.get_str(0, "path"));
+                } catch (...) {
+                    try {
+                        path_val = std::string(buf.get_str(h_idx, "path"));
+                    } catch (...) {
+                        path_val = uuid;
+                    }
+                }
+                int64_t created_at = 0;
+                try {
+                    created_at = buf.get_i64(h_idx, "created_at");
+                } catch (...) {
+                    try {
+                        created_at = buf.get_i64(0, "created_at");
+                    } catch (...) {}
+                }
+                json coll_json = {
+                    {"type", "COLLECTION"},
+                    {"id", uuid},
+                    {"uuid", uuid},
+                    {"path", path_val},
+                    {"created_at", created_at},
+                    {"found", true}
+                };
+                res.status = 200;
+                res.set_content(coll_json.dump(2), "application/json");
+                return;
             } else {
                 auto entry = CpbEntry::deserialize(buf);
                 json node_json = {

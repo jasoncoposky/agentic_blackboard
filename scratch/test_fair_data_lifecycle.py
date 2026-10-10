@@ -36,6 +36,7 @@ from ab_mcp_server import (
     annotate_artifact,
     query_artifacts,
     verify_artifact_fair,
+    get_node,
     get_node_links,
     export_graph_rdf,
 )
@@ -61,11 +62,12 @@ def find_vault_dir(root_dir: Path) -> Path:
 
 
 started_process = None
+daemon_log_file = None
 
 
-async def ensure_backend(test_port: int, data_dir: str, base_url: str):
+async def ensure_backend(test_port: int, data_dir: str, api_url: str):
     """Ensure the Agentic Blackboard daemon is running and reachable."""
-    global started_process
+    global started_process, daemon_log_file
 
     daemon_bin = REPO_ROOT / "build" / "agentic-blackboardd"
     if not daemon_bin.exists():
@@ -98,9 +100,9 @@ async def ensure_backend(test_port: int, data_dir: str, base_url: str):
         await asyncio.sleep(0.2)
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{base_url}/schema", timeout=1.0)
+                resp = await client.get(f"{api_url}/schema", timeout=1.0)
                 if resp.status_code == 200:
-                    print(f"[DAEMON] Daemon initialized and responsive at {base_url}")
+                    print(f"[DAEMON] Daemon initialized and responsive at {api_url}")
                     return
         except Exception:
             pass
@@ -111,7 +113,7 @@ async def ensure_backend(test_port: int, data_dir: str, base_url: str):
     raise RuntimeError(f"Timed out waiting for daemon to start on port {test_port}.\n{log_content}")
 
 
-async def run_lifecycle(temp_dir: Path, base_url: str):
+async def run_lifecycle(temp_dir: Path, api_url: str):
     print("\n" + "=" * 70)
     print("STARTING FULL-CYCLE FAIR DATA INTEGRATION VERIFICATION")
     print("=" * 70)
@@ -160,6 +162,16 @@ async def run_lifecycle(temp_dir: Path, base_url: str):
     fair_score = fair_res.get("score", 0.0)
     assert fair_score >= 80.0, f"FAIR score too low: {fair_score} (expected >= 80)"
     print(f"FAIR Score: {fair_score}/100.0 (Passed: {fair_res.get('passed')})")
+
+    # Verify GET /api/v1/node/:id works for artifact nodes via get_node MCP tool
+    node_raw = await get_node(uuid=art_uuid)
+    node_data = json.loads(node_raw)
+    assert node_data.get("uuid") == art_uuid or node_data.get("id") == art_uuid, f"get_node failed: {node_data}"
+    assert node_data.get("type") == "ARTIFACT", f"Expected type ARTIFACT, got: {node_data.get('type')}"
+    assert node_data.get("title") == "Decoupled CAS & FAIR Storage Specification", f"Title mismatch in get_node: {node_data}"
+    assert node_data.get("content_hash") == content_hash, f"Hash mismatch in get_node: {node_data}"
+    print(f"✓ get_node({art_uuid}) verified via MCP: type={node_data.get('type')}, title={node_data.get('title')}")
+
     print("✓ Step 1 PASSED: FastMCP Publish with YAML Frontmatter verified.")
 
     # =========================================================================
@@ -280,6 +292,9 @@ async def run_lifecycle(temp_dir: Path, base_url: str):
     assert "schema:Collection" in rdf_text, "Missing schema:Collection in RDF export"
     assert "nucleus/specs" in rdf_text, "Missing collection path in RDF export"
 
+    # Verify Storage Locator representation
+    assert "urn:ab:locator:" in rdf_text, "Missing urn:ab:locator in RDF export"
+
     print("✓ Step 4 PASSED: W3C RDF Turtle Export with DigitalDocument and Collection verified.")
 
     # =========================================================================
@@ -346,7 +361,7 @@ async def main():
         await ensure_backend(test_port, data_dir, api_url)
         await run_lifecycle(Path(temp_dir), api_url)
     finally:
-        global started_process
+        global started_process, daemon_log_file
         if started_process:
             print("\n[CLEANUP] Stopping Agentic Blackboard daemon process...")
             started_process.terminate()
@@ -355,6 +370,12 @@ async def main():
             except subprocess.TimeoutExpired:
                 started_process.kill()
             print("[CLEANUP] Daemon stopped cleanly.")
+        if daemon_log_file:
+            try:
+                daemon_log_file.close()
+            except Exception:
+                pass
+            print("[CLEANUP] Daemon log file closed.")
         shutil.rmtree(temp_dir, ignore_errors=True)
         print("[CLEANUP] Temporary test directory removed.")
 
