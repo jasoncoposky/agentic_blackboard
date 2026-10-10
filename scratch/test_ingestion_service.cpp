@@ -379,6 +379,231 @@ int main() {
         assert(ab_svc.calculate_fair_score(entry) == 65.0);
     }
 
+    // =========================================================================
+    // Test 11: Python script comment is not treated as title
+    // =========================================================================
+    {
+        std::cout << "  - Test 11: Python script comment is not treated as title" << std::endl;
+        ArtifactIngestionService service;
+
+        std::string py_code = "# TODO: implement neural coordinator\ndef run():\n    pass\n";
+        auto entry = service.ingest(
+            "/scripts/coordinator.py",
+            py_code,
+            "sha256:pyhash"
+        );
+        assert(entry.title.empty());
+        assert(entry.logical_name == "coordinator.py");
+        assert(entry.collection_path == "/scripts");
+
+        // Shell script test as well
+        std::string sh_code = "#!/bin/bash\n# Deploy cluster\n./deploy\n";
+        auto sh_entry = service.ingest(
+            "/scripts/deploy.sh",
+            sh_code,
+            "sha256:shhash"
+        );
+        assert(sh_entry.title.empty());
+        assert(sh_entry.logical_name == "deploy.sh");
+        assert(sh_entry.collection_path == "/scripts");
+
+        // C++ source test
+        std::string cpp_code = "// Main application\nint main() { return 0; }\n";
+        auto cpp_entry = service.ingest(
+            "/src/main.cpp",
+            cpp_code,
+            "sha256:cpphash"
+        );
+        assert(cpp_entry.title.empty());
+        assert(cpp_entry.logical_name == "main.cpp");
+    }
+
+    // =========================================================================
+    // Test 12: Trailing slash path normalization
+    // =========================================================================
+    {
+        std::cout << "  - Test 12: Trailing slash path does not produce '.' logical name" << std::endl;
+        ArtifactIngestionService service;
+
+        auto entry = service.ingest(
+            "/nucleus/specs/",
+            "# Specs Overview\n\nBody",
+            "sha256:specshash"
+        );
+        assert(entry.logical_name == "specs");
+        assert(entry.logical_name != ".");
+        assert(entry.collection_path == "/nucleus");
+        assert(entry.pid == "urn:ab:artifact:nucleus/specs");
+        // Not a markdown extension, so heading is not treated as title
+        assert(entry.title.empty());
+
+        // With markdown extension and trailing slash
+        auto entry_md = service.ingest(
+            "/nucleus/specs.md/",
+            "# Specs Overview\n\nBody",
+            "sha256:specsmdhash"
+        );
+        assert(entry_md.logical_name == "specs.md");
+        assert(entry_md.logical_name != ".");
+        assert(entry_md.collection_path == "/nucleus");
+        assert(entry_md.pid == "urn:ab:artifact:nucleus/specs.md");
+        assert(entry_md.title == "Specs Overview");
+
+        // Trailing backslash
+        auto entry_win = service.ingest(
+            "/nucleus/specs\\",
+            "# Specs Overview Win\n\nBody",
+            "sha256:specswinhash"
+        );
+        assert(entry_win.logical_name == "specs");
+        assert(entry_win.logical_name != ".");
+        assert(entry_win.collection_path == "/nucleus");
+        assert(entry_win.pid == "urn:ab:artifact:nucleus/specs");
+
+        // Path ending in dot (e.g. /nucleus/specs/.) represents a directory (filename is .),
+        // so it must NOT produce logical_name = "." (should be empty)
+        auto dot_entry = service.ingest(
+            "/nucleus/specs/.",
+            "# Specs Dot",
+            "sha256:specsdothash"
+        );
+        assert(dot_entry.logical_name.empty());
+        assert(dot_entry.logical_name != ".");
+        assert(dot_entry.pid.empty());
+    }
+
+    // =========================================================================
+    // Test 13: Custom pipeline without FairScoringFilter retains initial AVUs
+    // =========================================================================
+    {
+        std::cout << "  - Test 13: Pipeline without FairScoringFilter retains initial AVUs" << std::endl;
+        ArtifactIngestionService service;
+        service.clear_filters();
+        service.add_filter(std::make_unique<PathNormalizationFilter>());
+        service.add_filter(std::make_unique<FrontmatterExtractionFilter>());
+
+        std::vector<AVUTriple> initial = {
+            {"custom:tag", "value123", "units"},
+            {"system:env", "production", ""}
+        };
+
+        auto entry = service.ingest(
+            "/configs/settings.json",
+            "{\"key\": \"value\"}",
+            "sha256:confighash",
+            "user1",
+            "agent1",
+            initial
+        );
+
+        assert(entry.avus.size() == 2);
+        assert(entry.avus[0].attribute == "custom:tag");
+        assert(entry.avus[0].value == "value123");
+        assert(entry.avus[0].units == "units");
+        assert(entry.avus[1].attribute == "system:env");
+        assert(entry.avus[1].value == "production");
+
+        for (const auto& a : entry.avus) {
+            assert(a.attribute != "fair:score");
+        }
+    }
+
+    // =========================================================================
+    // Test 14: Aborted flag halts subsequent filters and insert_filter works
+    // =========================================================================
+    {
+        std::cout << "  - Test 14: Aborted flag halts subsequent filters and insert_filter works" << std::endl;
+        ArtifactIngestionService service;
+        assert(service.filters().size() == 3);
+
+        class AbortFilter : public IIngestionFilter {
+        public:
+            void filter(IngestionContext& ctx) override {
+                ctx.aborted = true;
+                ctx.error_message = "Rejected by validation policy";
+            }
+        };
+
+        class SentinelFilter : public IIngestionFilter {
+        public:
+            void filter(IngestionContext& ctx) override {
+                ctx.title = "SHOULD_NEVER_RUN";
+            }
+        };
+
+        // Insert AbortFilter at index 1 (after PathNormalization, before FrontmatterExtraction)
+        service.insert_filter(1, std::make_unique<AbortFilter>());
+        assert(service.filters().size() == 4);
+        // Insert SentinelFilter at index 2
+        service.insert_filter(2, std::make_unique<SentinelFilter>());
+        assert(service.filters().size() == 5);
+
+        auto entry = service.ingest(
+            "/docs/aborted.md",
+            "# Heading That Should Be Ignored",
+            "sha256:aborthash"
+        );
+
+        // Path was normalized by filter 0
+        assert(entry.logical_name == "aborted.md");
+        // Sentinel filter and Frontmatter filter skipped
+        assert(entry.title.empty());
+        assert(entry.title != "SHOULD_NEVER_RUN");
+        // FairScoringFilter skipped
+        for (const auto& a : entry.avus) {
+            assert(a.attribute != "fair:score");
+        }
+    }
+
+    // =========================================================================
+    // Test 15: Traversal path and aborted pipeline do not commit to Blackboard
+    // =========================================================================
+    {
+        std::cout << "  - Test 15: Traversal path and aborted pipeline do not commit to Blackboard" << std::endl;
+        std::string db_path = "/tmp/test_ingest_guard_bb_" + std::to_string(time(nullptr));
+        std::filesystem::create_directories(db_path);
+
+        {
+            blackboard::Blackboard bb(db_path + "/bb", 1);
+            ArtifactIngestionService service(&bb);
+
+            // Traversal path
+            auto entry_traversal = service.ingest(
+                "../../etc/shadow",
+                "secret data",
+                "sha256:shadowhash",
+                "user:attacker",
+                "agent:evil"
+            );
+            assert(entry_traversal.logical_name.empty());
+            assert(entry_traversal.pid.empty());
+            assert(!bb.get_artifact(entry_traversal.uuid).has_value());
+
+            // Aborted pipeline does not commit
+            class AbortingFilter : public IIngestionFilter {
+            public:
+                void filter(IngestionContext& ctx) override {
+                    ctx.aborted = true;
+                    ctx.error_message = "Ingestion rejected";
+                }
+            };
+
+            ArtifactIngestionService service_abort(&bb);
+            service_abort.insert_filter(0, std::make_unique<AbortingFilter>());
+
+            auto entry_aborted = service_abort.ingest(
+                "/valid/path.md",
+                "# Valid Heading",
+                "sha256:validhash",
+                "user:normal",
+                "agent:normal"
+            );
+            assert(!bb.get_artifact(entry_aborted.uuid).has_value());
+        }
+
+        std::filesystem::remove_all(db_path);
+    }
+
     std::cout << "[SUCCESS] ArtifactIngestionService verification passed!" << std::endl;
     return 0;
 }

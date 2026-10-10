@@ -13,22 +13,26 @@ namespace agentic_blackboard {
 // ============================================================================
 
 void PathNormalizationFilter::filter(IngestionContext& ctx) {
-    std::filesystem::path p = std::filesystem::path(ctx.logical_path).lexically_normal();
-    std::string norm_path = p.string();
+    std::string_view p_view = ctx.logical_path;
+    while (p_view.size() > 1 && (p_view.back() == '/' || p_view.back() == '\\')) {
+        p_view.remove_suffix(1);
+    }
+    std::filesystem::path p = std::filesystem::path(p_view).lexically_normal();
+    std::string norm_path = p.generic_string();
     size_t start_idx = norm_path.find_first_not_of('/');
     std::string path_no_leading = (start_idx != std::string::npos) ? norm_path.substr(start_idx) : "";
     if (path_no_leading == "." || path_no_leading == ".." || path_no_leading.rfind("../", 0) == 0) {
         path_no_leading = "";
     }
 
-    if (path_no_leading.empty()) {
+    if (p.filename().empty() || p.filename() == "." || p.filename() == ".." || path_no_leading.empty()) {
         ctx.pid = "";
         ctx.collection_path = "";
         ctx.logical_name = "";
     } else {
-        ctx.logical_name = p.filename().string();
-        std::string coll = p.parent_path().string();
-        if (coll.empty()) {
+        ctx.logical_name = p.filename().generic_string();
+        std::string coll = p.parent_path().generic_string();
+        if (coll.empty() || coll == ".") {
             coll = "/";
         } else if (coll[0] != '/') {
             coll = "/" + coll;
@@ -79,9 +83,10 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
         });
     }
 
+    bool is_markdown = (ext == ".md" || ext == ".markdown");
     bool is_text = false;
     if (!ext.empty()) {
-        if (ext == ".md" || ext == ".markdown" || ext == ".txt" || ext == ".text" ||
+        if (is_markdown || ext == ".txt" || ext == ".text" ||
             ext == ".yaml" || ext == ".yml" || ext == ".json" || ext == ".csv" ||
             ext == ".tsv" || ext == ".xml" || ext == ".html" || ext == ".htm" ||
             ext == ".svg" || ext == ".toml" || ext == ".ini" || ext == ".cfg" ||
@@ -174,13 +179,16 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
                 // No frontmatter present
                 found_fm_start = true;
                 frontmatter_done = true;
-                // Check if first non-empty line is a heading
-                if (trimmed.starts_with("# ")) {
+                // Check if first non-empty line is a heading (Markdown files only)
+                if (is_markdown && trimmed.starts_with("# ")) {
                     std::string_view heading = trim_sv(trimmed.substr(2));
                     if (!heading.empty()) {
                         ctx.title = std::string(heading);
                         break; // Title heading found, early exit
                     }
+                }
+                if (!is_markdown) {
+                    break;
                 }
                 continue;
             }
@@ -190,8 +198,8 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
             if (trimmed == "---" || trimmed == "...") {
                 in_frontmatter = false;
                 frontmatter_done = true;
-                if (!ctx.title.empty()) {
-                    break; // Title found in frontmatter, early exit
+                if (!ctx.title.empty() || !is_markdown) {
+                    break; // Title found in frontmatter, or non-markdown file, early exit
                 }
                 continue;
             }
@@ -226,7 +234,7 @@ void FrontmatterExtractionFilter::filter(IngestionContext& ctx) {
                 }
             }
         } else if (frontmatter_done) {
-            if (ctx.title.empty()) {
+            if (ctx.title.empty() && is_markdown) {
                 if (trimmed.starts_with("# ")) {
                     std::string_view heading = trim_sv(trimmed.substr(2));
                     if (!heading.empty()) {
@@ -258,13 +266,13 @@ std::shared_ptr<IFairScoreStrategy> FairScoringFilter::get_strategy() const noex
 
 void FairScoringFilter::filter(IngestionContext& ctx) {
     std::vector<AVUTriple> filtered_avus;
-    filtered_avus.reserve(ctx.initial_avus.size() + ctx.avus.size());
-    for (const auto& avu : ctx.initial_avus) {
+    filtered_avus.reserve(ctx.avus.size() + ctx.initial_avus.size());
+    for (const auto& avu : ctx.avus) {
         if (avu.attribute != "fair:score") {
             filtered_avus.push_back(avu);
         }
     }
-    for (const auto& avu : ctx.avus) {
+    for (const auto& avu : ctx.initial_avus) {
         if (avu.attribute != "fair:score") {
             bool exists = false;
             for (const auto& existing : filtered_avus) {
@@ -333,6 +341,17 @@ void ArtifactIngestionService::add_filter(std::unique_ptr<IIngestionFilter> filt
     }
 }
 
+void ArtifactIngestionService::insert_filter(size_t index, std::unique_ptr<IIngestionFilter> filter) {
+    if (!filter) {
+        return;
+    }
+    if (index >= pipeline_.size()) {
+        pipeline_.push_back(std::move(filter));
+    } else {
+        pipeline_.insert(pipeline_.begin() + index, std::move(filter));
+    }
+}
+
 const std::vector<std::unique_ptr<IIngestionFilter>>& ArtifactIngestionService::filters() const noexcept {
     return pipeline_;
 }
@@ -364,10 +383,17 @@ ArtifactEntry ArtifactIngestionService::ingest(
     ctx.user_id = user_id;
     ctx.agent_id = agent_id;
     ctx.initial_avus = initial_avus;
+    ctx.avus = initial_avus;
 
     for (auto& filter : pipeline_) {
+        if (ctx.aborted) {
+            break;
+        }
         if (filter) {
             filter->filter(ctx);
+        }
+        if (ctx.aborted) {
+            break;
         }
     }
 
@@ -390,6 +416,13 @@ ArtifactEntry ArtifactIngestionService::ingest(
     }
 
     ArtifactEntry entry = builder.build();
+    if (ctx.pid.empty()) {
+        entry.pid.clear();
+    }
+
+    if (ctx.logical_name.empty() || ctx.pid.empty() || ctx.aborted) {
+        return entry;
+    }
 
     if (blackboard_) {
         if (!blackboard_->commit_artifact(entry, user_id, agent_id)) {

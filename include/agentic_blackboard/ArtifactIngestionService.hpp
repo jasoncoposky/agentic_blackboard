@@ -23,6 +23,10 @@ struct IngestionContext {
     std::string_view agent_id;
     std::vector<AVUTriple> initial_avus;
 
+    // Pipeline control
+    bool aborted{false};
+    std::string error_message;
+
     // Mutable pipeline state passed through filters
     std::string collection_path;
     std::string logical_name;
@@ -93,6 +97,7 @@ public:
     std::shared_ptr<IFairScoreStrategy> get_score_strategy() const noexcept;
 
     void add_filter(std::unique_ptr<IIngestionFilter> filter);
+    void insert_filter(size_t index, std::unique_ptr<IIngestionFilter> filter);
     const std::vector<std::unique_ptr<IIngestionFilter>>& filters() const noexcept;
     void clear_filters();
 
